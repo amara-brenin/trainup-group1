@@ -1,0 +1,45 @@
+services:
+  - type: web
+    name: trainup-backend
+    runtime: node
+    rootDir: backend
+    plan: starter
+    autoDeploy: true
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: PORT
+        value: 10000
+      - key: API_PREFIX
+        value: /api-v1
+      - key: AUTH_SECRET
+        sync: false
+      - key: MONGO_URI
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: FRONTEND_BASE_URL
+        value: https://traniup.brenin.co
+      - key: ADMIN_APP_URL
+        value: https://traniup.brenin.co
+      - key: SUPERADMIN_APP_URL
+        value: https://traniup.brenin.co
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: AWS_S3_REGION
+        value: ap-south-1
+      - key: AWS_S3_BUCKET
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: ELEVENLABS_TTS_MODEL_ID
+        value: eleven_flash_v2_5
+      - key: ELEVENLABS_TTS_VOICE_NAME
+        value: Anurja - Auto Sales Follow-Ups (Female )
+      - key: ELEVENLABS_TTS_VOICE_ID
+        sync: false

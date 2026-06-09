@@ -1,0 +1,1 @@
+export { getAdminHomePath } from "./appShell";

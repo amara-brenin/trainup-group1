@@ -1,0 +1,28 @@
+const express = require("express");
+
+const clientController = require("../controllers/super-admin/clientController");
+const superAdminController = require("../controllers/super-admin/superAdminController");
+const { authTokenAdmin, allowRoles } = require("../middelwares");
+
+const router = express.Router();
+
+router.use(authTokenAdmin);
+router.use(allowRoles("super_admin"));
+
+router.get("/clients", clientController.list);
+router.post("/clients", clientController.create);
+router.get("/clients/:id", clientController.getOne);
+router.put("/clients/:id", clientController.update);
+router.delete("/clients/:id", clientController.remove);
+router.put("/clients/:id/settings", clientController.updateSettings);
+router.post("/clients/:id/webhook-test", clientController.testWebhook);
+router.post("/clients/:id/domain-verify", clientController.verifyDomain);
+router.post("/clients/:id/smtp-test", clientController.testSmtp);
+router.post("/clients/:id/client-admin/password-email", clientController.sendClientAdminPasswordEmail);
+router.get("/super-admins", superAdminController.list);
+router.post("/super-admins", superAdminController.create);
+router.put("/super-admins/:id", superAdminController.update);
+router.post("/super-admins/:id/password-email", superAdminController.sendPasswordReset);
+router.delete("/super-admins/:id", superAdminController.remove);
+
+module.exports = router;

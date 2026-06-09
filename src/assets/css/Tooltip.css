@@ -1,0 +1,40 @@
+.tooltip-container {
+    position: relative;
+    display: inline-block;
+}
+
+.tooltip-new {
+    position: absolute;
+    color: #fff;
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 14px;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 1;
+    transform: translateY(-5px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 1000;
+}
+
+.tooltip-container:hover .tooltip-new {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* Position specific styles */
+.tooltip[data-position="top"] {
+    margin-bottom: 5px;
+}
+
+.tooltip[data-position="bottom"] {
+    margin-top: 5px;
+}
+
+.tooltip[data-position="left"] {
+    margin-right: 5px;
+}
+
+.tooltip[data-position="right"] {
+    margin-left: 5px;
+}

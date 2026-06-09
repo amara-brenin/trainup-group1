@@ -1,0 +1,54 @@
+/* Custom styles for missing Bootstrap classes */
+
+/* Minimum viewport height with Bootstrap-like approach */
+.min-vh-100 {
+    min-height: 100vh;
+}
+
+/* Hover effect for cards */
+.hover-effect {
+    transition: box-shadow 0.3s ease, transform 0.2s ease;
+}
+
+.hover-effect:hover {
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15) !important;
+    /* transform: translateY(-2px); */
+}
+
+/* Text truncation utility */
+.text-truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Custom border radius */
+.rounded-base {
+    border-radius: 0.375rem;
+}
+
+/* Responsive width utilities */
+@media (min-width: 768px) {
+    .w-md-100 {
+        width: 100% !important;
+    }
+}
+
+/* Ensure proper spacing for flex items */
+.flex-shrink-0 {
+    flex-shrink: 0;
+}
+
+.flex-grow-1 {
+    flex-grow: 1;
+}
+
+/* Custom opacity transitions for buttons */
+.btn {
+    transition: opacity 0.2s ease;
+}
+
+/* Table hover effect */
+.table-hover tbody tr:hover {
+    background-color: rgba(0, 0, 0, 0.075);
+}
