@@ -11,14 +11,17 @@ export const appVariant: AppVariant =
 export const isSuperAdminApp = appVariant === "superadmin";
 export const isAdminApp = appVariant === "admin";
 
+const getOrigin = () => typeof window !== "undefined" ? window.location.origin : "https://trainup.brenin.co";
+const basePrefix = import.meta.env.VITE_BASE_URL || "/trainup-demo/";
+
 export const adminAppUrl = normalizeUrl(
   import.meta.env.VITE_ADMIN_APP_URL,
-  "https://trainup.brenin.co",
+  `${getOrigin()}${basePrefix}`,
 );
 
 export const superAdminAppUrl = normalizeUrl(
   import.meta.env.VITE_SUPERADMIN_APP_URL,
-  "https://trainup.brenin.co/console",
+  `${getOrigin()}${basePrefix}admin-console/`,
 );
 
 export const isRoleAllowedInCurrentApp = (role?: UserRole) => {

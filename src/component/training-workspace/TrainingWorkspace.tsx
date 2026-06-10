@@ -1068,7 +1068,8 @@ const getTodayLabel = () =>
   });
 
 const buildTrainingLaunchPath = (trainingId: string, preview = false) => {
-  const path = `/slideshows/${String(trainingId || "").toLowerCase()}`;
+  const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
+  const path = `${base}/slideshows/${String(trainingId || "").toLowerCase()}`;
   return preview ? `${path}?preview=1` : path;
 };
 

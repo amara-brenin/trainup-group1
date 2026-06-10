@@ -1,6 +1,6 @@
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
- 
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
@@ -8,9 +8,18 @@ export default defineConfig(({ mode }) => {
   const port = Number(env.VITE_PORT || (isSuperAdmin ? 5174 : 5173));
   const isVercelBuild =
     env.VERCEL === "1" || env.CI === "true" || process.env.VERCEL === "1";
- 
+
+  let basePrefix = env.VITE_BASE_URL || "/trainup-demo/";
+  if (!basePrefix.endsWith("/")) {
+    basePrefix += "/";
+  }
+  
+  const finalBase = isSuperAdmin && !basePrefix.endsWith("/admin-console/")
+    ? `${basePrefix}admin-console/`
+    : basePrefix;
+
   return {
-    base: env.VITE_BASE_URL || (isSuperAdmin ? "/console/" : "/"),
+    base: finalBase,
     plugins: [react()],
     server: {
       port,
@@ -33,23 +42,23 @@ export default defineConfig(({ mode }) => {
             if (!id.includes("node_modules")) {
               return;
             }
- 
+
             if (id.includes("pdfjs-dist")) {
               return "pdfjs";
             }
- 
+
             if (id.includes("jszip")) {
               return "office-parser";
             }
- 
+
             if (id.includes("tesseract.js")) {
               return "ocr-engine";
             }
- 
+
             if (id.includes("@aws-sdk") || id.includes("@smithy")) {
               return "aws";
             }
- 
+
             if (
               id.includes("formik") ||
               id.includes("yup") ||
@@ -58,15 +67,15 @@ export default defineConfig(({ mode }) => {
             ) {
               return "forms-ui";
             }
- 
+
             if (id.includes("bootstrap") || id.includes("bootstrap-icons")) {
               return "ui-kit";
             }
- 
+
             if (id.includes("mespeak")) {
               return "speech-engine";
             }
- 
+
             if (
               id.includes("react") ||
               id.includes("react-dom") ||

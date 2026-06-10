@@ -173,7 +173,8 @@ const GroupHallScreen = () => {
       setTraining({ ...t, slides: Array.isArray(t.slides) ? t.slides : [] });
 
       // Secure QR encodes the session's qrToken (not the raw id).
-      const url = `${window.location.origin}/group/${data.data.qrToken}`;
+      const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
+      const url = `${window.location.origin}${base}/group/${data.data.qrToken}`;
       setJoinUrl(url);
       void generateQrDataUrl(url, 260).then((dataUrl) => active && setQrDataUrl(dataUrl));
 
