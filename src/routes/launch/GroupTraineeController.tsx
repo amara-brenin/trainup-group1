@@ -9,6 +9,7 @@ import {
   type GroupSessionView,
 } from "../../helper/groupSessionApi";
 import { connectGroupSocket } from "../../helper/groupSocket";
+import { withBase } from "../../helper/basePath";
 
 type QueueEntry = { traineeId: string; name: string };
 type FaqItem = { name: string; question: string; answer: string };
@@ -276,7 +277,7 @@ const GroupTraineeController = () => {
         <div>
           <h5>Sign in required</h5>
           <p className="text-muted">Please log in as a trainee, then reopen this join link.</p>
-          <a className="btn btn-primary" href="/">Go to login</a>
+          <a className="btn btn-primary" href={withBase("/")}>Go to login</a>
         </div>
       </div>
     );

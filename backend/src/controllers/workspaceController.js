@@ -7,6 +7,7 @@ const { getTenantClientId, syncClientMetrics } = require("../helpers/tenant");
 const { CREDIT_COSTS, assertUsageWithinPlan, consumeClientCredits } = require("../helpers/credits");
 const { notifyRolesInClient, notifyTrainingOwner } = require("../helpers/notifications");
 const { sendTrainingAssignmentEmails } = require("../helpers/clientDelivery");
+const { buildPublicUrl } = require("../helpers/publicUrl");
 
 const normalizeStatus = (value) => String(value || "").trim().toLowerCase();
 
@@ -52,15 +53,10 @@ const buildLaunchUrl = (req, client, trainingId, isGroup = false) => {
     ? `/group/${String(trainingId || "")}`
     : `/slideshows/${String(trainingId || "").toLowerCase()}`;
 
-  if (baseUrl) {
-    return `${baseUrl}${path}`;
-  }
-
-  if (client?.domain) {
-    return `https://${client.domain}${path}`;
-  }
-
-  return `https://${client?.subdomain || "app"}.trainup.ai${path}`;
+  // buildPublicUrl prepends PUBLIC_BASE_PATH (e.g. "/trainup-demo") to the path
+  // so the link resolves under the admin deployment subpath, not the root.
+  const resolvedOrigin = baseUrl || (client?.domain ? `https://${client.domain}` : `https://${client?.subdomain || "app"}.trainup.ai`);
+  return buildPublicUrl(resolvedOrigin, path);
 };
 
 const list = async (req, res) => {

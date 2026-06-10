@@ -4,6 +4,7 @@ import type { Socket } from "socket.io-client";
 import { bootstrapGroupHost } from "../../helper/groupSessionApi";
 import { connectGroupSocket } from "../../helper/groupSocket";
 import { generateQrDataUrl } from "../../helper/qrCode";
+import { withOrigin } from "../../helper/basePath";
 import { generateScriptAudioDataUri } from "../../helper/scriptAudio";
 import TrainingLaunchAvatar, {
   type TrainingLaunchAvatarHandle,
@@ -173,8 +174,7 @@ const GroupHallScreen = () => {
       setTraining({ ...t, slides: Array.isArray(t.slides) ? t.slides : [] });
 
       // Secure QR encodes the session's qrToken (not the raw id).
-      const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
-      const url = `${window.location.origin}${base}/group/${data.data.qrToken}`;
+      const url = withOrigin(`/group/${data.data.qrToken}`);
       setJoinUrl(url);
       void generateQrDataUrl(url, 260).then((dataUrl) => active && setQrDataUrl(dataUrl));
 

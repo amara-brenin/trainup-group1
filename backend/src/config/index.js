@@ -18,6 +18,14 @@ module.exports = {
   mongoUri: String(process.env.MONGO_URI || "").trim(),
   authSecret: String(process.env.AUTH_SECRET || "trainup-render-insecure-dev-secret").trim(),
   frontendBaseUrl: String(process.env.FRONTEND_BASE_URL || process.env.APP_BASE_URL || "").trim().replace(/\/+$/, ""),
+  // Deployment subpath the admin SPA is served under (mirrors the frontend
+  // VITE_BASE_URL). "" or "/" => root deployment (no prefix). e.g. "/trainup-demo".
+  publicBasePath: (() => {
+    let value = String(process.env.PUBLIC_BASE_PATH || "").trim();
+    if (!value || value === "/") return "";
+    if (!value.startsWith("/")) value = `/${value}`;
+    return value.replace(/\/+$/, "");
+  })(),
   adminAppUrl: String(process.env.ADMIN_APP_URL || process.env.FRONTEND_ADMIN_URL || "").trim().replace(/\/+$/, ""),
   superAdminAppUrl: String(process.env.SUPERADMIN_APP_URL || process.env.FRONTEND_SUPERADMIN_URL || "").trim().replace(/\/+$/, ""),
   platformEmail: {

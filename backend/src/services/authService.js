@@ -6,6 +6,7 @@ const User = require("../models/User");
 const config = require("../config");
 const { hashPassword } = require("../helpers/auth");
 const { sendAccountActionEmail } = require("../helpers/clientDelivery");
+const { buildPublicUrl } = require("../helpers/publicUrl");
 
 const TOKEN_TTL_MINUTES = 30;
 
@@ -30,11 +31,8 @@ const findClientForUser = async (user) => {
   return clientId ? Client.findOne({ appId: clientId }) : null;
 };
 
-const resolveBaseUrl = (req) => {
-  if (config.frontendBaseUrl) {
-    return config.frontendBaseUrl;
-  }
-
+// The bare request origin (scheme://host), no configured base/app URL.
+const resolveRequestOrigin = (req) => {
   const origin = String(req?.headers?.origin || "").trim();
   if (origin) {
     return origin.replace(/\/+$/, "");
@@ -43,8 +41,7 @@ const resolveBaseUrl = (req) => {
   const referer = String(req?.headers?.referer || "").trim();
   if (referer) {
     try {
-      const parsed = new URL(referer);
-      return parsed.origin;
+      return new URL(referer).origin;
     } catch {
       // Fall back to forwarded host below when the referer is malformed.
     }
@@ -58,12 +55,21 @@ const resolveBaseUrl = (req) => {
 const withoutConsolePath = (value) => String(value || "").trim().replace(/\/console\/?$/i, "").replace(/\/+$/, "");
 
 const buildActionUrl = (req, purpose, token, user) => {
-  const fallbackBaseUrl = resolveBaseUrl(req);
-  const baseUrl = user?.role === "super_admin"
-    ? (config.superAdminAppUrl || config.frontendBaseUrl || fallbackBaseUrl)
-    : (config.adminAppUrl || withoutConsolePath(config.frontendBaseUrl || fallbackBaseUrl));
   const path = purpose === "reset_password" ? "/reset-password" : "/set-password";
-  return `${String(baseUrl || "").replace(/\/+$/, "")}${path}?token=${encodeURIComponent(token)}`;
+  const query = `?token=${encodeURIComponent(token)}`;
+
+  // Explicitly configured app URLs already include the deployment subpath →
+  // use them as-is (do not prepend PUBLIC_BASE_PATH, which would double it).
+  const configured = user?.role === "super_admin"
+    ? (config.superAdminAppUrl || config.frontendBaseUrl)
+    : (config.adminAppUrl || withoutConsolePath(config.frontendBaseUrl));
+  if (configured) {
+    return `${String(configured).replace(/\/+$/, "")}${path}${query}`;
+  }
+
+  // Fallback to the bare request origin → prepend PUBLIC_BASE_PATH so the link
+  // resolves under the admin deployment subpath.
+  return `${buildPublicUrl(resolveRequestOrigin(req), path)}${query}`;
 };
 
 const createAuthToken = async ({ user, purpose, createdBy = "" }) => {

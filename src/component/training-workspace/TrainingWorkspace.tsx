@@ -76,6 +76,7 @@ import {
 import { AllowedKeys, PermissionKeys } from "../../constant/permissions";
 import AxiosHelper, { isServerApiEnabled } from "../../helper/AxiosHelper";
 import { createGroupSession } from "../../helper/groupSessionApi";
+import { withBase, withOrigin } from "../../helper/basePath";
 import { buildScriptAudioKey, generateScriptAudioDataUri } from "../../helper/scriptAudio";
 import { extractKnowledgeDocument } from "../../helper/trainingKnowledge";
 import { buildSlidePointsFromSource } from "../../helper/trainingNarration";
@@ -1068,8 +1069,7 @@ const getTodayLabel = () =>
   });
 
 const buildTrainingLaunchPath = (trainingId: string, preview = false) => {
-  const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
-  const path = `${base}/slideshows/${String(trainingId || "").toLowerCase()}`;
+  const path = withBase(`/slideshows/${String(trainingId || "").toLowerCase()}`);
   return preview ? `${path}?preview=1` : path;
 };
 
@@ -7043,10 +7043,9 @@ const TrainingDetail = ({
       return;
     }
     const { session, joinCode } = response.data.data;
-    const origin = window.location.origin;
-    const joinUrl = `${origin}/group/${session.id}`;
-    const hallUrl = `${origin}/hall/${session.id}`;
-    const dashboardUrl = `${origin}/group-sessions/${session.id}/live`;
+    const joinUrl = withOrigin(`/group/${session.id}`);
+    const hallUrl = withOrigin(`/hall/${session.id}`);
+    const dashboardUrl = withOrigin(`/group-sessions/${session.id}/live`);
     await navigator.clipboard?.writeText(`Join code: ${joinCode}\nTrainee link: ${joinUrl}`).catch(() => undefined);
     toast.success(`Group session created. Join code ${joinCode} copied. Opening hall + live dashboard…`);
     window.open(hallUrl, "_blank", "noopener");
