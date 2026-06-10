@@ -250,6 +250,7 @@ type TrainingSetupValues = {
   groupStartTime: string;
   groupEndTime: string;
   groupMinParticipants: number;
+  groupGraceMins: number;
   groupMinAttendancePct: number;
   groupMaxSpeakSecs: number;
   groupMaxQuestionsPerTrainee: number;
@@ -1068,6 +1069,26 @@ const getTodayLabel = () =>
     year: "numeric",
   });
 
+// <input type="datetime-local"> yields a timezone-naive local wall-clock string
+// (e.g. "2026-06-10T16:00"). We must convert it to a real UTC instant in the
+// BROWSER (where the admin's local timezone applies) before storing — otherwise
+// the backend parses the naive string in the SERVER timezone (UTC in prod) and
+// the scheduled time shifts by the admin's offset.
+const localInputToIso = (value: string): string | null => {
+  if (!value) return null;
+  const d = new Date(value); // interpreted in the admin's local timezone
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+};
+
+// Convert a stored UTC ISO back to the local "YYYY-MM-DDTHH:mm" the input needs.
+const isoToLocalInput = (value?: string | null): string => {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
 const buildTrainingLaunchPath = (trainingId: string, preview = false) => {
   const path = withBase(`/slideshows/${String(trainingId || "").toLowerCase()}`);
   return preview ? `${path}?preview=1` : path;
@@ -1123,9 +1144,10 @@ const buildDefaultSetupValues = (
   branding: training?.branding ? { ...defaultTrainingBranding, ...training.branding } : { ...defaultTrainingBranding },
   deliveryType: training?.trainingType === "group" ? "group" : "one_on_one",
   groupCapacity: training?.groupConfig?.capacity ?? 50,
-  groupStartTime: training?.groupConfig?.startTime ?? "",
-  groupEndTime: training?.groupConfig?.endTime ?? "",
+  groupStartTime: isoToLocalInput(training?.groupConfig?.startTime),
+  groupEndTime: isoToLocalInput(training?.groupConfig?.endTime),
   groupMinParticipants: training?.groupConfig?.autoStart?.minParticipants ?? 1,
+  groupGraceMins: training?.groupConfig?.autoStart?.graceMins ?? 15,
   groupMinAttendancePct: training?.groupConfig?.attendanceRules?.minAttendancePct ?? 75,
   groupMaxSpeakSecs: training?.groupConfig?.qaRules?.maxSpeakSecs ?? 90,
   groupMaxQuestionsPerTrainee: training?.groupConfig?.qaRules?.maxQuestionsPerTrainee ?? 3,
@@ -4288,12 +4310,12 @@ const TrainingBuilder = ({
           values.deliveryType === "group"
             ? {
                 capacity: Number(values.groupCapacity || 50),
-                startTime: values.groupStartTime || null,
-                endTime: values.groupEndTime || null,
+                startTime: localInputToIso(values.groupStartTime),
+                endTime: localInputToIso(values.groupEndTime),
                 autoStart: {
                   mode: "scheduled",
                   minParticipants: Number(values.groupMinParticipants || 1),
-                  graceMins: 10,
+                  graceMins: Number(values.groupGraceMins || 15),
                 },
                 attendanceRules: {
                   minAttendancePct: Number(values.groupMinAttendancePct || 75),
@@ -4600,6 +4622,10 @@ const TrainingBuilder = ({
                                 <div className="col-6 col-lg-3">
                                   <label className="form-label">Min Participants</label>
                                   <Field type="number" min={1} name="groupMinParticipants" className="form-control" />
+                                </div>
+                                <div className="col-6 col-lg-3">
+                                  <label className="form-label">Auto-Start Grace (mins)</label>
+                                  <Field type="number" min={0} name="groupGraceMins" className="form-control" />
                                 </div>
                                 <div className="col-6 col-lg-3">
                                   <label className="form-label">Start Time</label>

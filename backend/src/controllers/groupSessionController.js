@@ -61,6 +61,8 @@ const publicSessionView = (session) => ({
   })),
   attendeeCount: (session.attendees || []).filter((a) => a.connected).length,
   capacity: session.capacity,
+  minParticipants: Number(session.config?.autoStart?.minParticipants || 1),
+  autoEnter: Boolean(session.config?.autoStart?.autoEnter),
   startTime: session.startTime,
   endTime: session.endTime,
   startedAt: session.startedAt,
@@ -294,9 +296,11 @@ const joinGroupSession = async (req, res) => {
 
   const viewer = req.user; // populated by authTokenAdmin on this route
   const viewerEmail = normalizeValue(viewer?.email).toLowerCase();
+  // Include a machine-readable `reason` so the client can render the correct
+  // error SCREEN (not a generic toast).
   const deny = (status, reason, message) => {
     void logJoinAttempt(session, { traineeId: viewer?.appId, email: viewerEmail, outcome: "denied", reason });
-    return fail(res, status, message);
+    return fail(res, status, message, { reason });
   };
 
   if (TERMINAL.includes(session.lifecycle) ||

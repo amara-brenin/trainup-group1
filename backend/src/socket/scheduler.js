@@ -63,13 +63,27 @@ const startScheduler = (runtime) => {
         if (await runtime.openWaiting(s.appId, "scheduler-waiting-window")) opened += 1;
       }
 
-      // 2) Start sessions whose scheduled time has arrived (atomic + idempotent).
+      // 2) Start sessions whose scheduled time has arrived — but only once the
+      //    Min Participants threshold is met, OR the grace period has elapsed.
       const due = await GroupSession.find({
         lifecycle: { $in: [LIFECYCLE.SCHEDULED, LIFECYCLE.WAITING] },
         startTime: { $ne: null, $lte: new Date(now) },
-      }).select({ appId: 1 }).lean();
+      }).select({ appId: 1, startTime: 1, attendees: 1, config: 1 }).lean();
       for (const s of due) {
-        if (await runtime.startSession(s.appId, "scheduler-auto-start")) started += 1;
+        const minP = Number(s.config?.autoStart?.minParticipants || 1);
+        const graceMins = Number(s.config?.autoStart?.graceMins ?? 15);
+        const connected = (s.attendees || []).filter((a) => a.connected).length;
+        const graceDeadline = new Date(s.startTime).getTime() + graceMins * 60 * 1000;
+        const graceElapsed = now >= graceDeadline;
+
+        if (connected >= minP || graceElapsed) {
+          const reason = connected >= minP ? "scheduler-auto-start" : "scheduler-grace-start";
+          if (await runtime.startSession(s.appId, reason)) started += 1;
+        } else {
+          // Hold in the waiting room; the Hall Screen shows "waiting for
+          // minimum participants (X / Y)" using the broadcast state.
+          await runtime.holdForParticipants(s.appId, connected, minP, graceDeadline);
+        }
       }
 
       // 3) Auto-end live sessions that have reached their endTime.

@@ -30,7 +30,7 @@ type TrainingPayload = {
   voiceName?: string;
   avatarEngine?: { avatarId?: string; language?: string } | null;
 };
-type StatePayload = { lifecycle: string; phase: string; currentSlideIndex?: number };
+type StatePayload = { lifecycle: string; phase: string; currentSlideIndex?: number; attendeeCount?: number; minParticipants?: number };
 
 const isVideo = (name: string) => /\.(mp4|webm|ogg)$/i.test(name || "");
 
@@ -58,9 +58,9 @@ const GroupHallScreen = () => {
   const [caption, setCaption] = useState("");
   const [now, setNow] = useState(Date.now());
   const [qrDataUrl, setQrDataUrl] = useState("");
-  const [joinUrl, setJoinUrl] = useState("");
   const [audioReady, setAudioReady] = useState(false);
   const [autoRun, setAutoRun] = useState(true);
+  const [minParticipants, setMinParticipants] = useState(1);
   const presentTimerRef = useRef<number | null>(null);
 
   const slides = training?.slides ?? [];
@@ -170,12 +170,13 @@ const GroupHallScreen = () => {
       setPhase(s.phase);
       setSlideIndex(s.currentSlideIndex || 0);
       setStartTime(s.startTime ? new Date(s.startTime).getTime() : null);
+      setAttendance({ count: s.attendeeCount || 0 }); // P2: restore count on (re)load
+      setMinParticipants(Number(s.minParticipants || 1));
       const t = data.data.training as unknown as TrainingPayload;
       setTraining({ ...t, slides: Array.isArray(t.slides) ? t.slides : [] });
 
       // Secure QR encodes the session's qrToken (not the raw id).
       const url = withOrigin(`/group/${data.data.qrToken}`);
-      setJoinUrl(url);
       void generateQrDataUrl(url, 260).then((dataUrl) => active && setQrDataUrl(dataUrl));
 
       const socket = connectGroupSocket({ token: data.data.token });
@@ -190,9 +191,15 @@ const GroupHallScreen = () => {
         setLifecycle(p.lifecycle);
         setPhase(p.phase);
         if (typeof p.currentSlideIndex === "number") setSlideIndex(p.currentSlideIndex);
+        if (typeof p.attendeeCount === "number") setAttendance({ count: p.attendeeCount }); // P2
+        if (typeof p.minParticipants === "number") setMinParticipants(p.minParticipants);
       };
       socket.on("session:state", applyState);
       socket.on("session:sync", applyState);
+      socket.on("session:awaiting-participants", (p: { connected: number; minParticipants: number }) => {
+        setAttendance({ count: p.connected });
+        setMinParticipants(p.minParticipants);
+      });
       socket.on("session:attention", () => {
         // Session went live (backend-driven). The presentation auto-run effect
         // handles narration + slide advance once audio is unlocked.
@@ -290,7 +297,7 @@ const GroupHallScreen = () => {
       onNarrationDoneRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isLive, phase, slideIndex, audioReady, autoRun, slides.length]);
+  }, [isLive, phase, slideIndex, audioReady, autoRun, slides.length, avatarReady]);
 
   const countdown = useMemo(() => {
     const total = Math.max(0, Math.floor(msUntilStart / 1000));
@@ -321,15 +328,26 @@ const GroupHallScreen = () => {
         {training?.presenterNotes ? <p className="text-secondary mb-4" style={{ maxWidth: 720 }}>{training.presenterNotes}</p> : null}
 
         <div className="d-flex flex-wrap align-items-center justify-content-center gap-5 mt-2">
-          <div>
-            <div className="text-uppercase small text-secondary mb-2">Starts in</div>
-            <div style={{ fontSize: "4rem", fontWeight: 700, lineHeight: 1 }}>{startTime ? countdown : "--:--"}</div>
-            <div className="text-secondary mt-2">Scheduled: {startTime ? new Date(startTime).toLocaleString() : "—"}</div>
-          </div>
+          {startTime && now >= startTime && attendance.count < minParticipants ? (
+            // P1: start time reached but Min Participants not met — hold + show progress.
+            <div>
+              <div className="text-uppercase small text-warning mb-2">Waiting for minimum participants</div>
+              <div style={{ fontSize: "4rem", fontWeight: 700, lineHeight: 1 }}>{attendance.count} / {minParticipants}</div>
+              <div className="text-secondary mt-2">The training will begin once enough trainees join.</div>
+            </div>
+          ) : (
+            <div>
+              <div className="text-uppercase small text-secondary mb-2">Starts in</div>
+              <div style={{ fontSize: "4rem", fontWeight: 700, lineHeight: 1 }}>{startTime ? countdown : "--:--"}</div>
+              <div className="text-secondary mt-2">Scheduled: {startTime ? new Date(startTime).toLocaleString() : "—"}</div>
+            </div>
+          )}
           <div className="text-center">
             <div className="text-uppercase small text-secondary mb-2">Scan to join</div>
             {qrDataUrl ? <img src={qrDataUrl} alt="Join QR" style={{ width: 220, height: 220, borderRadius: 12 }} /> : <div style={{ width: 220, height: 220 }} className="bg-secondary rounded" />}
-            <div className="small text-secondary mt-2" style={{ maxWidth: 240, wordBreak: "break-all" }}>{joinUrl}</div>
+            {/* Do not expose the raw URL / session token / internal id on the
+                shared hall screen — just instruct trainees to scan. */}
+            <div className="small text-secondary mt-2">Scan QR to Join</div>
           </div>
         </div>
 
@@ -432,6 +450,11 @@ const GroupHallScreen = () => {
                 else if ((status.state === "idle" || status.state === "loaded") && sawTalkingRef.current) {
                   finishNarration();
                 }
+                // P4 recovery: track avatar connection. When it drops and comes
+                // back, avatarReady flips false→true, which re-fires the auto-run
+                // effect and re-narrates the current slide automatically.
+                if (status.state === "unloaded" || status.state === "loading") setAvatarReady(false);
+                else if (status.state === "loaded" || status.state === "idle" || status.state === "talking") setAvatarReady(true);
               }}
             />
           ) : (

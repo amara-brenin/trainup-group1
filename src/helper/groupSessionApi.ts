@@ -38,6 +38,8 @@ export type GroupSessionView = {
   queue: Array<{ traineeId: string; name: string; raisedAt: string }>;
   attendeeCount: number;
   capacity: number;
+  minParticipants?: number;
+  autoEnter?: boolean;
   startTime: string | null;
   endTime: string | null;
   startedAt: string | null;
@@ -73,10 +75,15 @@ export const resolveGroupJoin = (joinToken: string) =>
   );
 
 export const joinGroupSession = (gsId: string) =>
-  groupPost<{ token: string; session: GroupSessionView; training: Record<string, unknown>; me: { traineeId: string; name: string } }>(
-    `/group/${gsId}/join`,
-    {},
-  );
+  groupPost<{
+    token: string;
+    session: GroupSessionView;
+    training: Record<string, unknown>;
+    me: { traineeId: string; name: string };
+    // present on failure envelopes (status=false) so the client can pick the
+    // correct error screen: not-assigned | expired | at-capacity | blocked | ...
+    reason?: string;
+  }>(`/group/${gsId}/join`, {});
 
 export const bootstrapGroupHost = (gsId: string) =>
   groupGet<{ token: string; session: GroupSessionView; qrToken: string; joinCode: string; training: Record<string, unknown> }>(

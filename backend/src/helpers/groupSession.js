@@ -68,7 +68,7 @@ const LIVE_STATES = new Set([PHASE.PRESENTING, PHASE.QA, PHASE.ASSESSMENT, PHASE
 
 const DEFAULT_GROUP_CONFIG = Object.freeze({
   capacity: 50,
-  autoStart: { mode: "scheduled", minParticipants: 1, graceMins: 10 },
+  autoStart: { mode: "scheduled", minParticipants: 1, graceMins: 15, autoEnter: false },
   attendanceRules: { minAttendancePct: 75, activeConfirmIntervalMins: 10 },
   qaRules: {
     maxSpeakSecs: 90,

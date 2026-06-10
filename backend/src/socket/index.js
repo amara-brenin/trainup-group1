@@ -81,7 +81,27 @@ class GroupRuntime {
       startTime: session.startTime,
       startedAt: session.startedAt,
       endedAt: session.endedAt,
+      minParticipants: Number(session.config?.autoStart?.minParticipants || 1),
+      attendeeCount: (session.attendees || []).filter((a) => a.connected).length,
     };
+  }
+
+  // Hold a due session in the waiting room until Min Participants is met (the
+  // scheduler keeps calling this each tick). Broadcasts the live count + the
+  // required threshold so the Hall Screen can show "waiting for participants".
+  async holdForParticipants(gsId, connected, minParticipants, graceDeadline) {
+    const session = await GroupSession.findOne({ appId: gsId });
+    if (!session || session.lifecycle === LIFECYCLE.LIVE) return;
+    if (session.lifecycle === LIFECYCLE.SCHEDULED) {
+      await this.transition(session, LIFECYCLE.WAITING, "awaiting-participants");
+      await session.save();
+    }
+    this.io.to(roomName(gsId)).emit("session:awaiting-participants", {
+      connected,
+      minParticipants,
+      graceDeadline,
+    });
+    this._emitState(session);
   }
   _emitState(session) {
     this.io.to(roomName(session.appId)).emit("session:state", this._statePayload(session));
