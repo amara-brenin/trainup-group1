@@ -4,6 +4,7 @@ const Client = require("../models/Client");
 const User = require("../models/User");
 const GroupSession = require("../models/GroupSession");
 const { ok, fail } = require("../helpers/response");
+const logger = require("../helpers/logger");
 const { getTenantClientId } = require("../helpers/tenant");
 const {
   LIFECYCLE,
@@ -454,6 +455,7 @@ const askGroupQuestion = async (req, res) => {
   if (!message) {
     return fail(res, 400, "Question is required.");
   }
+  logger.qa.info("Question Received", { gsId: session.appId, traineeId, chars: message.length });
 
   const training = await findTrainingById(session.trainingId);
   if (!training) {

@@ -75,6 +75,10 @@ const DEFAULT_GROUP_CONFIG = Object.freeze({
     silenceTimeoutSecs: 20,
     maxQuestionsPerTrainee: 3,
     handRaiseCooldownSecs: 30,
+    // Two-stage post-answer silence handling + closing countdown.
+    followUpPromptDelaySecs: 5, // after answer: wait, then ask "are you still there?"
+    finalSilenceTimeoutSecs: 8, // after the prompt: wait, then release the floor
+    closingCountdownSecs: 15, // queue empty + presentation done: countdown then end
   },
   completionRules: { minAttendancePct: 75, requireAssessmentPass: false },
   assessment: { passPct: 60, scoring: "both" },

@@ -104,6 +104,15 @@ const groupSessionSchema = new Schema(
     floorGrantedAt: { type: Date, default: null },
     queue: { type: [queueEntrySchema], default: [] },
 
+    // Q&A wrap-up state — persisted so a Hall refresh can rehydrate without
+    // getting stuck or re-presenting (see closing/loop-prevention logic).
+    presentationComplete: { type: Boolean, default: false },
+    closing: {
+      active: { type: Boolean, default: false },
+      startedAt: { type: Date, default: null },
+      secs: { type: Number, default: 0 },
+    },
+
     attendees: { type: [attendeeSchema], default: [] },
     transcripts: { type: [transcriptSchema], default: [] },
 

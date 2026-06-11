@@ -30,7 +30,11 @@ type TrainingPayload = {
   voiceName?: string;
   avatarEngine?: { avatarId?: string; language?: string } | null;
 };
-type StatePayload = { lifecycle: string; phase: string; currentSlideIndex?: number; attendeeCount?: number; minParticipants?: number };
+type StatePayload = {
+  lifecycle: string; phase: string; currentSlideIndex?: number; attendeeCount?: number; minParticipants?: number;
+  presentationComplete?: boolean;
+  closing?: { active: boolean; startedAt?: string | null; secs?: number };
+};
 
 const isVideo = (name: string) => /\.(mp4|webm|ogg)$/i.test(name || "");
 
@@ -62,9 +66,12 @@ const GroupHallScreen = () => {
   const [autoRun, setAutoRun] = useState(true);
   const [minParticipants, setMinParticipants] = useState(1);
   const [socketConnected, setSocketConnected] = useState(false);
+  const [closingCountdown, setClosingCountdown] = useState<number | null>(null);
   const presentTimerRef = useRef<number | null>(null);
   const presentationDoneRef = useRef(false); // last slide narrated → presentation complete
   const closingRef = useRef(false); // closing message started → never re-open/loop
+  const closingIntervalRef = useRef<number | null>(null);
+  const closingCommittedRef = useRef(false); // countdown hit 0, host:end sent → cannot cancel
 
   const slides = training?.slides ?? [];
   const currentSlide = slides[slideIndex] ?? null;
@@ -159,6 +166,74 @@ const GroupHallScreen = () => {
     speakRef.current = speak;
   }, [speak]);
 
+  // ---- Graceful closing countdown (Issues 5 & 6; persisted for refresh) ----
+  const cancelClosing = useCallback(() => {
+    // Once the countdown has committed (host:end emitted), it is irreversible —
+    // the backend is authoritative and ending. Refuse to cancel, so the session
+    // can never both end AND resume (Phase 4 race).
+    if (closingCommittedRef.current) return false;
+    if (closingIntervalRef.current) { window.clearInterval(closingIntervalRef.current); closingIntervalRef.current = null; }
+    closingRef.current = false;
+    setClosingCountdown(null);
+    socketRef.current?.emit("host:closing-cancel"); // clear persisted closing state
+    return true;
+  }, []);
+  const cancelClosingRef = useRef(cancelClosing);
+  useEffect(() => { cancelClosingRef.current = cancelClosing; }, [cancelClosing]);
+
+  // Shared interval runner. `startN` is the seconds remaining; `speak` is false
+  // when resuming after a refresh (the greeting was already spoken once).
+  const runClosingCountdown = useCallback((startN: number, speak: boolean) => {
+    closingRef.current = true;
+    closingCommittedRef.current = false;
+    if (speak) {
+      // eslint-disable-next-line no-console
+      console.info("[hall] Closing Countdown Started");
+      speakRef.current("Thank you everyone. If there are no further questions, this session will close in 15 seconds.");
+    } else {
+      // eslint-disable-next-line no-console
+      console.info("[hall] Closing Countdown Resumed", startN);
+    }
+    let n = Math.max(0, Math.ceil(startN));
+    setClosingCountdown(n);
+    if (closingIntervalRef.current) window.clearInterval(closingIntervalRef.current);
+    const tick = () => {
+      n -= 1;
+      setClosingCountdown(n);
+      if (n <= 0) {
+        // Stop + commit FIRST so a hand raise in the same tick cannot cancel an
+        // end already on its way to the backend.
+        if (closingIntervalRef.current) { window.clearInterval(closingIntervalRef.current); closingIntervalRef.current = null; }
+        closingCommittedRef.current = true;
+        // eslint-disable-next-line no-console
+        console.info("[hall] Session Auto Closed (closing countdown elapsed)");
+        socketRef.current?.emit("host:end");
+      }
+    };
+    if (n <= 0) { tick(); return; }
+    closingIntervalRef.current = window.setInterval(tick, 1000);
+  }, []);
+
+  const beginClosing = useCallback(() => {
+    if (closingRef.current) return;
+    socketRef.current?.emit("host:closing-start", { secs: 15 }); // persist for refresh
+    runClosingCountdown(15, true);
+  }, [runClosingCountdown]);
+  const beginClosingRef = useRef(beginClosing);
+  useEffect(() => { beginClosingRef.current = beginClosing; }, [beginClosing]);
+
+  // Resume an in-progress closing countdown after a Hall refresh, using the
+  // persisted startedAt/secs from session state.
+  const resumeClosingRef = useRef<(startedAt: string | null | undefined, secs: number) => void>(() => {});
+  useEffect(() => {
+    resumeClosingRef.current = (startedAt, secs) => {
+      if (closingRef.current || closingCommittedRef.current) return;
+      const started = startedAt ? new Date(startedAt).getTime() : Date.now();
+      const remaining = secs - Math.floor((Date.now() - started) / 1000);
+      runClosingCountdown(remaining, false); // <=0 ends immediately inside the runner
+    };
+  }, [runClosingCountdown]);
+
   useEffect(() => {
     let active = true;
     (async () => {
@@ -190,6 +265,18 @@ const GroupHallScreen = () => {
       socket.on("queue:update", (p: { queue: QueueEntry[] }) => {
         queueRef.current = p.queue || [];
         setQueue(p.queue || []);
+        // Issue 6: a hand raised during the closing countdown cancels the close
+        // and resumes Q&A (no session end, no loop).
+        if (closingRef.current && (p.queue || []).length > 0) {
+          // cancelClosing returns false if the countdown already committed
+          // (host:end in flight) — in that case we must NOT resume Q&A.
+          const cancelled = cancelClosingRef.current?.();
+          if (cancelled) {
+            // eslint-disable-next-line no-console
+            console.info("[hall] Closing Countdown Cancelled (new hand raised)");
+            socketRef.current?.emit("host:phase", { phase: "qa" });
+          }
+        }
       });
       socket.on("attendance:update", (p: { count: number }) => setAttendance({ count: p.count }));
       const applyState = (p: StatePayload) => {
@@ -198,6 +285,11 @@ const GroupHallScreen = () => {
         if (typeof p.currentSlideIndex === "number") setSlideIndex(p.currentSlideIndex);
         if (typeof p.attendeeCount === "number") setAttendance({ count: p.attendeeCount }); // P2
         if (typeof p.minParticipants === "number") setMinParticipants(p.minParticipants);
+        // Rehydrate Q&A wrap-up state so a Hall refresh doesn't re-present or stall.
+        if (p.presentationComplete) presentationDoneRef.current = true;
+        if (p.closing?.active && p.lifecycle === "live") {
+          resumeClosingRef.current?.(p.closing.startedAt ?? null, Number(p.closing.secs || 15));
+        }
       };
       socket.on("session:state", applyState);
       socket.on("session:sync", applyState);
@@ -211,8 +303,27 @@ const GroupHallScreen = () => {
         setAutoRun(true);
       });
       socket.on("floor:granted", (p: { name: string }) => {
-        setNowSpeaking({ name: p.name });
-        speakRef.current(`How can I help you, ${p.name}?`);
+        // A speaker becoming live cancels any in-progress closing countdown.
+        // (grantNext pops the queue then emits floor:granted, so queue:update may
+        // already read empty — this is the reliable cancel signal.)
+        if (closingRef.current) {
+          const cancelled = cancelClosingRef.current?.();
+          if (cancelled) {
+            // eslint-disable-next-line no-console
+            console.info("[hall] Closing Countdown Cancelled (speaker granted)");
+          }
+        }
+        const speakerName = (p.name || "").trim() || "there";
+        setNowSpeaking({ name: speakerName });
+        // eslint-disable-next-line no-console
+        console.info("[hall] Floor Granted", speakerName);
+        speakRef.current(`You're live. How can I help you, ${speakerName}?`);
+      });
+      // Two-stage silence: backend asks the hall to voice the follow-up prompt.
+      socket.on("qa:follow-up-prompt", (p: { text: string }) => {
+        // eslint-disable-next-line no-console
+        console.info("[hall] Follow-up prompt sent");
+        speakRef.current(p.text);
       });
       socket.on("floor:released", (p?: { reason?: string }) => {
         setNowSpeaking(null);
@@ -223,13 +334,7 @@ const GroupHallScreen = () => {
         if (!presentationDoneRef.current) {
           socketRef.current?.emit("host:phase", { phase: "presenting" });
         } else {
-          closingRef.current = true;
-          // eslint-disable-next-line no-console
-          console.info("[hall] session auto-closing (queue empty, presentation complete)");
-          speakRef.current(
-            "Thank you everyone. If there are no further questions, this session is now complete.",
-            () => window.setTimeout(() => socketRef.current?.emit("host:end"), 12000),
-          );
+          beginClosingRef.current?.();
         }
       });
       // Speak the AI answer ONCE through the avatar (or ElevenLabs fallback).
@@ -307,6 +412,7 @@ const GroupHallScreen = () => {
         // later empties, floor:released{queue-empty} triggers the graceful close
         // (not a resume), which prevents the presenting⇄qa loop.
         presentationDoneRef.current = true;
+        socketRef.current?.emit("host:presentation-complete"); // persist for refresh
         socketRef.current?.emit("host:phase", { phase: "qa" });
       }
     };
@@ -408,6 +514,20 @@ const GroupHallScreen = () => {
           <div style={{ fontSize: "3rem" }}>🔊</div>
           <h3 className="mt-2">Tap to start the presentation</h3>
           <p className="text-secondary">The AI trainer will then present and narrate automatically.</p>
+        </div>
+      ) : null}
+
+      {/* Closing countdown — session wraps up when presentation is done and the
+          Q&A queue is empty. A new hand raise cancels this (handled in queue:update). */}
+      {closingCountdown !== null ? (
+        <div
+          className="position-fixed top-0 start-0 w-100 h-100 d-flex flex-column align-items-center justify-content-center"
+          style={{ background: "rgba(0,0,0,0.88)", zIndex: 1080 }}
+        >
+          <h2 className="mb-3">Thank you everyone 👏</h2>
+          <p className="text-secondary mb-4">If there are no further questions, this session will close in</p>
+          <div style={{ fontSize: "5rem", fontWeight: 700, lineHeight: 1 }}>{Math.max(0, closingCountdown)}</div>
+          <p className="text-secondary mt-2">Raise your hand to ask one more question.</p>
         </div>
       ) : null}
 

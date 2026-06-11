@@ -75,7 +75,10 @@ const GroupTraineeController = () => {
   const [lastAnswer, setLastAnswer] = useState<FaqItem | null>(null);
   const [error, setError] = useState(""); // in-session transient messages only
   const [socketConnected, setSocketConnected] = useState(false);
-  const [followUp, setFollowUp] = useState(false); // brief window to ask a follow-up
+  const [followUp, setFollowUp] = useState(false); // post-answer window: ask follow-up or done
+  const [followUpPrompt, setFollowUpPrompt] = useState(""); // AI's "are you still there?" text
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<any>(null); // active SpeechRecognition, for "Done Asking"
 
   // Login form state.
   const [loginEmail, setLoginEmail] = useState("");
@@ -130,11 +133,22 @@ const GroupTraineeController = () => {
     socket.on("session:state", applyState);
     socket.on("session:sync", applyState);
     socket.on("session:attention", () => fireAttention());
-    socket.on("floor:granted", (p: { traineeId: string }) => setHasFloor(p.traineeId === meRef.current?.traineeId));
-    socket.on("floor:released", () => { setHasFloor(false); setListening(false); setFollowUp(false); });
-    // After the AI answer, you keep the floor briefly to ask a follow-up.
+    socket.on("floor:granted", (p: { traineeId: string }) => {
+      if (p.traineeId !== meRef.current?.traineeId) return;
+      setHasFloor(true);
+      setFollowUp(false);
+      setFollowUpPrompt("");
+    });
+    socket.on("floor:released", () => {
+      setHasFloor(false); setListening(false); setFollowUp(false); setFollowUpPrompt("");
+    });
+    // After the AI answer: keep the floor; show [Ask Follow-Up] / [I'm Done].
     socket.on("qa:follow-up", (p: { traineeId: string }) => {
       if (p.traineeId === meRef.current?.traineeId) { setFollowUp(true); setListening(false); }
+    });
+    // The AI verbally prompted "are you still there?" — surface it as text too.
+    socket.on("qa:follow-up-prompt", (p: { traineeId: string; text: string }) => {
+      if (p.traineeId === meRef.current?.traineeId) { setFollowUp(true); setFollowUpPrompt(p.text || ""); }
     });
     socket.on("hand:rejected", (p: { reason: string }) => {
       setError(p.reason === "cooldown" ? "Please wait before raising your hand again." : "You've reached your question limit.");
@@ -284,31 +298,45 @@ const GroupTraineeController = () => {
       setError("Speech input isn't supported on this device/browser. Please use Chrome.");
       return;
     }
-    setListening(true);
     setFollowUp(false); // re-asking → cancel the follow-up window (backend resets on /ask)
+    setFollowUpPrompt("");
     setMyQuestion("");
+    // Tell the backend the speaker re-engaged so it cancels the follow-up
+    // release timers and does not pull the floor while they speak.
+    socketRef.current?.emit("qa:speaking");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const recognition = new (Recognition as any)();
+    recognitionRef.current = recognition;
     recognition.lang = "en-IN";
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;
+    // Track final + last interim in LOCAL vars (not React state) so the onend
+    // handler always reads the freshest transcript — never a stale closure.
     let finalText = "";
+    let interimText = "";
     recognition.onresult = (event: { results: Array<{ 0: { transcript: string }; isFinal: boolean }> }) => {
       let interim = "";
       for (let i = 0; i < event.results.length; i += 1) {
         const r = event.results[i];
         if (r.isFinal) finalText += r[0].transcript; else interim += r[0].transcript;
       }
+      interimText = interim;
       setMyQuestion((finalText || interim).trim());
     };
     recognition.onerror = (ev: { error?: string }) => {
       setListening(false);
-      setError(ev?.error === "no-speech" ? "Didn't catch that — tap the mic and try again." : "Microphone error — please retry.");
+      // Fall back to the manual Speak button — never leave the user stuck.
+      setError(ev?.error === "no-speech" ? "Didn't catch that — tap Speak and try again."
+        : ev?.error === "not-allowed" || ev?.error === "service-not-allowed"
+          ? "Microphone blocked. Allow mic access, then tap Speak."
+          : "Microphone error — tap Speak to retry.");
     };
     recognition.onend = async () => {
       setListening(false);
-      const transcript = finalText.trim() || myQuestion.trim();
-      if (!transcript || !session) { setError("Didn't catch that — tap the mic and try again."); return; }
+      // Merge: prefer finalized text, else the last interim we captured. The
+      // local interimText is never stale (unlike the myQuestion state closure).
+      const transcript = (finalText.trim() || interimText.trim()).trim();
+      if (!transcript || !session) { setError("Didn't catch that — tap Speak and try again."); return; }
       try {
         const res = await askGroupQuestion(session.id, tokenRef.current, transcript);
         if (res.data.status && res.data.data?.reply) {
@@ -317,12 +345,36 @@ const GroupTraineeController = () => {
       } catch (_e) { setError("Could not send your question. Please try again."); return; }
       // Do NOT release the floor here. The hall speaks the answer; the backend
       // then opens a short follow-up window and auto-releases on inactivity. Use
-      // the "Done" (✕) button to end early.
+      // the "I'm Done" button to end early.
     };
-    recognition.start();
-  }, [session, myQuestion]);
+    // recognition.start() can throw (no gesture, mic busy, permission). On
+    // failure, surface the manual Speak button rather than a stuck "listening".
+    try {
+      recognition.start();
+      setListening(true);
+    } catch (_e) {
+      setListening(false);
+      recognitionRef.current = null;
+      setError("Tap Speak to start your question.");
+    }
+  }, [session]);
 
-  const cancelFloor = () => { setListening(false); setMyQuestion(""); socketRef.current?.emit("qa:done"); };
+  // NOTE: the mic is NOT auto-started on floor grant. Starting recognition while
+  // the hall avatar speaks the greeting caused the assistant's own voice to be
+  // captured as trainee speech on some devices. The participant taps [🎤 Speak]
+  // to begin — see the footer controls.
+
+  // "Done Asking" — stop capturing immediately and let the AI answer (bypasses
+  // browser silence detection). recognition.onend then sends the question.
+  const doneAsking = () => {
+    try { recognitionRef.current?.stop(); } catch (_e) { /* ignore */ }
+  };
+
+  // "I'm Done" — release the floor now; backend moves to the next participant.
+  const cancelFloor = () => {
+    setListening(false); setMyQuestion(""); setFollowUp(false); setFollowUpPrompt("");
+    socketRef.current?.emit("qa:done");
+  };
 
   const shell = (children: React.ReactNode) => (
     <div className="d-flex vh-100 align-items-center justify-content-center text-center p-4">{children}</div>
@@ -452,7 +504,6 @@ const GroupTraineeController = () => {
 
   // Live presentation follower.
   const progressPct = totalSlides > 0 ? Math.round(((slideIndex + 1) / totalSlides) * 100) : 0;
-  const micEnabled = hasFloor;
 
   return (
     <div className="d-flex flex-column vh-100" style={{ background: "#0b1220", color: "#fff" }}>
@@ -505,10 +556,20 @@ const GroupTraineeController = () => {
 
       <div className="px-3 py-2" style={{ minHeight: 64 }}>
         {hasFloor ? (
-          followUp ? (
-            <div className="text-warning fw-semibold">🎤 Ask a follow-up, or you'll be done shortly…</div>
+          listening ? (
+            <div className="text-warning fw-semibold">🎙️ Listening… speak your question, then tap “Done Asking”.</div>
+          ) : followUp ? (
+            <div>
+              <div className="text-success fw-bold">🗣️ Your turn to speak</div>
+              <div className="small text-warning mt-1">
+                {followUpPrompt || "Tap “Ask Follow-Up” to continue, or “Done” if you’re finished."}
+              </div>
+            </div>
           ) : (
-            <div className="text-warning fw-semibold">🎤 How can I help you{me ? `, ${me.name}` : ""}?</div>
+            <div>
+              <div className="text-success fw-bold">🗣️ Your turn to speak</div>
+              <div className="small text-warning mt-1">Tap “Speak” to ask your question{me ? `, ${me.name}` : ""}.</div>
+            </div>
           )
         ) : lastAnswer ? (
           <div className="small"><span className="text-secondary">AI: </span>{lastAnswer.answer}</div>
@@ -519,16 +580,36 @@ const GroupTraineeController = () => {
         {error ? <div className="small text-warning mt-1">{error}</div> : null}
       </div>
 
+      {/* State-driven controls — no repeated Speak clicks within one turn. */}
       <div className="d-flex gap-2 p-3 border-top" style={{ borderColor: "#1f2a3a" }}>
-        <button className={`btn flex-fill ${handRaised ? "btn-outline-light" : "btn-primary"}`} disabled={hasFloor} onClick={toggleHand}>
-          {handRaised ? (myPosition >= 0 ? `✋ #${myPosition + 1} in queue` : "✋ Raised") : "✋ Raise Hand"}
-        </button>
-        <button className={`btn flex-fill ${micEnabled ? "btn-warning" : "btn-secondary"}`}
-          disabled={!micEnabled || listening} onClick={startSpeaking}
-          title={micEnabled ? "Ask your question" : "Microphone activates when the AI calls on you"}>
-          {listening ? "🎙️ Listening…" : micEnabled ? "🎤 Speak" : "🎤 Mic"}
-        </button>
-        {hasFloor ? <button className="btn btn-outline-light" onClick={cancelFloor} title="Done">✕</button> : null}
+        {!hasFloor ? (
+          <button className={`btn flex-fill ${handRaised ? "btn-outline-light" : "btn-primary"}`} disabled={status === "ended"} onClick={toggleHand}>
+            {handRaised ? (myPosition >= 0 ? `✋ #${myPosition + 1} in queue` : "✋ Raised") : "✋ Raise Hand"}
+          </button>
+        ) : listening ? (
+          <button className="btn btn-success flex-fill" onClick={doneAsking}>✅ Done Asking</button>
+        ) : followUp ? (
+          <>
+            <button className="btn btn-warning flex-fill" onClick={startSpeaking}>🎤 Ask Follow-Up</button>
+            <button className="btn btn-outline-light flex-fill" onClick={cancelFloor}>I’m Done</button>
+          </>
+        ) : (
+          // Large, obvious primary action — non-technical users need a clear
+          // "now it's your time to talk" cue, not a terse "Speak".
+          <div className="d-flex flex-column flex-fill gap-2">
+            <button
+              className="btn btn-warning fw-bold w-100"
+              style={{ fontSize: "1.4rem", padding: "0.9rem 1rem" }}
+              onClick={startSpeaking}
+            >
+              🎤 Start Speaking
+            </button>
+            <div className="text-center small text-secondary">Click and ask your question</div>
+            <button className="btn btn-outline-light btn-sm w-100" onClick={cancelFloor} title="Release the floor">
+              I’m Done
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

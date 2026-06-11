@@ -91,6 +91,12 @@ class GroupRuntime {
       startTime: session.startTime,
       startedAt: session.startedAt,
       endedAt: session.endedAt,
+      // Q&A wrap-up state — lets a refreshed Hall rehydrate the closing
+      // countdown + presentation-complete flag (no stuck/loop).
+      presentationComplete: Boolean(session.presentationComplete),
+      closing: session.closing?.active
+        ? { active: true, startedAt: session.closing.startedAt, secs: Number(session.closing.secs || 0) }
+        : { active: false, startedAt: null, secs: 0 },
       minParticipants: Number(session.config?.autoStart?.minParticipants || 1),
       attendeeCount: (session.attendees || []).filter((a) => a.connected).length,
     };
@@ -161,27 +167,58 @@ class GroupRuntime {
     this._clearPendingAnswer(gsId);
     const timer = setTimeout(() => this.answerComplete(gsId, "answer-timeout"), 60000);
     this.pendingAnswers.set(gsId, { traineeId, timer });
-    logger.qa.info("Q&A answer generated", { gsId, traineeId });
+    logger.qa.info("Answer Generated", { gsId, traineeId });
+    logger.qa.info("Answer Playback Started", { gsId, traineeId });
     this.io.to(roomName(gsId)).emit("qa:answer", { traineeId, question, answer });
   }
 
-  // Hall reports the answer finished speaking. Do NOT release immediately —
-  // keep the floor with the SAME speaker for a short follow-up window so they
-  // can ask again. If they stay silent, the inactivity timer releases the floor.
+  // Hall reports the answer finished speaking. Two-stage silence handling:
+  //  stage 1: wait followUpPromptDelaySecs → AI asks "are you still there?"
+  //  stage 2: wait finalSilenceTimeoutSecs → release the floor
+  // A new question (broadcastAnswer), or "I'm Done" (qa:done) cancels both.
   async answerComplete(gsId, reason = "host-answer-complete") {
     if (!this.pendingAnswers.has(gsId)) return;
     this._clearPendingAnswer(gsId);
-    logger.qa.info("Q&A answer playback completed", { gsId, reason });
+    logger.qa.info("Answer Playback Completed", { gsId, reason });
 
     const session = await GroupSession.findOne({ appId: gsId });
     if (!session || session.lifecycle !== LIFECYCLE.LIVE || !session.activeSpeakerId) {
       return this.releaseFloor(gsId, reason);
     }
-    const followUpSecs = Number(session.config?.qaRules?.followUpSecs || 5);
+    const qa = session.config?.qaRules || {};
+    const promptDelay = Number(qa.followUpPromptDelaySecs || 5);
+    const traineeId = session.activeSpeakerId;
+    const attendee = session.attendees.find((a) => a.traineeId === traineeId);
+
     this._clearFollowUp(gsId);
-    this.followUps.set(gsId, setTimeout(() => this.releaseFloor(gsId, "inactivity"), followUpSecs * 1000));
-    // Tell the active speaker their mic is open again for a follow-up.
-    this.io.to(roomName(gsId)).emit("qa:follow-up", { traineeId: session.activeSpeakerId, secs: followUpSecs });
+    // Show the trainee the follow-up choices immediately.
+    this.io.to(roomName(gsId)).emit("qa:follow-up", { traineeId, name: attendee?.name || "", stage: "open" });
+    // Stage 1 timer: prompt after the quiet delay.
+    this.followUps.set(gsId, setTimeout(() => this._promptFollowUp(gsId), promptDelay * 1000));
+  }
+
+  async _promptFollowUp(gsId) {
+    const session = await GroupSession.findOne({ appId: gsId });
+    if (!session || session.lifecycle !== LIFECYCLE.LIVE || !session.activeSpeakerId) return;
+    const qa = session.config?.qaRules || {};
+    const finalSilence = Number(qa.finalSilenceTimeoutSecs || 8);
+    const traineeId = session.activeSpeakerId;
+    const attendee = session.attendees.find((a) => a.traineeId === traineeId);
+    const name = attendee?.name || "";
+    logger.qa.info("Follow-Up Prompt Sent", { gsId, traineeId, name });
+    // Hall AI speaks this; trainee sees the prompt + a final window.
+    this.io.to(roomName(gsId)).emit("qa:follow-up-prompt", {
+      traineeId,
+      name,
+      text: `Are you still there${name ? `, ${name}` : ""}? Do you have any follow-up question?`,
+      secs: finalSilence,
+    });
+    // Stage 2 timer: release if still silent.
+    this._clearFollowUp(gsId);
+    this.followUps.set(gsId, setTimeout(() => {
+      logger.qa.info("Follow-Up Timeout", { gsId, traineeId });
+      this.releaseFloor(gsId, "inactivity");
+    }, finalSilence * 1000));
   }
 
   // ---- start a session (scheduler OR manual override) ------------------
@@ -349,6 +386,7 @@ class GroupRuntime {
 
     session.endedAt = new Date();
     session.activeSpeakerId = "";
+    session.closing = { active: false, startedAt: null, secs: 0 };
     session.active = false; // RULE 1: frees the one-active-session slot for the training
     session.attendees.forEach((a) => {
       if (a.connected && a.lastHeartbeat) a.totalActiveMs += now - new Date(a.lastHeartbeat).getTime();
@@ -556,6 +594,20 @@ class GroupRuntime {
       this._emitQueue(session);
     });
 
+    // Trainee re-engaged (clicked Ask Follow-Up / started speaking) during the
+    // post-answer window. Cancel BOTH follow-up timers so the floor is not
+    // released out from under them while they speak (Phase 3, Cases B & C).
+    on("qa:speaking", async () => {
+      if (role !== "trainee") return;
+      const session = await GroupSession.findOne({ appId: gsId });
+      if (!session || session.activeSpeakerId !== sub) return;
+      if (this.followUps.has(gsId)) {
+        const a = session.attendees.find((x) => x.traineeId === sub);
+        logger.qa.info("Follow-Up Prompt Answered", { gsId, traineeId: sub, name: a?.name });
+      }
+      this._clearFollowUp(gsId);
+    });
+
     on("qa:done", async () => {
       if (role !== "trainee") return;
       const session = await GroupSession.findOne({ appId: gsId });
@@ -586,6 +638,32 @@ class GroupRuntime {
     on("host:end", async () => {
       if (role !== "host") return;
       await this.endSession(gsId, "host-ended");
+    });
+    // Persist "presentation finished" so a Hall refresh never re-presents.
+    on("host:presentation-complete", async () => {
+      if (role !== "host") return;
+      const session = await GroupSession.findOne({ appId: gsId });
+      if (!session || session.presentationComplete) return;
+      session.presentationComplete = true;
+      await session.save();
+      this._emitState(session);
+    });
+    // Persist the closing countdown so it survives a Hall refresh.
+    on("host:closing-start", async ({ secs } = {}) => {
+      if (role !== "host") return;
+      const session = await GroupSession.findOne({ appId: gsId });
+      if (!session || session.lifecycle !== LIFECYCLE.LIVE) return;
+      session.closing = { active: true, startedAt: new Date(), secs: Number(secs || 15) };
+      await session.save();
+      this._emitState(session);
+    });
+    on("host:closing-cancel", async () => {
+      if (role !== "host") return;
+      const session = await GroupSession.findOne({ appId: gsId });
+      if (!session || !session.closing?.active) return;
+      session.closing = { active: false, startedAt: null, secs: 0 };
+      await session.save();
+      this._emitState(session);
     });
     on("host:advance", async ({ slideId, slideIndex, topic } = {}) => {
       if (role !== "host") return;
