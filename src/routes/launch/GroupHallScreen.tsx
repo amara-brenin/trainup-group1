@@ -63,6 +63,8 @@ const GroupHallScreen = () => {
   const [minParticipants, setMinParticipants] = useState(1);
   const [socketConnected, setSocketConnected] = useState(false);
   const presentTimerRef = useRef<number | null>(null);
+  const presentationDoneRef = useRef(false); // last slide narrated → presentation complete
+  const closingRef = useRef(false); // closing message started → never re-open/loop
 
   const slides = training?.slides ?? [];
   const currentSlide = slides[slideIndex] ?? null;
@@ -214,17 +216,34 @@ const GroupHallScreen = () => {
       });
       socket.on("floor:released", (p?: { reason?: string }) => {
         setNowSpeaking(null);
-        // The backend grants the next speaker (if any) on release. When the
-        // queue is empty, resume the presentation automatically.
-        if (p?.reason === "queue-empty") {
+        if (p?.reason !== "queue-empty") return; // a specific speaker was just granted next
+        // Queue is empty. Either resume the remaining presentation, or — if the
+        // presentation already finished — close the session gracefully (once).
+        if (closingRef.current) return;
+        if (!presentationDoneRef.current) {
           socketRef.current?.emit("host:phase", { phase: "presenting" });
+        } else {
+          closingRef.current = true;
+          // eslint-disable-next-line no-console
+          console.info("[hall] session auto-closing (queue empty, presentation complete)");
+          speakRef.current(
+            "Thank you everyone. If there are no further questions, this session is now complete.",
+            () => window.setTimeout(() => socketRef.current?.emit("host:end"), 12000),
+          );
         }
       });
-      // Speak the AI answer through the avatar (or ElevenLabs fallback). When it
-      // finishes, tell the backend so it releases the floor and grants the next
-      // trainee — guaranteeing strict one-at-a-time turn sequencing.
+      // Speak the AI answer ONCE through the avatar (or ElevenLabs fallback).
+      // On playback end, tell the backend so it opens the follow-up window and
+      // (after inactivity) releases the floor. No replay: finishNarration fires
+      // the callback a single time and clears the handler.
       socket.on("qa:answer", (p: { answer: string }) => {
-        speakRef.current(p.answer, () => socketRef.current?.emit("host:answer-complete"));
+        // eslint-disable-next-line no-console
+        console.info("[hall] Q&A answer playback starting");
+        speakRef.current(p.answer, () => {
+          // eslint-disable-next-line no-console
+          console.info("[hall] Q&A answer playback completed");
+          socketRef.current?.emit("host:answer-complete");
+        });
       });
       socket.on("session:ended", () => setLifecycle("completed"));
     })();
@@ -281,8 +300,15 @@ const GroupHallScreen = () => {
       if (done) return;
       done = true;
       if (presentTimerRef.current) window.clearTimeout(presentTimerRef.current);
-      if (slideIndex < slides.length - 1) goToSlide(slideIndex + 1);
-      else socketRef.current?.emit("host:phase", { phase: "qa" }); // auto-open Q&A after last slide
+      if (slideIndex < slides.length - 1) {
+        goToSlide(slideIndex + 1);
+      } else {
+        // Presentation finished → mark done and open Q&A. When the Q&A queue
+        // later empties, floor:released{queue-empty} triggers the graceful close
+        // (not a resume), which prevents the presenting⇄qa loop.
+        presentationDoneRef.current = true;
+        socketRef.current?.emit("host:phase", { phase: "qa" });
+      }
     };
 
     // Advance when narration actually completes…

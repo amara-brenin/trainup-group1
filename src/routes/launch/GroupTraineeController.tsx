@@ -75,6 +75,7 @@ const GroupTraineeController = () => {
   const [lastAnswer, setLastAnswer] = useState<FaqItem | null>(null);
   const [error, setError] = useState(""); // in-session transient messages only
   const [socketConnected, setSocketConnected] = useState(false);
+  const [followUp, setFollowUp] = useState(false); // brief window to ask a follow-up
 
   // Login form state.
   const [loginEmail, setLoginEmail] = useState("");
@@ -130,7 +131,11 @@ const GroupTraineeController = () => {
     socket.on("session:sync", applyState);
     socket.on("session:attention", () => fireAttention());
     socket.on("floor:granted", (p: { traineeId: string }) => setHasFloor(p.traineeId === meRef.current?.traineeId));
-    socket.on("floor:released", () => { setHasFloor(false); setListening(false); });
+    socket.on("floor:released", () => { setHasFloor(false); setListening(false); setFollowUp(false); });
+    // After the AI answer, you keep the floor briefly to ask a follow-up.
+    socket.on("qa:follow-up", (p: { traineeId: string }) => {
+      if (p.traineeId === meRef.current?.traineeId) { setFollowUp(true); setListening(false); }
+    });
     socket.on("hand:rejected", (p: { reason: string }) => {
       setError(p.reason === "cooldown" ? "Please wait before raising your hand again." : "You've reached your question limit.");
       setTimeout(() => setError(""), 3000);
@@ -280,6 +285,7 @@ const GroupTraineeController = () => {
       return;
     }
     setListening(true);
+    setFollowUp(false); // re-asking → cancel the follow-up window (backend resets on /ask)
     setMyQuestion("");
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const recognition = new (Recognition as any)();
@@ -309,7 +315,9 @@ const GroupTraineeController = () => {
           setLastAnswer({ name: "AI Trainer", question: transcript, answer: res.data.data.reply });
         }
       } catch (_e) { setError("Could not send your question. Please try again."); return; }
-      socketRef.current?.emit("qa:done");
+      // Do NOT release the floor here. The hall speaks the answer; the backend
+      // then opens a short follow-up window and auto-releases on inactivity. Use
+      // the "Done" (✕) button to end early.
     };
     recognition.start();
   }, [session, myQuestion]);
@@ -497,7 +505,11 @@ const GroupTraineeController = () => {
 
       <div className="px-3 py-2" style={{ minHeight: 64 }}>
         {hasFloor ? (
-          <div className="text-warning fw-semibold">🎤 How can I help you{me ? `, ${me.name}` : ""}?</div>
+          followUp ? (
+            <div className="text-warning fw-semibold">🎤 Ask a follow-up, or you'll be done shortly…</div>
+          ) : (
+            <div className="text-warning fw-semibold">🎤 How can I help you{me ? `, ${me.name}` : ""}?</div>
+          )
         ) : lastAnswer ? (
           <div className="small"><span className="text-secondary">AI: </span>{lastAnswer.answer}</div>
         ) : (

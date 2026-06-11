@@ -40,7 +40,14 @@ export const connectGroupSocket = (auth: GroupSocketAuth, label = "client"): Soc
   const path = resolveSocketPath();
   const socket = io(origin, {
     path,
-    transports: ["websocket", "polling"],
+    // POLLING FIRST, then upgrade. Long-polling is plain HTTP/XHR and rides the
+    // exact same /api-v1 route the REST API already uses, so it connects even
+    // when the reverse proxy doesn't pass WebSocket Upgrade headers (which was
+    // returning HTTP 400 on the raw WS handshake). Engine.IO then transparently
+    // upgrades to WebSocket if the proxy allows it, and silently stays on
+    // polling if it doesn't — realtime works either way.
+    transports: ["polling", "websocket"],
+    upgrade: true,
     auth,
     reconnection: true,
     reconnectionAttempts: Infinity,

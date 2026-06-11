@@ -33,12 +33,21 @@ class GroupRuntime {
     // gsId -> { traineeId, timer }: an answer is being delivered on the hall.
     // The next speaker is NOT granted until the hall reports answer-complete.
     this.pendingAnswers = new Map();
+    // gsId -> timeout: after an answer finishes, the speaker keeps the floor for
+    // a short follow-up window; if they don't ask again, the floor auto-releases.
+    this.followUps = new Map();
   }
 
   _clearPendingAnswer(gsId) {
     const pending = this.pendingAnswers.get(gsId);
     if (pending?.timer) clearTimeout(pending.timer);
     this.pendingAnswers.delete(gsId);
+  }
+
+  _clearFollowUp(gsId) {
+    const t = this.followUps.get(gsId);
+    if (t) clearTimeout(t);
+    this.followUps.delete(gsId);
   }
 
   // ---- timers ----------------------------------------------------------
@@ -148,18 +157,31 @@ class GroupRuntime {
 
   broadcastAnswer(gsId, { traineeId, question, answer }) {
     this._clearFloorTimers(gsId);
+    this._clearFollowUp(gsId); // a new question arrived → cancel any pending auto-release
     this._clearPendingAnswer(gsId);
     const timer = setTimeout(() => this.answerComplete(gsId, "answer-timeout"), 60000);
     this.pendingAnswers.set(gsId, { traineeId, timer });
+    logger.qa.info("Q&A answer generated", { gsId, traineeId });
     this.io.to(roomName(gsId)).emit("qa:answer", { traineeId, question, answer });
   }
 
-  // Called when the hall finishes speaking the answer (or the safety timeout).
-  // Only now is the floor released and the next trainee granted.
+  // Hall reports the answer finished speaking. Do NOT release immediately —
+  // keep the floor with the SAME speaker for a short follow-up window so they
+  // can ask again. If they stay silent, the inactivity timer releases the floor.
   async answerComplete(gsId, reason = "host-answer-complete") {
     if (!this.pendingAnswers.has(gsId)) return;
     this._clearPendingAnswer(gsId);
-    await this.releaseFloor(gsId, reason);
+    logger.qa.info("Q&A answer playback completed", { gsId, reason });
+
+    const session = await GroupSession.findOne({ appId: gsId });
+    if (!session || session.lifecycle !== LIFECYCLE.LIVE || !session.activeSpeakerId) {
+      return this.releaseFloor(gsId, reason);
+    }
+    const followUpSecs = Number(session.config?.qaRules?.followUpSecs || 5);
+    this._clearFollowUp(gsId);
+    this.followUps.set(gsId, setTimeout(() => this.releaseFloor(gsId, "inactivity"), followUpSecs * 1000));
+    // Tell the active speaker their mic is open again for a follow-up.
+    this.io.to(roomName(gsId)).emit("qa:follow-up", { traineeId: session.activeSpeakerId, secs: followUpSecs });
   }
 
   // ---- start a session (scheduler OR manual override) ------------------
@@ -216,7 +238,10 @@ class GroupRuntime {
     session.phase = phase;
     await session.save();
     this._emitState(session);
-    if (phase === PHASE.QA && !session.activeSpeakerId) await this.grantNext(gsId);
+    if (phase === PHASE.QA) {
+      logger.qa.info("Q&A started", { gsId });
+      if (!session.activeSpeakerId) await this.grantNext(gsId);
+    }
   }
 
   // ---- floor control ---------------------------------------------------
@@ -243,6 +268,7 @@ class GroupRuntime {
     const qa = session.config?.qaRules || {};
     const maxSpeakSecs = Number(qa.maxSpeakSecs || 90);
     const silenceTimeoutSecs = Number(qa.silenceTimeoutSecs || 20);
+    logger.qa.info("Next speaker granted", { gsId, traineeId: next.traineeId, name: attendee?.name });
     this.io.to(roomName(gsId)).emit("floor:granted", {
       traineeId: next.traineeId,
       name: attendee?.name || next.name || "",
@@ -260,9 +286,12 @@ class GroupRuntime {
     const session = await GroupSession.findOne({ appId: gsId });
     if (!session) return;
     this._clearFloorTimers(gsId);
+    this._clearFollowUp(gsId);
+    this._clearPendingAnswer(gsId);
     session.activeSpeakerId = "";
     session.floorGrantedAt = null;
     await session.save();
+    logger.qa.info("Floor released", { gsId, reason });
     this.io.to(roomName(gsId)).emit("floor:released", { reason });
     await this.grantNext(gsId);
   }
@@ -279,6 +308,7 @@ class GroupRuntime {
         session.phase = PHASE.PAUSED;
         this._clearFloorTimers(gsId);
         this._clearPendingAnswer(gsId);
+        this._clearFollowUp(gsId);
         await session.save();
         this._emitState(session);
         return;
@@ -335,8 +365,10 @@ class GroupRuntime {
 
     // Release all per-session runtime state so the maps don't grow unbounded.
     this._clearPendingAnswer(gsId);
+    this._clearFollowUp(gsId);
     this.timers.delete(gsId);
 
+    logger.qa.info("Session auto-closed", { gsId, reason });
     this.io.to(roomName(gsId)).emit("session:ended", { reason });
     this._emitState(session);
   }
