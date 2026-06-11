@@ -10,20 +10,28 @@ const config = require("../config");
 // Backward compatible: when PUBLIC_BASE_PATH is unset or "/", `publicBasePath`
 // is "" and these helpers are no-ops (root deployments keep working).
 
-// Prefix an in-app absolute path with the base path. Slash-safe: never produces
-// "//" and never drops a needed "/".
-const withBasePath = (path = "/") => {
-  const base = config.publicBasePath; // "" or "/trainup-demo"
+// Normalize any base-path value to "" or "/segment" (no trailing slash).
+const normalizeBasePath = (value) => {
+  let v = String(value || "").trim();
+  if (!v || v === "/") return "";
+  if (!v.startsWith("/")) v = `/${v}`;
+  return v.replace(/\/+$/, "");
+};
+
+// Prefix an in-app absolute path with the base path. Slash-safe. `basePath` may
+// be passed per-request (e.g. from the admin app's X-App-Base-Path header);
+// otherwise the configured PUBLIC_BASE_PATH is used.
+const withBasePath = (path = "/", basePath) => {
+  const base = basePath !== undefined && basePath !== null ? normalizeBasePath(basePath) : config.publicBasePath;
   const normalizedPath = !path ? "/" : path.startsWith("/") ? path : `/${path}`;
   return `${base}${normalizedPath}` || "/";
 };
 
 // Build a full absolute URL: origin + base path + path. `origin` must be an
-// origin only (scheme://host[:port]); any trailing slash is trimmed so we don't
-// create a double slash before the base path.
-const buildPublicUrl = (origin, path = "/") => {
+// origin only (scheme://host[:port]).
+const buildPublicUrl = (origin, path = "/", basePath) => {
   const cleanOrigin = String(origin || "").trim().replace(/\/+$/, "");
-  return `${cleanOrigin}${withBasePath(path)}`;
+  return `${cleanOrigin}${withBasePath(path, basePath)}`;
 };
 
-module.exports = { withBasePath, buildPublicUrl };
+module.exports = { withBasePath, buildPublicUrl, normalizeBasePath };

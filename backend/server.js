@@ -10,6 +10,7 @@ const { connectDatabase } = require("./src/database/connect");
 const { ensureSeedData } = require("./src/helpers/seed");
 const { attachSocket } = require("./src/socket");
 const { startScheduler } = require("./src/socket/scheduler");
+const { reconcileGroupSessions } = require("./src/helpers/reconcileGroupSessions");
 const openRoutes = require("./src/routes/open.routes");
 const adminRoutes = require("./src/routes/admin.routes");
 const superAdminRoutes = require("./src/routes/super-admin.routes");
@@ -46,7 +47,7 @@ const corsDelegate = async (req, callback) => {
     origin: isAllowed,
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Authorization", "Content-Type"],
+    allowedHeaders: ["Authorization", "Content-Type", "X-App-Base-Path"],
   });
 };
 
@@ -88,6 +89,9 @@ app.all("*", (_req, res) => {
 const startServer = async () => {
   await connectDatabase();
   await ensureSeedData();
+  // Enforce "one active GroupSession per training": collapse legacy duplicates
+  // then build the partial unique index. Must run before the socket scheduler.
+  await reconcileGroupSessions();
 
   const httpServer = http.createServer(app);
   const runtime = await attachSocket(httpServer, app);

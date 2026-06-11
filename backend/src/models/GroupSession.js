@@ -112,8 +112,25 @@ const groupSessionSchema = new Schema(
     startedAt: { type: Date, default: null },
     endedAt: { type: Date, default: null },
     createdBy: { type: String, default: "" },
+
+    // RULE 1: exactly one ACTIVE (non-terminal) session per training+client.
+    // `active` is true while the session is usable (scheduled/waiting/starting/
+    // live) and set false on completed/cancelled. A partial unique index below
+    // enforces this at the database layer.
+    active: { type: Boolean, default: true },
   },
   { timestamps: true },
 );
+
+// DB-level guarantee: at most one active GroupSession per (trainingId, clientId).
+// Partial filter uses an equality match (supported by partial indexes).
+groupSessionSchema.index(
+  { trainingId: 1, clientId: 1 },
+  { unique: true, partialFilterExpression: { active: true } },
+);
+
+// Build indexes explicitly after startup reconciliation (see
+// reconcileGroupSessions) so a pre-existing duplicate cannot abort index build.
+groupSessionSchema.set("autoIndex", false);
 
 module.exports = models.GroupSession || model("GroupSession", groupSessionSchema);

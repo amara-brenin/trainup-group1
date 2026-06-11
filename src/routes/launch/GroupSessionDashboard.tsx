@@ -83,7 +83,7 @@ const GroupSessionDashboard = () => {
     }
     void refresh();
 
-    const socket = connectGroupSocket({ token: getAuthToken(), gsId });
+    const socket = connectGroupSocket({ token: getAuthToken(), gsId }, "admin");
     socketRef.current = socket;
     socket.on("queue:update", (p: { queue: QueueEntry[] }) =>
       setSnapshot((s) => (s ? { ...s, queue: p.queue || [] } : s)),

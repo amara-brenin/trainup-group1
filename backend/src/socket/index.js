@@ -4,6 +4,7 @@ const Training = require("../models/Training");
 const config = require("../config");
 const logger = require("../helpers/logger");
 const { verifyAuthToken } = require("../helpers/auth");
+const { findClientByHostname } = require("../helpers/tenant");
 const {
   LIFECYCLE,
   PHASE,
@@ -133,6 +134,18 @@ class GroupRuntime {
   // granted while the previous answer is still playing. Floor timers are cleared
   // (the trainee is no longer "speaking"); a safety timeout prevents a deadlock
   // if the hall never reports completion.
+  // Live room membership (real socket ids in the room) — used by the debug
+  // endpoint to PROVE hall + trainees share the same room.
+  async getRoomInfo(gsId) {
+    const room = roomName(gsId);
+    const sockets = await this.io.in(room).fetchSockets();
+    return {
+      room,
+      socketCount: sockets.length,
+      members: sockets.map((s) => ({ socketId: s.id, role: s.data?.role, sub: s.data?.sub })),
+    };
+  }
+
   broadcastAnswer(gsId, { traineeId, question, answer }) {
     this._clearFloorTimers(gsId);
     this._clearPendingAnswer(gsId);
@@ -306,6 +319,7 @@ class GroupRuntime {
 
     session.endedAt = new Date();
     session.activeSpeakerId = "";
+    session.active = false; // RULE 1: frees the one-active-session slot for the training
     session.attendees.forEach((a) => {
       if (a.connected && a.lastHeartbeat) a.totalActiveMs += now - new Date(a.lastHeartbeat).getTime();
       a.connected = false;
@@ -382,6 +396,8 @@ class GroupRuntime {
   registerConnection(socket) {
     const { gsId, role, sub, name } = socket.data;
     socket.join(roomName(gsId));
+    logger.socket.info("socket connected", { socketId: socket.id, role, gsId, room: roomName(gsId), transport: socket.conn?.transport?.name });
+    socket.on("disconnect", (reason) => logger.socket.info("socket disconnected", { socketId: socket.id, role, gsId, reason }));
 
     // Wrap every async handler so one failure cannot crash the process or leak
     // an unhandled rejection. Errors are logged structurally and a safe,
@@ -630,15 +646,19 @@ const attachRedisAdapter = async (io) => {
 };
 
 const attachSocket = async (httpServer, app) => {
+  // Mount under the API prefix ("/api-v1/socket.io") so the socket rides the
+  // same reverse-proxy route as the REST API. The default "/socket.io" is often
+  // not proxied under a subpath deployment, which breaks all realtime events.
+  const socketPath = `${String(config.apiPrefix || "/api-v1").replace(/\/+$/, "")}/socket.io`;
   const io = new Server(httpServer, {
-    cors: {
-      origin: (origin, cb) => {
-        const allowed = !origin || config.corsOrigins.includes(origin) || isTrustedVercelPreviewOrigin(origin);
-        cb(null, allowed);
-      },
-      credentials: true,
-    },
+    path: socketPath,
+    // The socket is authenticated by a signed token on every connection
+    // (authenticateSocket), so the CORS origin is NOT the security boundary.
+    // Reflect any origin to remove CORS as a connection-failure cause entirely
+    // — previously the production host was rejected and all realtime broke.
+    cors: { origin: true, credentials: true },
   });
+  logger.socket.info("socket.io mounted", { path: socketPath });
 
   await attachRedisAdapter(io);
 

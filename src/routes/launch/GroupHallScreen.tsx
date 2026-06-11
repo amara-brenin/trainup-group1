@@ -61,6 +61,7 @@ const GroupHallScreen = () => {
   const [audioReady, setAudioReady] = useState(false);
   const [autoRun, setAutoRun] = useState(true);
   const [minParticipants, setMinParticipants] = useState(1);
+  const [socketConnected, setSocketConnected] = useState(false);
   const presentTimerRef = useRef<number | null>(null);
 
   const slides = training?.slides ?? [];
@@ -179,9 +180,11 @@ const GroupHallScreen = () => {
       const url = withOrigin(`/group/${data.data.qrToken}`);
       void generateQrDataUrl(url, 260).then((dataUrl) => active && setQrDataUrl(dataUrl));
 
-      const socket = connectGroupSocket({ token: data.data.token });
+      const socket = connectGroupSocket({ token: data.data.token }, "hall");
       socketRef.current = socket;
-      socket.on("connect", () => socket.emit("session:join"));
+      socket.on("connect", () => { setSocketConnected(true); socket.emit("session:join"); });
+      socket.on("disconnect", () => setSocketConnected(false));
+      socket.io.on("reconnect_attempt", () => setSocketConnected(false));
       socket.on("queue:update", (p: { queue: QueueEntry[] }) => {
         queueRef.current = p.queue || [];
         setQueue(p.queue || []);
@@ -354,6 +357,9 @@ const GroupHallScreen = () => {
         <div className="mt-4 d-flex align-items-center gap-3">
           <span className="badge bg-info text-dark">👥 {attendance.count} joined</span>
           <span className="badge bg-secondary text-uppercase">{lifecycle}</span>
+          <span className={`badge ${socketConnected ? "bg-success" : "bg-danger"}`}>
+            ● {socketConnected ? "Live link" : "Reconnecting…"}
+          </span>
         </div>
         <div className="text-secondary small mt-3">Starts automatically at the scheduled time.</div>
         <button className="btn btn-sm btn-outline-light mt-2" onClick={manualStart}>Start now (override)</button>
@@ -386,6 +392,12 @@ const GroupHallScreen = () => {
           <span>⏱ {sessionTimer}</span>
           <span>👥 {attendance.count}</span>
           <span className="badge bg-info text-dark text-uppercase">{isLive ? phase : lifecycle}</span>
+          <span
+            className={`badge ${socketConnected ? "bg-success" : "bg-danger"}`}
+            title={socketConnected ? "Realtime connected" : "Realtime disconnected — reconnecting…"}
+          >
+            ● {socketConnected ? "Live link" : "Reconnecting…"}
+          </span>
         </div>
       </div>
 

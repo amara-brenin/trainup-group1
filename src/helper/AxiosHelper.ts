@@ -9,14 +9,19 @@ type ApiResponse<T> = Promise<{ data: ApiEnvelope<T> }>;
 const buildConfig = (params?: Record<string, unknown>) => {
   const token = getAuthToken();
 
+  // Tell the backend the admin app's deployment base path so server-generated
+  // links (assignment emails, password links) resolve under the same subpath.
+  const headers: Record<string, string> = {
+    "X-App-Base-Path": import.meta.env.BASE_URL || "/",
+  };
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
   return {
     params,
     validateStatus: () => true,
-    headers: token
-      ? {
-          Authorization: `Bearer ${token}`,
-        }
-      : undefined,
+    headers,
   };
 };
 

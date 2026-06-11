@@ -67,9 +67,10 @@ const buildActionUrl = (req, purpose, token, user) => {
     return `${String(configured).replace(/\/+$/, "")}${path}${query}`;
   }
 
-  // Fallback to the bare request origin → prepend PUBLIC_BASE_PATH so the link
-  // resolves under the admin deployment subpath.
-  return `${buildPublicUrl(resolveRequestOrigin(req), path)}${query}`;
+  // Fallback to the bare request origin → prepend the admin base path. Prefer
+  // the per-request X-App-Base-Path header, else PUBLIC_BASE_PATH.
+  const headerBase = req?.headers?.["x-app-base-path"];
+  return `${buildPublicUrl(resolveRequestOrigin(req), path, headerBase)}${query}`;
 };
 
 const createAuthToken = async ({ user, purpose, createdBy = "" }) => {

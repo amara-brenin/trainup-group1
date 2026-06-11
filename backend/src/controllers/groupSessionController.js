@@ -37,7 +37,7 @@ const {
   findTrainingById,
   buildLaunchBrandingPayload,
 } = require("./launchController");
-const { ensureGroupSession, findGroupTrainingByAppId } = require("../services/groupSessionService");
+const { ensureGroupSession, findActiveSession, findGroupTrainingByAppId } = require("../services/groupSessionService");
 
 // ----------------------------------------------------------------------------
 // Serialization
@@ -157,6 +157,38 @@ const createGroupSession = async (req, res) => {
   });
 };
 
+// GET /group-sessions/:gsId/debug — live proof of session identity + room
+// membership (real socket ids). Use this to verify hall + trainees share the
+// same room and resolve to the same session.
+const debugSnapshot = async (req, res) => {
+  const clientId = getTenantClientId(req.user);
+  const session = await GroupSession.findOne({ appId: req.params.gsId, clientId }).lean();
+  if (!session) return fail(res, 404, "Group session not found.");
+
+  const runtime = req.app.get("groupRuntime");
+  const room = runtime ? await runtime.getRoomInfo(session.appId) : null;
+
+  return ok(res, "Group session debug snapshot.", {
+    identity: {
+      gsId: session.appId,
+      trainingId: session.trainingId,
+      joinCode: session.joinCode,
+      qrToken: session.qrToken,
+      lifecycle: session.lifecycle,
+      phase: session.phase,
+      startTime: session.startTime,
+      endTime: session.endTime,
+      currentSlideIndex: session.currentSlideIndex,
+    },
+    room, // { room, socketCount, members:[{socketId, role, sub}] }
+    attendees: (session.attendees || []).map((a) => ({
+      traineeId: a.traineeId, name: a.name, email: a.email,
+      connected: a.connected, attendanceState: a.attendanceState,
+    })),
+    queue: (session.queue || []).map((q) => ({ traineeId: q.traineeId, name: q.name })),
+  });
+};
+
 // GET /group-sessions/:gsId/live
 const getLiveSnapshot = async (req, res) => {
   const clientId = getTenantClientId(req.user);
@@ -223,27 +255,20 @@ const findSessionByJoinKey = async (key) => {
   });
   if (direct) return direct;
 
-  // Fallback: training-scoped email link → the session that is actually running.
-  // Prefer an ACTIVE session (live/waiting/starting) so trainees land in the
-  // one the hall has open, not a newer still-scheduled one. Else newest scheduled.
-  const trainingFilter = { trainingId: { $regex: `^${escapeRegex(normalized)}$`, $options: "i" } };
-  const active = await GroupSession.findOne({
-    ...trainingFilter,
-    lifecycle: { $in: [LIFECYCLE.LIVE, LIFECYCLE.WAITING, LIFECYCLE.STARTING] },
-  }).sort({ createdAt: -1 });
-  if (active) return active;
+  // Fallback: training-scoped email link → THE single active session for that
+  // training (RULE 2). findActiveSession uses the same selector ensureGroupSession
+  // uses, and the DB partial unique index guarantees there is at most one — so
+  // email, QR and the Hall always converge on the same gsId. Match the training
+  // id case-insensitively first to get the canonical id.
+  const groupTraining = await findGroupTrainingByAppId(normalized);
+  if (!groupTraining) return null;
 
-  const scheduled = await GroupSession.findOne({
-    ...trainingFilter,
-    lifecycle: LIFECYCLE.SCHEDULED,
-  }).sort({ createdAt: -1 });
-  if (scheduled) return scheduled;
+  const existingActive = await findActiveSession(groupTraining.appId, groupTraining.clientId);
+  if (existingActive) return existingActive;
 
-  // No session yet for this training id → if it's an approved group training,
-  // auto-create one so email/QR links resolve without a manual Launch Hall.
-  const training = await findGroupTrainingByAppId(normalized);
-  if (training && normalizeValue(training.payload?.status) === "approved") {
-    const { session } = await ensureGroupSession({ training, createdBy: "auto-resolve" });
+  // None yet → auto-create (only for approved group trainings).
+  if (normalizeValue(groupTraining.payload?.status) === "approved") {
+    const { session } = await ensureGroupSession({ training: groupTraining, createdBy: "auto-resolve" });
     return session;
   }
   return null;
@@ -478,6 +503,7 @@ const askGroupQuestion = async (req, res) => {
 module.exports = {
   createGroupSession,
   getLiveSnapshot,
+  debugSnapshot,
   controlGroupSession,
   resolveJoin,
   joinGroupSession,

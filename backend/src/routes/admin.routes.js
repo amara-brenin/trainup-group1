@@ -72,6 +72,7 @@ router.put("/training-workspace/sync", allowAccess(undefined, "trainingWorkspace
 // Group Training Hall — session management.
 router.post("/training-workspace/:id/group-session", allowRoles("admin", "trainer", "super_admin"), groupSessionController.createGroupSession);
 router.get("/group-sessions/:gsId/live", allowRoles("admin", "trainer", "super_admin"), groupSessionController.getLiveSnapshot);
+router.get("/group-sessions/:gsId/debug", allowRoles("admin", "trainer", "super_admin"), groupSessionController.debugSnapshot);
 router.post("/group-sessions/:gsId/control", allowRoles("admin", "trainer", "super_admin"), groupSessionController.controlGroupSession);
 router.get("/group/:gsId/host", allowRoles("admin", "trainer", "super_admin"), groupSessionController.bootstrapHost);
 // Trainee join only needs a valid authenticated user (role checked in controller).

@@ -74,6 +74,7 @@ const GroupTraineeController = () => {
   const [myQuestion, setMyQuestion] = useState("");
   const [lastAnswer, setLastAnswer] = useState<FaqItem | null>(null);
   const [error, setError] = useState(""); // in-session transient messages only
+  const [socketConnected, setSocketConnected] = useState(false);
 
   // Login form state.
   const [loginEmail, setLoginEmail] = useState("");
@@ -108,9 +109,11 @@ const GroupTraineeController = () => {
 
   // Connect the socket + wire all live handlers (used after a successful join).
   const connectAndWire = useCallback((token: string) => {
-    const socket = connectGroupSocket({ token });
+    const socket = connectGroupSocket({ token }, "trainee");
     socketRef.current = socket;
-    socket.on("connect", () => socket.emit("session:join"));
+    socket.on("connect", () => { setSocketConnected(true); socket.emit("session:join"); });
+    socket.on("disconnect", () => setSocketConnected(false));
+    socket.io.on("reconnect_attempt", () => setSocketConnected(false));
     socket.on("attendance:update", (p: { count: number }) => setAttendeeCount(p.count));
     socket.on("queue:update", (p: { queue: QueueEntry[] }) => {
       const q = p.queue || [];
@@ -455,9 +458,17 @@ const GroupTraineeController = () => {
       <div className="px-3 pt-3 pb-2">
         <div className="d-flex justify-content-between align-items-center">
           <div className="fw-semibold text-truncate">{session?.trainingTitle}</div>
-          <span className={`badge ${status === "paused" ? "bg-warning text-dark" : "bg-success"}`}>
-            {status === "qa" ? "Q&A" : status === "paused" ? "Paused" : "Live"}
-          </span>
+          <div className="d-flex align-items-center gap-2">
+            <span
+              className={`badge ${socketConnected ? "bg-success" : "bg-danger"}`}
+              title={socketConnected ? "Realtime connected" : "Realtime disconnected — reconnecting…"}
+            >
+              ● {socketConnected ? "Connected" : "Reconnecting…"}
+            </span>
+            <span className={`badge ${status === "paused" ? "bg-warning text-dark" : "bg-info text-dark"}`}>
+              {status === "qa" ? "Q&A" : status === "paused" ? "Paused" : "Live"}
+            </span>
+          </div>
         </div>
         <div className="small text-secondary text-truncate">{topic || currentSlide?.title || ""}</div>
         {totalSlides > 0 ? (

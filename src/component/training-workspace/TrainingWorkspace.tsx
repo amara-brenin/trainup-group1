@@ -1007,6 +1007,43 @@ const builderValidationSchema = Yup.object({
     otherwise: (schema) => schema.notRequired(),
   }),
   trainingMode: Yup.string().oneOf(["avatar", "voice"]).required("Training mode is required."),
+  // Group Training Hall settings are mandatory when Delivery Type = group.
+  deliveryType: Yup.string().oneOf(["one_on_one", "group"]).required(),
+  groupStartTime: Yup.string().when("deliveryType", {
+    is: "group",
+    then: (schema) => schema.required("Start time is required for group training."),
+    otherwise: (schema) => schema.notRequired(),
+  }),
+  groupCapacity: Yup.number().when("deliveryType", {
+    is: "group",
+    then: (schema) => schema.min(1, "Capacity must be at least 1.").required("Session capacity is required."),
+    otherwise: (schema) => schema.notRequired(),
+  }),
+  groupMinParticipants: Yup.number().when("deliveryType", {
+    is: "group",
+    then: (schema) => schema.min(0, "Use 0 or more.").required("Min participants is required."),
+    otherwise: (schema) => schema.notRequired(),
+  }),
+  groupGraceMins: Yup.number().when("deliveryType", {
+    is: "group",
+    then: (schema) => schema.min(0, "Use 0 or more minutes.").required("Auto-start grace is required."),
+    otherwise: (schema) => schema.notRequired(),
+  }),
+  groupMinAttendancePct: Yup.number().when("deliveryType", {
+    is: "group",
+    then: (schema) => schema.min(0).max(100).required("Min attendance % is required."),
+    otherwise: (schema) => schema.notRequired(),
+  }),
+  groupMaxSpeakSecs: Yup.number().when("deliveryType", {
+    is: "group",
+    then: (schema) => schema.min(10, "At least 10 seconds.").required("Max speak seconds is required."),
+    otherwise: (schema) => schema.notRequired(),
+  }),
+  groupMaxQuestionsPerTrainee: Yup.number().when("deliveryType", {
+    is: "group",
+    then: (schema) => schema.min(1, "At least 1 question.").required("Max questions per trainee is required."),
+    otherwise: (schema) => schema.notRequired(),
+  }),
   avatarName: Yup.string().required("Avatar is required."),
   voiceName: Yup.string().required("Voice is required."),
   manualApiKey: Yup.string().when(["ttsMode", "ttsProvider"], {
@@ -4628,8 +4665,9 @@ const TrainingBuilder = ({
                                   <Field type="number" min={0} name="groupGraceMins" className="form-control" />
                                 </div>
                                 <div className="col-6 col-lg-3">
-                                  <label className="form-label">Start Time</label>
+                                  <label className="form-label">Start Time <span className="text-danger">*</span></label>
                                   <Field type="datetime-local" name="groupStartTime" className="form-control" />
+                                  <ErrorMessage name="groupStartTime" component="small" className="text-danger" />
                                 </div>
                                 <div className="col-6 col-lg-3">
                                   <label className="form-label">End Time</label>
@@ -5333,46 +5371,84 @@ const TrainingBuilder = ({
                           </div> */}
 
                           {initialTraining ? (
-                            <>
-                              <div className="training-builder-subcaption mt-4">Embed</div>
-                              <div className="training-theme-upload-placeholder flex-column align-items-start gap-2">
-                                <div className="fw-semibold">
-                                  {initialTraining.status === "approved"
-                                    ? "Use this code to embed the slideshow in your website"
-                                    : "Private preview link and embed stay visible to internal users until the training is approved."}
+                            initialTraining.trainingType === "group" ? (
+                              // Group Training: there is no per-learner slideshow iframe. The
+                              // trainee link routes into the group join → lobby → live hall.
+                              <>
+                                <div className="training-builder-subcaption mt-4">Group Training Links</div>
+                                <div className="training-theme-upload-placeholder flex-column align-items-start gap-2">
+                                  <div className="fw-semibold">
+                                    Trainees open this link (also sent by email) to join the hall session:
+                                  </div>
+                                  <code className="training-embed-code">
+                                    {withOrigin(`/group/${initialTraining.id}`)}
+                                  </code>
+                                  <div className="d-flex gap-2 flex-wrap">
+                                    <button
+                                      type="button"
+                                      className="btn btn-primary btn-sm"
+                                      onClick={() => {
+                                        void navigator.clipboard.writeText(withOrigin(`/group/${initialTraining.id}`));
+                                        toast.success("Trainee join link copied.");
+                                      }}
+                                    >
+                                      Copy Join Link
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn btn-light btn-sm"
+                                      onClick={() => window.open(withBase(`/group/${initialTraining.id}`), "_blank", "noopener,noreferrer")}
+                                    >
+                                      Open Trainee View
+                                    </button>
+                                  </div>
+                                  <div className="text-muted small mt-1">
+                                    To open the AI Hall Screen, use <strong>Launch Hall</strong> on the training card.
+                                  </div>
                                 </div>
-                                <code className="training-embed-code">
-                                  {`<iframe src="${buildTrainingLaunchUrl(initialTraining.id, initialTraining.status !== "approved")}" title="${initialTraining.title}" width="100%" height="720" style="border:0;border-radius:16px;overflow:hidden;" allow="autoplay; fullscreen"></iframe>`}
-                                </code>
-                                <div className="d-flex gap-2 flex-wrap">
-                                  <button
-                                    type="button"
-                                    className="btn btn-primary btn-sm"
-                                    onClick={() => {
-                                      void navigator.clipboard.writeText(
-                                        `<iframe src="${buildTrainingLaunchUrl(initialTraining.id, initialTraining.status !== "approved")}" title="${initialTraining.title}" width="100%" height="720" style="border:0;border-radius:16px;overflow:hidden;" allow="autoplay; fullscreen"></iframe>`,
-                                      );
-                                      toast.success("Embed code copied.");
-                                    }}
-                                  >
-                                    Copy Embed Code
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="btn btn-light btn-sm"
-                                    onClick={() =>
-                                      window.open(
-                                        buildTrainingLaunchPath(initialTraining.id, true),
-                                        "_blank",
-                                        "noopener,noreferrer",
-                                      )
-                                    }
-                                  >
-                                    Open Launch UI
-                                  </button>
+                              </>
+                            ) : (
+                              <>
+                                <div className="training-builder-subcaption mt-4">Embed</div>
+                                <div className="training-theme-upload-placeholder flex-column align-items-start gap-2">
+                                  <div className="fw-semibold">
+                                    {initialTraining.status === "approved"
+                                      ? "Use this code to embed the slideshow in your website"
+                                      : "Private preview link and embed stay visible to internal users until the training is approved."}
+                                  </div>
+                                  <code className="training-embed-code">
+                                    {`<iframe src="${buildTrainingLaunchUrl(initialTraining.id, initialTraining.status !== "approved")}" title="${initialTraining.title}" width="100%" height="720" style="border:0;border-radius:16px;overflow:hidden;" allow="autoplay; fullscreen"></iframe>`}
+                                  </code>
+                                  <div className="d-flex gap-2 flex-wrap">
+                                    <button
+                                      type="button"
+                                      className="btn btn-primary btn-sm"
+                                      onClick={() => {
+                                        void navigator.clipboard.writeText(
+                                          `<iframe src="${buildTrainingLaunchUrl(initialTraining.id, initialTraining.status !== "approved")}" title="${initialTraining.title}" width="100%" height="720" style="border:0;border-radius:16px;overflow:hidden;" allow="autoplay; fullscreen"></iframe>`,
+                                        );
+                                        toast.success("Embed code copied.");
+                                      }}
+                                    >
+                                      Copy Embed Code
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn btn-light btn-sm"
+                                      onClick={() =>
+                                        window.open(
+                                          buildTrainingLaunchPath(initialTraining.id, true),
+                                          "_blank",
+                                          "noopener,noreferrer",
+                                        )
+                                      }
+                                    >
+                                      Open Launch UI
+                                    </button>
+                                  </div>
                                 </div>
-                              </div>
-                            </>
+                              </>
+                            )
                           ) : null}
                         </div>
                       </div>

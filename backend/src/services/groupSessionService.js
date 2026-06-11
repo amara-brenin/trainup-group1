@@ -45,16 +45,42 @@ const ensureGroupSession = async ({ training, createdBy = "", allowRecreate = fa
   if (!training) return { session: null, created: false, reason: "no-training" };
 
   const clientId = training.clientId;
-  const existing = await GroupSession.findOne({
-    trainingId: training.appId,
-    clientId,
-    lifecycle: { $nin: TERMINAL },
-  }).sort({ createdAt: -1 });
-
-  if (existing) return { session: existing, created: false };
-
   const config = resolveGroupConfig(training.payload?.groupConfig || {});
   const startTime = config.startTime ? new Date(config.startTime) : null;
+
+  // RULE 2: a single deterministic selector for THE active session, shared with
+  // the join/resolve path (findSessionByJoinKey). The DB partial unique index
+  // guarantees at most one, so Hall, Email and QR converge to the same gsId.
+  const existing = await findActiveSession(training.appId, clientId);
+
+  if (existing) {
+    // Idempotent reuse — but if the session has NOT started yet, re-sync the
+    // schedule + config from the (possibly edited) training so admin edits to
+    // start/end time and rules take effect. A live/started session is left as-is.
+    if (existing.lifecycle === LIFECYCLE.SCHEDULED || existing.lifecycle === LIFECYCLE.WAITING) {
+      const endTime = deriveEndTime(startTime, training, config);
+      const newStartMs = startTime ? startTime.getTime() : null;
+      const oldStartMs = existing.startTime ? new Date(existing.startTime).getTime() : null;
+      const changed = newStartMs !== oldStartMs;
+
+      existing.trainingTitle = normalizeValue(training.payload?.title) || existing.trainingTitle;
+      existing.capacity = config.capacity;
+      existing.startTime = startTime;
+      existing.endTime = endTime;
+      existing.config = { ...config, endTime: endTime ? endTime.toISOString() : config.endTime || null };
+      // If the start time moved back to the future, ensure it waits again.
+      if (changed && newStartMs && newStartMs > Date.now() && existing.lifecycle === LIFECYCLE.WAITING) {
+        existing.lifecycle = LIFECYCLE.SCHEDULED;
+      }
+      await existing.save();
+      if (changed) {
+        logger.lifecycle.info("group session reschedule synced", {
+          gsId: existing.appId, trainingId: training.appId, startTime,
+        });
+      }
+    }
+    return { session: existing, created: false };
+  }
 
   // Don't auto-recreate a session for an occurrence that already ran (any
   // lifecycle, matched by this training + scheduled startTime).
@@ -69,29 +95,43 @@ const ensureGroupSession = async ({ training, createdBy = "", allowRecreate = fa
 
   const endTime = deriveEndTime(startTime, training, config);
 
-  const session = await GroupSession.create({
-    appId: `gs-${crypto.randomUUID()}`,
-    clientId,
-    trainingId: training.appId,
-    trainingTitle: normalizeValue(training.payload?.title) || "Group Training",
-    joinCode: generateJoinCode(),
-    qrToken: generateQrToken(),
-    capacity: config.capacity,
-    startTime,
-    endTime,
-    lifecycle: LIFECYCLE.SCHEDULED,
-    phase: PHASE.PRESENTING,
-    config: { ...config, endTime: endTime ? endTime.toISOString() : config.endTime || null },
-    createdBy,
-  });
+  try {
+    const session = await GroupSession.create({
+      appId: `gs-${crypto.randomUUID()}`,
+      clientId,
+      trainingId: training.appId,
+      trainingTitle: normalizeValue(training.payload?.title) || "Group Training",
+      joinCode: generateJoinCode(),
+      qrToken: generateQrToken(),
+      capacity: config.capacity,
+      startTime,
+      endTime,
+      lifecycle: LIFECYCLE.SCHEDULED,
+      phase: PHASE.PRESENTING,
+      active: true,
+      config: { ...config, endTime: endTime ? endTime.toISOString() : config.endTime || null },
+      createdBy,
+    });
+    logger.lifecycle.info("group session ensured (created)", {
+      gsId: session.appId, trainingId: training.appId, startTime, endTime,
+    });
+    return { session, created: true };
+  } catch (error) {
+    // RULE 1/2: the partial unique index rejected a concurrent second active
+    // session (E11000). Re-read THE active one and reuse it.
+    if (error?.code === 11000) {
+      const winner = await findActiveSession(training.appId, clientId);
+      if (winner) return { session: winner, created: false };
+    }
+    throw error;
+  }
+};
 
-  logger.lifecycle.info("group session ensured (created)", {
-    gsId: session.appId,
-    trainingId: training.appId,
-    startTime,
-    endTime,
-  });
-  return { session, created: true };
+// THE single active session for a training (DB guarantees at most one).
+const findActiveSession = async (trainingId, clientId) => {
+  const filter = { trainingId, active: true };
+  if (clientId) filter.clientId = clientId;
+  return GroupSession.findOne(filter).sort({ createdAt: -1 });
 };
 
 // Find a group Training by its appId (case-insensitive), only if it is an
@@ -105,4 +145,4 @@ const findGroupTrainingByAppId = async (key) => {
   }).lean();
 };
 
-module.exports = { ensureGroupSession, deriveEndTime, findGroupTrainingByAppId, TERMINAL };
+module.exports = { ensureGroupSession, findActiveSession, deriveEndTime, findGroupTrainingByAppId, TERMINAL };

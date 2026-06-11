@@ -53,10 +53,12 @@ const buildLaunchUrl = (req, client, trainingId, isGroup = false) => {
     ? `/group/${String(trainingId || "")}`
     : `/slideshows/${String(trainingId || "").toLowerCase()}`;
 
-  // buildPublicUrl prepends PUBLIC_BASE_PATH (e.g. "/trainup-demo") to the path
-  // so the link resolves under the admin deployment subpath, not the root.
+  // Prefer the admin app's base path sent per-request (X-App-Base-Path), so the
+  // link auto-matches the deployed subpath even without server env config; fall
+  // back to PUBLIC_BASE_PATH when the header is absent.
+  const headerBase = req.headers["x-app-base-path"];
   const resolvedOrigin = baseUrl || (client?.domain ? `https://${client.domain}` : `https://${client?.subdomain || "app"}.trainup.ai`);
-  return buildPublicUrl(resolvedOrigin, path);
+  return buildPublicUrl(resolvedOrigin, path, headerBase);
 };
 
 const list = async (req, res) => {
