@@ -215,9 +215,15 @@ const buildBillingSummaryResponse = (client, metrics = null) => {
   return {
     currentPlan: snapshot.plan,
     billingCycle: snapshot.billingCycle,
-    planStatus: client.status === "inactive" || snapshot.availableCredits <= 0 ? "expired" : "active",
+    // Issue 1: surface expiry explicitly so the dashboard can show the badge /
+    // "Plan Expired" / Remaining Credits = 0.
+    planExpired: snapshot.planExpired,
+    planStatus:
+      client.status === "inactive" || snapshot.planExpired || snapshot.availableCredits <= 0
+        ? "expired"
+        : "active",
     startedOn: billingDates.startedOn,
-    expiresOn: billingDates.expiresOn,
+    expiresOn: snapshot.expiresOn || billingDates.expiresOn,
     planUsage,
     activeUsers: planUsage.users,
     trainings: planUsage.trainings,

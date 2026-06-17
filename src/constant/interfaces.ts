@@ -353,6 +353,7 @@ export interface BillingSummary {
   currentPlan: PlanType;
   billingCycle: "monthly";
   planStatus?: "active" | "expired";
+  planExpired?: boolean;
   startedOn?: string | null;
   expiresOn?: string | null;
   planUsage?: {

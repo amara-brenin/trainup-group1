@@ -303,6 +303,12 @@ const buildClientCreditSnapshot = (client) => {
       ? Number(client.totalCredits)
       : monthlyCredits + purchasedCredits;
 
+  // Issue 1: credits are computed WITH expiry validation, never trusted from
+  // stored values alone. An expired subscription has ZERO effective credits.
+  const planExpired = isSubscriptionExpired(client);
+  const rawAvailableCredits = Math.max(totalCredits - usedCredits, 0);
+  const availableCredits = planExpired ? 0 : rawAvailableCredits;
+
   return {
     plan: planConfig.code,
     planConfig,
@@ -310,7 +316,12 @@ const buildClientCreditSnapshot = (client) => {
     purchasedCredits,
     usedCredits,
     totalCredits,
-    availableCredits: Math.max(totalCredits - usedCredits, 0),
+    // Effective available credits: 0 when the plan has expired.
+    availableCredits,
+    // Raw (pre-expiry) balance, retained for display/reporting if needed.
+    rawAvailableCredits,
+    planExpired,
+    expiresOn: getSubscriptionExpiry(client).toISOString(),
     billingCycle: "monthly",
   };
 };
@@ -329,8 +340,11 @@ const applyPlanToClient = (client, plan, options = {}) => {
   const currentSnapshot = buildClientCreditSnapshot(client);
   const preservedPurchasedCredits = options.resetPurchasedCredits ? 0 : currentSnapshot.purchasedCredits;
   const preservedUsedCredits = options.resetUsage ? 0 : currentSnapshot.usedCredits;
+  // Use the RAW (pre-expiry) balance for carry-over so renewal credit-carry
+  // behavior is unchanged by the expiry-aware snapshot.
+  const carryBase = Math.max(0, Number(currentSnapshot.rawAvailableCredits ?? currentSnapshot.availableCredits));
   const carriedAvailableCredits = options.carryAvailableCredits
-    ? Math.max(0, currentSnapshot.availableCredits - preservedPurchasedCredits)
+    ? Math.max(0, carryBase - preservedPurchasedCredits)
     : 0;
 
   client.plan = normalizedPlan;
@@ -452,6 +466,12 @@ const assertUsageWithinPlan = ({ client, resource, nextCount }) => {
 
 const assertCreditAvailability = (client, requiredCredits) => {
   const snapshot = buildClientCreditSnapshot(client);
+
+  // Issue 1: an expired subscription has zero effective credits — surface the
+  // expiry message (not a generic "not enough credits") even on contact-sales.
+  if (snapshot.planExpired) {
+    return SUBSCRIPTION_EXPIRED_MESSAGE;
+  }
 
   if (snapshot.planConfig.contactSales) {
     return null;
