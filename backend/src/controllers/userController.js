@@ -8,12 +8,23 @@ const { ok, fail } = require("../helpers/response");
 const {
   CREDIT_COSTS, consumeClientCredits,
   ensureClientEntitlement, assertLifetimeQuota,
+  assertSubscriptionActive, SUBSCRIPTION_EXPIRED_MESSAGE,
 } = require("../helpers/credits");
 
+// Issue 1 vs Issue 2: expiry → 402 (Payment Required), quota → 403 (Forbidden).
+const quotaErrorStatus = (message) =>
+  message === SUBSCRIPTION_EXPIRED_MESSAGE ? 402 : 403;
+
 // Task 2 (user lifetime): one-time backfill + lifetime check + permanent
-// increment. Returns an error string if the lifetime user quota would be
-// exceeded, else null. `currentActiveUsers` seeds the backfill.
+// increment. Returns an error string if the subscription is expired (Issue 1)
+// or the lifetime user quota would be exceeded, else null.
+// `currentActiveUsers` seeds the backfill.
 const enforceUserLifetime = async (client, clientId, currentActiveUsers, addCount) => {
+  // Issue 1: expired subscription cannot add users regardless of remaining quota.
+  const expiredError = assertSubscriptionActive(client);
+  if (expiredError) {
+    return expiredError;
+  }
   if (!client.quotaInitialized) {
     const publishedCount = await Training.countDocuments({ clientId, "payload.status": "approved" });
     await ensureClientEntitlement(client, {
@@ -488,7 +499,7 @@ const create = async (req, res) => {
   // reads client.userBaseLimit + userPurchasedLimit − userUsedLifetime.
   const lifetimeError = await enforceUserLifetime(client, clientId, currentActiveUsers, 1);
   if (lifetimeError) {
-    return fail(res, 400, lifetimeError);
+    return fail(res, quotaErrorStatus(lifetimeError), lifetimeError);
   }
 
   const creditResult = await consumeClientCredits({
@@ -676,7 +687,7 @@ const createTrainee = async (req, res) => {
   // D1: snapshot-based user limit (no PLAN_CONFIGS).
   const lifetimeError = await enforceUserLifetime(client, clientId, currentActiveUsers, 1);
   if (lifetimeError) {
-    return fail(res, 400, lifetimeError);
+    return fail(res, quotaErrorStatus(lifetimeError), lifetimeError);
   }
 
   const creditResult = await consumeClientCredits({
@@ -840,7 +851,7 @@ const importTrainees = async (req, res) => {
   // D1: snapshot-based user limit for the whole import batch (one slot per created user).
   const lifetimeError = await enforceUserLifetime(client, clientId, currentActiveUsers, docs.length);
   if (lifetimeError) {
-    return fail(res, 400, lifetimeError);
+    return fail(res, quotaErrorStatus(lifetimeError), lifetimeError);
   }
 
   const creditResult = await consumeClientCredits({

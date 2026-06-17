@@ -4,7 +4,13 @@ const MediaAsset = require("../models/MediaAsset");
 const Client = require("../models/Client");
 const User = require("../models/User");
 const { createReadUrl, isStorageConfigured } = require("../helpers/storage");
-const { CREDIT_COSTS, assertUsageWithinPlan, consumeClientCredits } = require("../helpers/credits");
+const {
+  CREDIT_COSTS,
+  consumeClientCredits,
+  ensureClientEntitlement,
+  assertLifetimeQuota,
+  assertSubscriptionActive,
+} = require("../helpers/credits");
 const { notifyRolesInClient, notifyTrainingOwner } = require("../helpers/notifications");
 const { getTenantSetting, buildDefaultTenantAppSettings, syncClientMetrics } = require("../helpers/tenant");
 const { ok, fail } = require("../helpers/response");
@@ -1093,14 +1099,30 @@ const upsertLaunchSession = async (req, res) => {
 
   if (isNewCompletedSession) {
     const client = await Client.findOne({ appId: training.clientId });
-    const usageError = assertUsageWithinPlan({
-      client,
-      resource: "sessions",
-      nextCount: Number(client?.sessions || 0) + 1,
-    });
+
+    // Issue 1: expired subscriptions cannot consume a new session.
+    const expiredError = assertSubscriptionActive(client);
+    if (expiredError) {
+      return fail(res, 402, expiredError);
+    }
+
+    // Issue 2: session limit is LIFETIME (total ever created), not current count
+    // — deleting/resetting sessions never reclaims quota. Mirrors group sessions.
+    if (client && !client.quotaInitialized) {
+      const publishedCount = await Training.countDocuments({
+        clientId: training.clientId,
+        "payload.status": "approved",
+      });
+      await ensureClientEntitlement(client, {
+        training: publishedCount,
+        session: Number(client.sessions || 0),
+        user: Number(client.activeUsers || 0),
+      });
+    }
+    const usageError = client ? assertLifetimeQuota(client, "session", 1) : null;
 
     if (usageError) {
-      return fail(res, 400, usageError);
+      return fail(res, 403, usageError);
     }
 
     const creditResult = await consumeClientCredits({
@@ -1111,6 +1133,12 @@ const upsertLaunchSession = async (req, res) => {
 
     if (!creditResult.ok) {
       return fail(res, 400, creditResult.message);
+    }
+
+    // Permanently record lifetime session usage (never decremented on delete).
+    if (client) {
+      client.sessionUsedLifetime = Number(client.sessionUsedLifetime || 0) + 1;
+      await client.save();
     }
   }
 

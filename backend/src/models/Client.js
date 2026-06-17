@@ -40,6 +40,11 @@ const clientSchema = new Schema(
     subscribedPlan: { type: String, default: "" },
     creditBaseLimit: { type: Number, default: null },
     entitlementSnapshotAt: { type: Date, default: null },
+    // Issue 1: subscription expiry. Stamped on plan assign/purchase/renewal.
+    // Once `now` passes this date the subscription is expired regardless of
+    // remaining credits. null on legacy clients → expiry is computed from the
+    // plan start (see getSubscriptionExpiry) for backward compatibility.
+    planExpiryDate: { type: Date, default: null },
     joined: { type: String, default: "" },
     csm: { type: String, required: true, trim: true },
     logo: { type: String, default: "" },

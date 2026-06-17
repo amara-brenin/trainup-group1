@@ -605,7 +605,8 @@ const purchaseCredits = async (req, res) => {
     });
     // Phase C: freeze the entitlement snapshot from the (DB) plan at purchase
     // time so future plan edits never change this subscriber's limits/credits.
-    await applyPlanSnapshot(client, planCode);
+    // Renewal/new billing cycle → reset lifetime usage so full quota is restored.
+    await applyPlanSnapshot(client, planCode, { resetLifetime: true });
 
     client.creditTransactions.unshift({
       ...createTransactionEntry("plan_purchase", nextSnapshot.monthlyCredits, "Razorpay test plan checkout approved"),
