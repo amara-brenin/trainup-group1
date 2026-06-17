@@ -655,7 +655,7 @@ const buildPlannerPrompt = ({ title, slides, documents, configPayload, existingS
     .join("\n");
 
   return [
-    "You design Samsung training knowledge-check sets.",
+    "You design Trainup training knowledge-check sets.",
     "Return valid JSON only. No markdown.",
     "Return an object with key questionSets.",
     "questionSets must be an array of 1 or more objects.",
@@ -727,7 +727,7 @@ const buildQuestionPrompt = ({ title, setPlan, sources, configPayload, existingS
     .join("\n");
 
   return [
-    "You generate Samsung training assessment questions.",
+    "You generate Trainup training assessment questions.",
     "Return valid JSON only. No markdown, no commentary.",
     "Return an array of objects with keys: title, prompt, questionType, options, expectedAnswer, keywordMatches, sourceId.",
     "questionType must be one of subjective, objective, multi_select, text_area.",
@@ -794,7 +794,7 @@ const buildQuestions = async (req, res) => {
       plannedSets = buildLocalPlan({ slides, documents, configPayload, existingSet, previousQuestions, variationToken });
     } else {
       const plannerReply = await createGroqReply({
-        systemPrompt: "You are a structured assessment planner for Samsung training modules. Return strict JSON only.",
+        systemPrompt: "You are a structured assessment planner for Trainup training modules. Return strict JSON only.",
         context: buildPlannerPrompt({
           title,
           slides,
@@ -857,7 +857,7 @@ const buildQuestions = async (req, res) => {
     for (let index = 0; index < normalizedSets.length; index += 1) {
       const setPlan = normalizedSets[index];
       const questionReply = await createGroqReply({
-        systemPrompt: "You are a structured question generator for Samsung training content. Only use the provided module sources. Return strict JSON.",
+        systemPrompt: "You are a structured question generator for Trainup training content. Only use the provided module sources. Return strict JSON.",
         context: buildQuestionPrompt({
           title,
           setPlan,

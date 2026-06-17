@@ -32,4 +32,4 @@ If the frontend is deployed on Vercel, make sure `CORS_ORIGINS` includes the liv
 
 ## Notes
 - Internal users are seeded automatically on first boot.
-- Employee SSO is still pending real Samsung provider details.
+- Employee SSO is still pending real Trainup provider details.

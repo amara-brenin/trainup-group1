@@ -203,7 +203,7 @@ const TrainerPanel = () => {
                   <div className="card-body">
                     <div className="experience-list">
                       {[
-                        "Align launch messaging with current Samsung retail script.",
+                        "Align launch messaging with current Trainup retail script.",
                         "Attach slide-wise talking points for store associates.",
                         "Validate device names, offers, and Care+ references.",
                         "Mark objection-handling slides that need reviewer attention.",

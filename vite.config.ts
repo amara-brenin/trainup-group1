@@ -9,13 +9,13 @@ export default defineConfig(({ mode }) => {
   const isVercelBuild =
     env.VERCEL === "1" || env.CI === "true" || process.env.VERCEL === "1";
 
-  let basePrefix = env.VITE_BASE_URL || "/trainup-demo/";
+  let basePrefix = env.VITE_BASE_URL || "/";
   if (!basePrefix.endsWith("/")) {
     basePrefix += "/";
   }
   
-  const finalBase = isSuperAdmin && !basePrefix.endsWith("/admin-console/")
-    ? `${basePrefix}admin-console/`
+  const finalBase = isSuperAdmin && !basePrefix.endsWith("/console")
+    ? `${basePrefix}`
     : basePrefix;
 
   return {

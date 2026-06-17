@@ -398,8 +398,29 @@ const sync = async (req, res) => {
       : Array.isArray(payload.sessions)
         ? payload.sessions
         : [];
+    // Data-integrity guard: never let an incoming payload that is missing or
+    // empty for heavy authored content silently wipe content that already
+    // exists on the stored record. This protects against a client that syncs
+    // a partially-loaded/stub training (e.g. editor opened before slide detail
+    // finished loading) from destroying slides/knowledge/question data.
+    // A non-empty incoming value always wins (normal edits pass through).
+    const preserveAuthoredField = (field) => {
+      const incoming = payload[field];
+      const incomingHasContent = Array.isArray(incoming) ? incoming.length > 0 : Boolean(incoming);
+      if (incomingHasContent) {
+        return incoming;
+      }
+      const existing = previousPayload[field];
+      const existingHasContent = Array.isArray(existing) ? existing.length > 0 : Boolean(existing);
+      return existingHasContent ? existing : incoming;
+    };
     const nextPayload = {
       ...payload,
+      slides: preserveAuthoredField("slides"),
+      knowledgeDocuments: preserveAuthoredField("knowledgeDocuments"),
+      questionSets: preserveAuthoredField("questionSets"),
+      questionCheckpoints: preserveAuthoredField("questionCheckpoints"),
+      localizedVoiceovers: preserveAuthoredField("localizedVoiceovers"),
       sessions: preservedSessions,
       // Task 2: server-derived, permanent. Once consumed it stays consumed
       // (republish/draft-toggle never re-charges quota); client cannot reset it.

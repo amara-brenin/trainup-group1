@@ -9,7 +9,7 @@ const NotFound = () => {
             </div>
             <h1 className="h4 fw-semibold mb-2">Page not found</h1>
             <p className="mb-0 text-body-secondary">
-              The route does not exist inside the Samsung LMS admin shell.
+              The route does not exist inside the Trainup admin shell.
             </p>
           </div>
         </div>

@@ -1,12 +1,12 @@
 import { hashPassword, getRoleAccess, sanitizeUserForClient } from "./auth.js";
 
 export const appSettings = {
-  application_name: "Samsung LMS",
+  application_name: "Trainup",
   logo: "/branding/logo.png",
   dark_logo: "/branding/logo-dark.png",
   favicon: "/branding/favicon.png",
   email: "support@samsung.com",
-  copyright: `© ${new Date().getFullYear()} Samsung LMS. All rights reserved.`,
+  copyright: `© ${new Date().getFullYear()} Trainup. All rights reserved.`,
   phone: "+91 1800 120 9999",
   path: "/dashboard",
 };

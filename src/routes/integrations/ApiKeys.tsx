@@ -90,7 +90,7 @@ const ApiKeys = () => {
   const handleRevoke = async (record: ApiKeyRecord) => {
     const result = await Swal.fire({
       title: `Revoke ${record.name}?`,
-      text: "This key will stop working for all Samsung integrations using it.",
+      text: "This key will stop working for all Trainup integrations using it.",
       icon: "warning",
       showCancelButton: true,
       confirmButtonText: "Revoke",
@@ -115,7 +115,7 @@ const ApiKeys = () => {
   return (
     <PageShell
       title="API keys"
-      description="Keep integration credentials helper-driven and scoped to the Samsung LMS routes."
+      description="Keep integration credentials helper-driven and scoped to the Trainup routes."
     >
 
       <div className="admin-reference-toolbar">

@@ -288,7 +288,7 @@ export default async function handler(req, res) {
     if (!user || !verifyPassword(password, user.passwordHash)) {
       return fail(res, 401, "Invalid email or password.", {
         email: "",
-        password: "Use valid internal Samsung LMS credentials.",
+        password: "Use valid internal Trainup credentials.",
       });
     }
 
@@ -467,7 +467,7 @@ export default async function handler(req, res) {
         logoColor: "#3e60d5",
         logoBg: "#ebf2ff",
         iframeEnabled: true,
-        ssoType: "Samsung IAM",
+        ssoType: "Trainup IAM",
         ssoStatus: "connected",
         primaryColor: "#1428a0",
         secondaryColor: "#3e60d5",

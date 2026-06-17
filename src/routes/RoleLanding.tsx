@@ -24,7 +24,7 @@ const cards = [
   },
   {
     title: "Employee SSO",
-    subtitle: "Authenticate employees and launch the Samsung LMS training player.",
+    subtitle: "Authenticate employees and launch the Trainup training player.",
     to: "/login",
     icon: "ri-user-star-line",
     button: "Open SSO Flow",
@@ -35,7 +35,7 @@ const RoleLanding = () => {
   return (
     <>
       <div className="text-center mb-4">
-        <span className="badge bg-primary-subtle text-primary-emphasis mb-3">Samsung LMS</span>
+        <span className="badge bg-primary-subtle text-primary-emphasis mb-3">Trainup</span>
         <h1 className="mb-2">Role Panels</h1>
         <p className="text-muted mb-0">
           Trainer, reviewer, admin, and employee SSO now share the same reference admin theme.

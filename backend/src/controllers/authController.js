@@ -109,7 +109,7 @@ const login = async (req, res) => {
   if (!user || !verifyPassword(password, user.passwordHash)) {
     return fail(res, 401, "Invalid email or password.", {
       email: "",
-      password: "Use valid internal Samsung LMS credentials.",
+      password: "Use valid internal Trainup credentials.",
     });
   }
 

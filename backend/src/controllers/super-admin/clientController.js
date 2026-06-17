@@ -434,7 +434,7 @@ const create = async (req, res) => {
     logoColor: "#3e60d5",
     logoBg: "#ebf2ff",
     iframeEnabled: Boolean(req.body.iframeEnabled ?? true),
-    ssoType: String(req.body.ssoType || "Samsung IAM").trim(),
+    ssoType: String(req.body.ssoType || "Trainup IAM").trim(),
     ssoStatus: req.body.ssoType && req.body.ssoType !== "None" ? "connected" : "not_configured",
     ssoProviderType: String(req.body.ssoProviderType || "none").trim().toLowerCase(),
     ssoClientId: String(req.body.ssoClientId || "").trim(),

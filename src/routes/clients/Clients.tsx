@@ -33,7 +33,7 @@ const defaultValues: ClientFormValues = {
   supportEmail: "",
   companyPhone: "",
   companyAddress: "",
-  applicationName: "Samsung LMS",
+  applicationName: "Trainup",
   primaryColor: "#1428a0",
   secondaryColor: "#3e60d5",
   logoUrl: "",
@@ -45,7 +45,7 @@ const defaultValues: ClientFormValues = {
   iframeEnabled: true,
   iframeBaseUrl: "",
   iframeAllowedParentDomains: "",
-  ssoType: "Samsung IAM",
+  ssoType: "Trainup IAM",
   smtpHost: "",
   smtpPort: 587,
   smtpUsername: "",
@@ -398,7 +398,7 @@ const Clients = () => {
                       <div>
                         <label htmlFor="ssoType" className="form-label">SSO type</label>
                         <Field as="select" name="ssoType" id="ssoType" className="form-select">
-                          <option value="Samsung IAM">Samsung IAM</option>
+                          <option value="Trainup IAM">Trainup IAM</option>
                           <option value="Azure AD">Azure AD</option>
                           <option value="None">None</option>
                         </Field>

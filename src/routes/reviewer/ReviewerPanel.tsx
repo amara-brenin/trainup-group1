@@ -62,7 +62,7 @@ const ReviewerPanel = () => {
       <PublicExperienceShell
         eyebrow="Reviewer"
         title="Review queue and approvals"
-        subtitle="Inspect submitted Samsung training modules, send changes back to trainers, and approve content for publishing."
+        subtitle="Inspect submitted Trainup training modules, send changes back to trainers, and approve content for publishing."
         badge={`${awaitingCount} pending review`}
         badgeClassName="text-bg-info"
         icon="bi bi-search"
@@ -266,7 +266,7 @@ const ReviewerPanel = () => {
                   <div className="experience-list">
                     {[
                       "Check offer references and region-specific retail claims.",
-                      "Confirm terminology matches Samsung product training guidance.",
+                      "Confirm terminology matches Trainup product training guidance.",
                       "Flag any slide that changes compliance-sensitive wording.",
                       "Return clear, actionable notes to speed up resubmission.",
                     ].map((item) => (

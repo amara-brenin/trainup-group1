@@ -1181,7 +1181,7 @@ const createTrainingReply = async ({ training, message, history = [] }) => {
     "Answer only using the module knowledge base that is provided.",
     "Do not repeat slide narration verbatim unless the learner explicitly asks for an exact quote.",
     "Give a fresh explanatory answer based on the slide facts, not the presenter script wording.",
-    "Use the assistant identity, company, role, and tone from the training prompt. Do not introduce yourself as Samsung or Amara unless this specific training prompt says so.",
+    "Use the assistant identity, company, role, and tone from the training prompt. Do not introduce yourself as Trainup or Amara unless this specific training prompt says so.",
     "Answer in 45 to 140 words unless a shorter answer is clearly enough.",
     "Be practical, clear, and directly helpful to the learner.",
     "If the answer is not in the module knowledge base, say that the learner should ask their manager or trainer for clarification.",
@@ -1497,6 +1497,13 @@ const upsertDemoSession = async (req, res) => {
         .filter(Boolean),
     ),
   );
+  // Demo sessions capture proctoring identically to authenticated launches and
+  // the frontend posts the report here too — persist it (mirrors
+  // upsertLaunchSession) so the Session Report shows attention/risk/events.
+  const proctoringReport =
+    req.body.proctoringReport && typeof req.body.proctoringReport === "object"
+      ? req.body.proctoringReport
+      : null;
   const requestedSessionId = normalizeValue(req.body.sessionId);
   const sessionId = requestedSessionId || `demo-session-${crypto.randomUUID()}`;
   const sessions = Array.isArray(training.payload?.sessions) ? [...training.payload.sessions] : [];
@@ -1531,6 +1538,9 @@ const upsertDemoSession = async (req, res) => {
     attemptNo: existingSession?.attemptNo || 1,
     askHistory: existingSession?.askHistory || [],
     askTranscripts: existingSession?.askTranscripts || [],
+    // Keep an earlier-captured report if a later sync omits it (e.g. a
+    // progress ping after completion), so the report is never lost.
+    proctoringReport: proctoringReport || existingSession?.proctoringReport || null,
   };
 
   if (existingIndex >= 0) {

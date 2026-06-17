@@ -609,7 +609,7 @@ const ClientDetail = () => {
                   <div>
                     <label htmlFor="detail-ssoType" className="form-label">SSO type</label>
                     <Field as="select" name="ssoType" id="detail-ssoType" className="form-select">
-                      <option value="Samsung IAM">Samsung IAM</option>
+                      <option value="Trainup IAM">Trainup IAM</option>
                       <option value="Azure AD">Azure AD</option>
                       <option value="Google Workspace">Google Workspace</option>
                       <option value="Okta">Okta</option>

@@ -682,6 +682,9 @@ const TrainingLaunch = () => {
   const isPlaybackPausedRef = useRef(false);
   const isStoppingAvatarRef = useRef(false);
   const avatarTalkingSlideIdRef = useRef<string | null>(null);
+  // Tracks the question_set step id the avatar has already given guidance for,
+  // so multiple question slides each speak once without repeating.
+  const questionGuidanceSpokenRef = useRef<string>("");
 
   const [training, setTraining] = useState<LaunchTrainingRecord | null>(null);
   const [publicLaunchBranding, setPublicLaunchBranding] =
@@ -2350,6 +2353,75 @@ const TrainingLaunch = () => {
     playCurrentSlideNarration,
   ]);
 
+  // Knowledge Check guidance: when a question_set step is shown, the avatar
+  // (or audio narrator) speaks a short instruction once. Uses the "answer"
+  // speech type so it neither triggers slide auto-advance nor conflicts with
+  // the slide auto-play effect above (both gate out type === "answer").
+  useEffect(() => {
+    if (!hasStarted || !training) return;
+    if (!isQuestionSetStep || !currentQuestionSet || !currentSequenceItem) return;
+    if (!isLaunchRuntimeReady) return;
+    if (currentStepSubmitted) return;
+    if (isAskMode || showQuestionPanel || isPlaybackPaused) return;
+    if (questionGuidanceSpokenRef.current === currentSequenceItem.id) return;
+
+    const stepId = currentSequenceItem.id;
+    questionGuidanceSpokenRef.current = stepId;
+    let guidanceFired = false;
+
+    const isMandatory = currentQuestionSet.isMandatory !== false;
+    const multiple = (currentQuestionSet.checkpoints?.length ?? 0) > 1;
+    const guidanceText = isMandatory
+      ? multiple
+        ? "Please answer the questions before continuing. This knowledge check is mandatory."
+        : "Please answer the question before continuing. This question is mandatory."
+      : multiple
+        ? "You may answer these questions, or continue without them if you wish."
+        : "You may answer this question, or continue without it if you wish.";
+
+    const guidanceTimer = window.setTimeout(() => {
+      guidanceFired = true;
+      if (hasAvatarRuntime && avatarReady) {
+        void speakAvatarText(guidanceText, {
+          type: "answer",
+          slideId: currentSlide?.id ?? null,
+          errorMessage: "Knowledge check guidance could not be spoken.",
+        });
+      } else {
+        void playTrainingTextAudio(guidanceText, {
+          type: "answer",
+          slideId: currentSlide?.id ?? null,
+          errorMessage: "Knowledge check guidance audio could not be generated.",
+        });
+      }
+    }, 120);
+
+    return () => {
+      window.clearTimeout(guidanceTimer);
+      // If the step changed before guidance actually played, roll back the
+      // dedup marker so this (or the next) question step can speak when stable.
+      if (!guidanceFired && questionGuidanceSpokenRef.current === stepId) {
+        questionGuidanceSpokenRef.current = "";
+      }
+    };
+  }, [
+    avatarReady,
+    currentQuestionSet,
+    currentSequenceItem,
+    currentSlide?.id,
+    currentStepSubmitted,
+    hasAvatarRuntime,
+    hasStarted,
+    isAskMode,
+    isLaunchRuntimeReady,
+    isPlaybackPaused,
+    isQuestionSetStep,
+    playTrainingTextAudio,
+    showQuestionPanel,
+    speakAvatarText,
+    training,
+  ]);
+
   const navigateToSequenceIndex = (
     index: number,
     options?: { logNavigation?: boolean },
@@ -2889,6 +2961,7 @@ const TrainingLaunch = () => {
     setSubmittedSlides({});
     setSlideScores({});
     autoPlayedSlideRef.current = "";
+    questionGuidanceSpokenRef.current = "";
     resumeNarrationAfterAskRef.current = {
       active: false,
       slideId: null,

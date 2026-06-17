@@ -6144,16 +6144,34 @@ html[data-bs-theme="dark"] .session-report-modal-body {
   position: relative;
   z-index: 1;
   width: min(205px, 16vw);
-  height: min(340px, 44vh);
+  /* height: min(340px, 44vh); */
   background: transparent !important;
   border: 0 !important;
   box-shadow: none !important;
+  aspect-ratio: 0.85;
 }
 
 .training-launch-avatar-native>div,
 .training-launch-avatar-native video,
 .training-launch-avatar-native canvas {
   background: transparent !important;
+}
+
+/* Keep the Trulience-injected media fully inside its box on every desktop
+   width so the avatar is never cropped on one side. `contain` preserves the
+   avatar's aspect ratio (no stretch/zoom-crop). Scoped to the launch rail so
+   the group-hall avatar rule (which intentionally fills its region) is
+   unaffected. */
+.training-launch-avatar-rail .training-launch-avatar-native {
+  max-width: 100%;
+}
+
+.training-launch-avatar-rail .training-launch-avatar-native>div,
+.training-launch-avatar-rail .training-launch-avatar-native video,
+.training-launch-avatar-rail .training-launch-avatar-native canvas {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
 }
 
 /* Group Training Hall: avatar fixed and centered inside its dedicated region
@@ -6551,7 +6569,7 @@ html[data-bs-theme="dark"] .session-report-modal-body {
 @media (max-width: 991.98px) {
   .training-launch-avatar-native {
     width: min(165px, 18vw);
-    height: min(275px, 34vh);
+    /* height: min(275px, 34vh); */
   }
 
   .training-launch-page {
@@ -6761,7 +6779,7 @@ html[data-bs-theme="dark"] .session-report-modal-body {
 
   .training-launch-avatar-native {
     width: min(170px, 46vw);
-    height: min(260px, 31vh);
+    /* height: min(260px, 31vh); */
   }
 
   .training-launch-start-overlay {
@@ -7007,7 +7025,7 @@ html[data-bs-theme="dark"] .session-report-modal-body {
 
   .training-launch-avatar-native {
     width: min(158px, 48vw);
-    height: min(236px, 29vh);
+    /* height: min(236px, 29vh); */
   }
 
   .training-launch-controls .btn {

@@ -14,7 +14,7 @@
 - Slide media upload/resolve/delete through S3 signed URLs
 
 ## What is still pending real-provider integration
-- Employee Samsung SSO still needs the actual provider details
+- Employee Trainup SSO still needs the actual provider details
 - Current employee flow remains demo UI until `OIDC` or `SAML` metadata is provided
 
 ## Required Vercel environment variables

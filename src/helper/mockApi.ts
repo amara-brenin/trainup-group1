@@ -439,8 +439,8 @@ const buildMockLaunchPayload = (training: TrainingWorkspaceRecord, preview: bool
   avatarEngine: training.avatarEngine ?? null,
   localizedVoiceovers: training.localizedVoiceovers ?? null,
   branding: {
-    application_name: training.branding?.applicationName || "Samsung LMS",
-    companyName: training.branding?.companyName || "Samsung Retail India",
+    application_name: training.branding?.applicationName || "Trainup",
+    companyName: training.branding?.companyName || "Trainup Retail India",
     email: training.branding?.supportEmail || "support@samsung.com",
     logo: training.branding?.logoUrl || "",
     logoUrl: training.branding?.logoUrl || "",
@@ -760,7 +760,7 @@ const buildClientAppSettings = (client: ClientRecord | null): AppSettings => ({
 const seedClients = (): ClientRecord[] => [
   hydrateClientCredits({
     id: "client-001",
-    name: "Samsung Retail India",
+    name: "Trainup Retail India",
     industry: "Retail Operations",
     plan: "ENTERPRISE",
     status: "active",
@@ -776,7 +776,7 @@ const seedClients = (): ClientRecord[] => [
     logoColor: "#3e60d5",
     logoBg: "#ebf2ff",
     iframeEnabled: true,
-    ssoType: "Samsung IAM",
+    ssoType: "Trainup IAM",
     ssoStatus: "connected",
     supportEmail: "retail-training@samsung.com",
     allowedOrigins: ["https://retail.samsung.com", "https://retail-ops.samsung.com"],
@@ -785,7 +785,7 @@ const seedClients = (): ClientRecord[] => [
   }),
   hydrateClientCredits({
     id: "client-002",
-    name: "Samsung Service Academy",
+    name: "Trainup Service Academy",
     industry: "Service Training",
     plan: "PRO",
     status: "active",
@@ -810,7 +810,7 @@ const seedClients = (): ClientRecord[] => [
   }),
   hydrateClientCredits({
     id: "client-003",
-    name: "Samsung Experience Stores",
+    name: "Trainup Experience Stores",
     industry: "Store Enablement",
     plan: "FREE",
     status: "trial",
@@ -2377,7 +2377,7 @@ export const mockRequest = async (
       logoColor: "#3e60d5",
       logoBg: "#ebf2ff",
       iframeEnabled: true,
-      ssoType: "Samsung IAM",
+      ssoType: "Trainup IAM",
       ssoStatus: "connected",
       supportEmail: "training@samsung.com",
       allowedOrigins: [],

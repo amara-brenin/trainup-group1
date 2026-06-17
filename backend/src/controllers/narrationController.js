@@ -23,7 +23,7 @@ const generateNarration = async (req, res) => {
     try {
       const reply = await createGroqReply({
         systemPrompt:
-          "You translate Samsung training narration into the requested language. Preserve meaning, keep it concise and natural for voiceover, and return spoken text only with no bullets or markup.",
+          "You translate Trainup training narration into the requested language. Preserve meaning, keep it concise and natural for voiceover, and return spoken text only with no bullets or markup.",
         context: [
           trainingTitle ? `Training title: ${trainingTitle}` : "",
           slideTitle ? `Slide title: ${slideTitle}` : "",
@@ -59,7 +59,7 @@ const generateNarration = async (req, res) => {
   try {
     const reply = await createGroqReply({
       systemPrompt:
-        "You generate concise slide narration for Samsung training slides. Use only the OCR slide content and the prompt instructions. Return plain spoken text only, with no bullets or markup.",
+        "You generate concise slide narration for Trainup training slides. Use only the OCR slide content and the prompt instructions. Return plain spoken text only, with no bullets or markup.",
       context: [
         trainingTitle ? `Training title: ${trainingTitle}` : "",
         slideTitle ? `Slide title: ${slideTitle}` : "",

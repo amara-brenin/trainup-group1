@@ -368,7 +368,7 @@ const defaultAvatarEngineConfig: TrainingAvatarEngineConfig = {
   baseUrl: "https://api.groq.com/openai/v1",
   model: "llama-3.3-70b-versatile",
   prompt:
-    "You are a helpful assistant working for Samsung. Your name is Amara, a girl. Keep your responses between 16 and 35 words. Your words will be spoken by a voice agent so avoid the use of mark-up language, asterisks and emojis. Only speak in understandable sentences. Do not describe in words any facial expressions you might have. When talking about yourself always talk in the first person. your conversation always in female indian pronouciations.",
+    "You are a helpful assistant working for Trainup. Your name is Amara, a girl. Keep your responses between 16 and 35 words. Your words will be spoken by a voice agent so avoid the use of mark-up language, asterisks and emojis. Only speak in understandable sentences. Do not describe in words any facial expressions you might have. When talking about yourself always talk in the first person. your conversation always in female indian pronouciations.",
   memoryEnabled: true,
   sttProvider: "Trulience",
   language: "english (india)(en-IN)",
@@ -405,8 +405,8 @@ const defaultSlideshowTheme: TrainingSlideshowTheme = {
 };
 
 const defaultTrainingBranding: TrainingBrandingSettings = {
-  applicationName: "Samsung LMS",
-  companyName: "Samsung Retail India",
+  applicationName: "Trainup",
+  companyName: "Trainup Retail India",
   supportEmail: "support@samsung.com",
   logoUrl: "",
   faviconUrl: "",
@@ -453,8 +453,8 @@ const buttonFontSizeOptions: Array<{ value: TrainingFontSizePreset; label: strin
 
 const brandThemePresets: Array<{ id: string; label: string; description: string; theme: TrainingSlideshowTheme }> = [
   {
-    id: "samsung-blue",
-    label: "Samsung Blue",
+    id: "Trainup-blue",
+    label: "Trainup Blue",
     description: "Professional default",
     theme: {
       ...defaultSlideshowTheme,
@@ -1155,7 +1155,7 @@ const buildDefaultSetupValues = (
   voiceId: training?.voiceId ?? "auto",
   manualApiKey: training?.manualTtsApiKey ?? "",
   manualApiKeyVerifiedAt: training?.manualTtsApiKeyVerifiedAt ?? "",
-  presenterNotes: training?.presenterNotes ?? "Focus on key selling points for Samsung field sales reps.",
+  presenterNotes: training?.presenterNotes ?? "Focus on key selling points for Trainup field sales reps.",
   questionButtonLabel: training?.questionButtonLabel ?? "Ask Question",
   askSystemPrompt: training?.askSystemPrompt ?? training?.avatarEngine?.prompt ?? defaultAvatarEngineConfig.prompt,
   avatarEngineBaseUrl: training?.avatarEngine?.baseUrl ?? defaultAvatarEngineConfig.baseUrl,
@@ -1877,7 +1877,7 @@ const TrainingBuilder = ({
   const [questionSets, setQuestionSets] = useState<TrainingQuestionSetRecord[]>(initialQuestionSetState.questionSets);
   const [scriptPrompt, setScriptPrompt] = useState(
     initialTraining?.scriptPrompt ??
-    "Create avatar narration scripts of 20-30 words per slide. Keep tone motivating and practical for Samsung field sales reps.",
+    "Create avatar narration scripts of 20-30 words per slide. Keep tone motivating and practical for Trainup field sales reps.",
   );
   const [previewSlideId, setPreviewSlideId] = useState<string | null>(initialTraining?.previewSlideId ?? null);
   const [previewThumbnailAssetId, setPreviewThumbnailAssetId] = useState<string | null>(
@@ -5408,11 +5408,11 @@ const TrainingBuilder = ({
                           <div className="training-theme-grid mb-3">
                             <div>
                               <label className="form-label small">Application Name</label>
-                              <Field name="branding.applicationName" className="form-control" placeholder="Samsung LMS" />
+                              <Field name="branding.applicationName" className="form-control" placeholder="Trainup" />
                             </div>
                             <div>
                               <label className="form-label small">Company Name</label>
-                              <Field name="branding.companyName" className="form-control" placeholder="Samsung Retail India" />
+                              <Field name="branding.companyName" className="form-control" placeholder="Trainup Retail India" />
                             </div>
                             <div>
                               <label className="form-label small">Support Email</label>
@@ -6591,7 +6591,7 @@ const TrainingBuilder = ({
                   className="form-control"
                   value={newBrandPresetName}
                   onChange={(event) => setNewBrandPresetName(event.target.value)}
-                  placeholder="Example: Samsung Blue Variant"
+                  placeholder="Example: Trainup Blue Variant"
                 />
               </div>
               <div>
@@ -8980,6 +8980,18 @@ const TrainingWorkspace = ({
     void loadWorkspace().catch(() => undefined);
   }, [loadWorkspace]);
 
+  // Refetch the list from the API whenever the user navigates back to the
+  // dashboard or training-library view, so navigation always shows fresh
+  // server data instead of stale cached/persisted state.
+  useEffect(() => {
+    if (!isServerApiEnabled) {
+      return;
+    }
+    if (view === "dashboard" || view === "trainings") {
+      void loadWorkspace().catch(() => undefined);
+    }
+  }, [view, loadWorkspace]);
+
   useEffect(() => {
     if (!isServerApiEnabled || view !== "detail" || !selectedTrainingId) {
       return;
@@ -9090,6 +9102,12 @@ const TrainingWorkspace = ({
     setSelectedTrainingId(trainingId);
     setDetailTab(tab);
     setView("detail");
+    // Always pull the full, fresh record from the API when opening a training
+    // (the list payload is lightweight: no slides/scripts/sessions/options).
+    if (isServerApiEnabled) {
+      skipNextDetailReloadRef.current = false;
+      void loadTrainingDetail(trainingId).catch(() => undefined);
+    }
   };
 
   const openBuilder = async (trainingId: string | null, startStep: number) => {
@@ -9118,7 +9136,15 @@ const TrainingWorkspace = ({
 
     if (trainingId && isServerApiEnabled) {
       try {
-        await loadTrainingDetail(trainingId);
+        // Must load the FULL training (slides/scripts/questions) before opening
+        // the editor — the list payload is lightweight. If this fails we abort
+        // rather than open a stub, otherwise a subsequent save would overwrite
+        // the stored slides/content with empty values.
+        const loaded = await loadTrainingDetail(trainingId);
+        if (!loaded) {
+          toast.error("Unable to load training details. Please try again.");
+          return;
+        }
       } catch (error) {
         toast.error(error instanceof Error ? error.message : "Unable to load training details.");
         return;

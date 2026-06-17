@@ -325,7 +325,7 @@ Status:
 
 ## 3. Employee SSO Is Still Demo-Only
 
-The employee entry experience is polished, but not real Samsung SSO.
+The employee entry experience is polished, but not real Trainup SSO.
 
 Key file:
 

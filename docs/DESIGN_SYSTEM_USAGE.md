@@ -1,4 +1,4 @@
-# Samsung LMS Design System
+# Trainup Design System
 
 Source of truth:
 - [design-system.css](D:/trainup/src/assets/css/design-system.css)

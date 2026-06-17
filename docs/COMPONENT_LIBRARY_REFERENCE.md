@@ -1,4 +1,4 @@
-# Samsung LMS Component Library Reference
+# Trainup Component Library Reference
 
 This file documents the current reusable component surface exactly as it exists in the project today.
 

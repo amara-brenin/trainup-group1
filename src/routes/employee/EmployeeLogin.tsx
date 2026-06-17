@@ -8,7 +8,7 @@ const EmployeeLogin = () => {
     <PublicRoleLoginCard
       role="employee"
       title="Employee Sign In"
-      description="Enter your employee SSO credentials to access the Samsung LMS training player."
+      description="Enter your employee SSO credentials to access the Trainup training player."
       identifierLabel="Employee ID"
       identifierPlaceholder="SAM-1042"
       demoText="Demo credentials: SAM-1042 / Sam@1042"
@@ -36,7 +36,7 @@ const EmployeeLogin = () => {
         return {
           message: "Invalid employee credentials.",
           errors: {
-            identifier: "Use a valid Samsung employee ID.",
+            identifier: "Use a valid Trainup employee ID.",
             password: "Password does not match the selected employee.",
           },
         };

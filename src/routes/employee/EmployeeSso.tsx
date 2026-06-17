@@ -22,8 +22,8 @@ type EmployeeSsoValues = {
 const AUTO_SESSION_EMPLOYEE_ID = "SAM-1042";
 
 const validationSchema = Yup.object({
-  employeeId: Yup.string().trim().required("Please enter your Samsung Employee ID."),
-  password: Yup.string().trim().required("Please enter your Samsung account password."),
+  employeeId: Yup.string().trim().required("Please enter your Trainup Employee ID."),
+  password: Yup.string().trim().required("Please enter your Trainup account password."),
 });
 
 const initialValues: EmployeeSsoValues = {
@@ -125,7 +125,7 @@ const EmployeeSso = () => {
           <div className="employee-sso-status-icon">
             <i className="bi bi-arrow-repeat" aria-hidden="true" />
           </div>
-          <h2>Verifying with Samsung SSO...</h2>
+          <h2>Verifying with Trainup SSO...</h2>
           <p>Checking credentials with the internal directory and assigned training link.</p>
           <div className="employee-sso-progress">
             <span className="employee-sso-progress-bar" />
@@ -147,7 +147,7 @@ const EmployeeSso = () => {
               <h2>{isExistingSession ? "Session Already Active" : "SSO Verified"}</h2>
               <p>
                 {isExistingSession
-                  ? "You are already signed in to Samsung SSO on this device."
+                  ? "You are already signed in to Trainup SSO on this device."
                   : "Credentials verified. Your assigned training is ready to start."}
               </p>
             </div>
@@ -219,13 +219,13 @@ const EmployeeSso = () => {
         <div className="employee-sso-brand">
           <div className="employee-sso-brand-logo">S</div>
           <div className="employee-sso-brand-copy">
-            <strong>Samsung One Portal</strong>
+            <strong>Trainup One Portal</strong>
             <span>Internal Employee SSO</span>
           </div>
         </div>
         <div className="employee-sso-domain">
           <span className="employee-sso-domain-dot" />
-          <span>sso.samsung-internal.com</span>
+          <span>sso.Trainup-internal.com</span>
         </div>
       </div>
 
@@ -237,8 +237,8 @@ const EmployeeSso = () => {
         <div className="employee-sso-card">
           <div className="employee-sso-card-header">
             <span className="badge bg-primary-subtle text-primary-emphasis">Access via Training Link</span>
-            <h1>Samsung Internal Employee SSO</h1>
-            <p>Verify the employee record first, then launch the assigned Samsung LMS training immediately.</p>
+            <h1>Trainup Internal Employee SSO</h1>
+            <p>Verify the employee record first, then launch the assigned Trainup training immediately.</p>
           </div>
 
           <div className="employee-sso-training-strip">
@@ -261,13 +261,13 @@ const EmployeeSso = () => {
               const employee = ssoUsers[employeeId as keyof typeof ssoUsers];
 
               if (!employee) {
-                setErrors({ employeeId: "Employee ID was not found in Samsung IAM." });
+                setErrors({ employeeId: "Employee ID was not found in Trainup IAM." });
                 setSubmitting(false);
                 return;
               }
 
               if (employee.password !== password) {
-                setErrors({ password: "Password did not match the Samsung account record." });
+                setErrors({ password: "Password did not match the Trainup account record." });
                 setSubmitting(false);
                 return;
               }
@@ -280,7 +280,7 @@ const EmployeeSso = () => {
               <Form>
                 <div className="mb-3">
                   <label htmlFor="employeeId" className="form-label">
-                    Samsung Employee ID
+                    Trainup Employee ID
                   </label>
                   <Field id="employeeId" name="employeeId" className="form-control" placeholder="SAM-1042" />
                   <div className="form-text">Demo hint: use `SAM-1042`.</div>
@@ -289,7 +289,7 @@ const EmployeeSso = () => {
 
                 <div className="mb-3">
                   <label htmlFor="password" className="form-label">
-                    Samsung Account Password
+                    Trainup Account Password
                   </label>
                   <Field id="password" name="password" type="password" className="form-control" placeholder="Sam@1042" />
                   <div className="form-text">Demo hint: use the employee suffix format, for example Sam@1042.</div>
@@ -302,7 +302,7 @@ const EmployeeSso = () => {
                   ) : (
                     <i className="bi bi-shield-lock me-2" aria-hidden="true" />
                   )}
-                  Sign In with Samsung SSO
+                  Sign In with Trainup SSO
                 </button>
               </Form>
             )}
@@ -315,7 +315,7 @@ const EmployeeSso = () => {
             <button
               type="button"
               className="btn btn-link btn-sm p-0 align-baseline"
-              onClick={() => runVerification(AUTO_SESSION_EMPLOYEE_ID, "already_logged_in", "Existing Samsung SSO session found.")}
+              onClick={() => runVerification(AUTO_SESSION_EMPLOYEE_ID, "already_logged_in", "Existing Trainup SSO session found.")}
             >
               Use existing session
             </button>
@@ -324,7 +324,7 @@ const EmployeeSso = () => {
           <div className="employee-sso-footer">
             <div>
               <i className="bi bi-shield-check me-1" aria-hidden="true" />
-              Secured by Samsung IAM
+              Secured by Trainup IAM
             </div>
             <button type="button" className="btn btn-light btn-sm" onClick={() => navigate("/login", { replace: true })}>
               Cancel

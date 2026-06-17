@@ -35,4 +35,4 @@ VITE_API_BASE_URL=https://YOUR-RENDER-SERVICE.onrender.com/api-v1
 - Include the Vercel frontend origin in `CORS_ORIGINS`.
 - AWS bucket CORS must also allow `GET`, `HEAD`, and `PUT` from those frontend origins for presigned PDF/PPT/image uploads to work.
 - After updating frontend origins, run `npm run s3:cors` in `backend/` with the backend env loaded, or apply the same rule directly on the S3 bucket.
-- Employee SSO stays pending until Samsung provider metadata is available.
+- Employee SSO stays pending until Trainup provider metadata is available.

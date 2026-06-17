@@ -63,7 +63,7 @@ const WebhookSettings = () => {
   return (
     <PageShell
       title="Webhook settings"
-      description="Sync completion events back into Samsung systems through the standard helper layer."
+      description="Sync completion events back into Trainup systems through the standard helper layer."
     >
 
       <div className="row g-3">

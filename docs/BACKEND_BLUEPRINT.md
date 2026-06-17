@@ -1,6 +1,6 @@
-# Samsung LMS Backend Blueprint
+# Trainup Backend Blueprint
 
-This document defines the recommended backend blueprint for converting the current browser-local Samsung LMS prototype into a real dynamic system.
+This document defines the recommended backend blueprint for converting the current browser-local Trainup prototype into a real dynamic system.
 
 Scope:
 - trainer create/edit workflow
@@ -130,11 +130,11 @@ Backend API (Node + TypeScript)
 
 ## 4. Multi-Tenancy Direction
 
-Current business target is Samsung only, but future multi-client support is likely.
+Current business target is Trainup only, but future multi-client support is likely.
 
 Recommended approach:
 - build from day one with a `tenant` layer
-- current Samsung deployment can run as a single tenant
+- current Trainup deployment can run as a single tenant
 - later clients can be added without schema rebuild
 
 ### Tenant strategy
@@ -222,7 +222,7 @@ Used by:
 - learners who access training via direct link
 
 Recommended auth:
-- client-provided Samsung SSO
+- client-provided Trainup SSO
 - SSO handshake validates employee identity before access
 - direct training link carries a unique access token or training assignment token
 - SSO identity is mapped to employee session access
@@ -960,7 +960,7 @@ These are not blockers for blueprinting, but they are still needed before final 
 
 - final database choice confirmation
 - final backend deployment target confirmation
-- Samsung SSO technical protocol details
+- Trainup SSO technical protocol details
 - whether approved trainings can later be reopened and edited directly
 - whether reviewer approval should be limited to assigned reviewers only
 

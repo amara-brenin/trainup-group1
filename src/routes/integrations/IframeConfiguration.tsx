@@ -57,7 +57,7 @@ const IframeConfiguration = () => {
   return (
     <PageShell
       title="iFrame configuration"
-      description="Prepare Samsung portal embeds with approved domains, sizing, and SSO mapping."
+      description="Prepare Trainup portal embeds with approved domains, sizing, and SSO mapping."
     >
 
       <div className="row g-3">
@@ -155,7 +155,7 @@ const IframeConfiguration = () => {
           <div className="card mb-3">
             <div className="card-header bg-transparent border-0 pb-0">
               <h2 className="h5 fw-semibold mb-1">Generated embed preview</h2>
-              <p className="small text-body-secondary mb-0">Current defaults shown as a Samsung portal snippet.</p>
+              <p className="small text-body-secondary mb-0">Current defaults shown as a Trainup portal snippet.</p>
             </div>
             <div className="card-body">
               <div className="admin-settings-item bg-dark text-white">

@@ -56,7 +56,7 @@ export const reviewerQueue = [
   },
   {
     id: "RQ003",
-    title: "Samsung Care+ Attach Strategy",
+    title: "Trainup Care+ Attach Strategy",
     trainer: "Anjali Verma",
     slides: 10,
     status: "approved",
@@ -86,7 +86,7 @@ export const employeeSlides = [
   {
     id: "S3",
     title: "Handling Objections",
-    copy: "When price objections come up, reframe around trade-in programs, Samsung Care+, and long-term ownership value.",
+    copy: "When price objections come up, reframe around trade-in programs, Trainup Care+, and long-term ownership value.",
   },
 ];
 
@@ -97,7 +97,7 @@ export const employeeAssignedTraining = {
   slideCount: employeeSlides.length,
   mandatoryLabel: "Mandatory",
   dueLabel: "Complete by 12 Apr 2026",
-  audience: "Samsung Retail Sales Teams",
+  audience: "Trainup Retail Sales Teams",
   accessUrl: "https://sso.samsung-internal.com/auth?redirect=samsung-lms%2Ftraining%2Fgalaxy-s25-sales-mastery",
   launchUrl: "https://jade-caramel-11e104.netlify.app/",
   checklist: ["SSO verification", "Assigned training access", "Slide-by-slide module playback"],
