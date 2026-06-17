@@ -82,6 +82,26 @@ const uploadObject = async ({ key, mimeType, body }) => {
   );
 };
 
+// Permanent, unsigned URL for an object uploaded with public-read access —
+// used for avatars/logos that need to be embedded directly (<img src=...>)
+// without a presign/resolve round trip, unlike slide media (see resolve()).
+const buildPublicUrl = (key) =>
+  `https://${config.aws.bucketName}.s3.${config.aws.region}.amazonaws.com/${key}`;
+
+const uploadPublicObject = async ({ key, mimeType, body }) => {
+  await getS3Client().send(
+    new PutObjectCommand({
+      Bucket: config.aws.bucketName,
+      Key: key,
+      ContentType: mimeType,
+      Body: body,
+      ACL: "public-read",
+    }),
+  );
+
+  return buildPublicUrl(key);
+};
+
 const createReadUrl = async ({ key }) => {
   const command = new GetObjectCommand({
     Bucket: config.aws.bucketName,
@@ -105,6 +125,8 @@ module.exports = {
   createStorageKey,
   createUploadUrl,
   uploadObject,
+  uploadPublicObject,
+  buildPublicUrl,
   createReadUrl,
   deleteObject,
 };

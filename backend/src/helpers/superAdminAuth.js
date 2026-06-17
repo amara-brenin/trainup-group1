@@ -53,18 +53,22 @@ const findSuperAdminByEmail = async (email) => {
   return toSuperAdminProfile(legacyUser);
 };
 
-const findSuperAdminByAppId = async (appId) => {
+const findSuperAdminByAppId = async (appId, options = {}) => {
   const normalizedAppId = String(appId || "").trim();
   if (!normalizedAppId) {
     return null;
   }
 
-  const superAdmin = await SuperAdmin.findOne({ appId: normalizedAppId }).lean();
+  // When excludeImage is set (the per-request auth-resolution path), skip
+  // pulling the large base64 `image` field over the wire on every request.
+  const projection = options.excludeImage ? { image: 0 } : null;
+
+  const superAdmin = await SuperAdmin.findOne({ appId: normalizedAppId }, projection).lean();
   if (superAdmin) {
     return toSuperAdminProfile(superAdmin);
   }
 
-  const legacyUser = await User.findOne({ appId: normalizedAppId, role: "super_admin" }).lean();
+  const legacyUser = await User.findOne({ appId: normalizedAppId, role: "super_admin" }, projection).lean();
   return toSuperAdminProfile(legacyUser);
 };
 

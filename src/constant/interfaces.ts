@@ -168,6 +168,9 @@ export interface ClientRecord {
     logoUrl?: string;
     darkLogoUrl?: string;
     faviconUrl?: string;
+    // Present only on the lightweight /clients list response: server-resolved
+    // logoUrl ?? darkLogoUrl, so the list table only ever receives one image.
+    thumbnailUrl?: string;
   allowedOrigins: string[];
   webhookUrl: string;
   lastWebhookTestAt?: string;
@@ -976,6 +979,8 @@ export interface TrainingWorkspaceRecord {
     markAnswersInRealTime: boolean;
     showMarksInProgressBar: boolean;
     showFinalScore: boolean;
+    allowPublicDemoAccess?: boolean;
+    demoToken?: string;
   };
   theme?: TrainingSlideshowTheme;
   branding?: TrainingBrandingSettings;
@@ -983,6 +988,12 @@ export interface TrainingWorkspaceRecord {
   reviewMessages?: TrainingReviewMessage[];
   slides: TrainingSlideRecord[];
   sessions: TrainingSessionRecord[];
+  // Present on the lightweight workspace-list response (GET /training-workspace);
+  // slides/sessions are empty there and these counts stand in for their lengths.
+  slidesCount?: number;
+  sessionsCount?: number;
+  completedSessionsCount?: number;
+  traineesCount?: number;
 }
 
 export interface ClientFormValues {

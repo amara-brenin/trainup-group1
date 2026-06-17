@@ -5,6 +5,15 @@ const config = require("../config");
 const logger = require("../helpers/logger");
 const { verifyAuthToken } = require("../helpers/auth");
 const { findClientByHostname } = require("../helpers/tenant");
+const { resolveCompletionStatus, buildAssessmentSnapshot } = require("../helpers/assessmentScoring");
+
+// Feature 2: capture the immutable end-of-training assessment snapshot once.
+const captureAssessmentSnapshot = async (session) => {
+  if (session.assessmentSnapshot?.capturedAt) return session.assessmentSnapshot;
+  const training = await Training.findOne({ appId: session.trainingId, clientId: session.clientId }).lean();
+  session.assessmentSnapshot = buildAssessmentSnapshot(training, session.config);
+  return session.assessmentSnapshot;
+};
 const {
   LIFECYCLE,
   PHASE,
@@ -91,12 +100,9 @@ class GroupRuntime {
       startTime: session.startTime,
       startedAt: session.startedAt,
       endedAt: session.endedAt,
-      // Q&A wrap-up state — lets a refreshed Hall rehydrate the closing
-      // countdown + presentation-complete flag (no stuck/loop).
+      // Lets a refreshed Hall rehydrate the presentation-complete flag so it
+      // shows the wrap-up banner instead of re-presenting.
       presentationComplete: Boolean(session.presentationComplete),
-      closing: session.closing?.active
-        ? { active: true, startedAt: session.closing.startedAt, secs: Number(session.closing.secs || 0) }
-        : { active: false, startedAt: null, secs: 0 },
       minParticipants: Number(session.config?.autoStart?.minParticipants || 1),
       attendeeCount: (session.attendees || []).filter((a) => a.connected).length,
     };
@@ -178,11 +184,25 @@ class GroupRuntime {
   // A new question (broadcastAnswer), or "I'm Done" (qa:done) cancels both.
   async answerComplete(gsId, reason = "host-answer-complete") {
     if (!this.pendingAnswers.has(gsId)) return;
+    const pending = this.pendingAnswers.get(gsId);
     this._clearPendingAnswer(gsId);
     logger.qa.info("Answer Playback Completed", { gsId, reason });
 
     const session = await GroupSession.findOne({ appId: gsId });
-    if (!session || session.lifecycle !== LIFECYCLE.LIVE || !session.activeSpeakerId) {
+    if (!session) return;
+
+    // Feature 3: stamp answeredAt on the most recent unanswered transcript for
+    // the trainee whose answer just finished (so responseTimeSec is real).
+    const ansTraineeId = pending?.traineeId || session.activeSpeakerId;
+    if (ansTraineeId) {
+      for (let i = session.transcripts.length - 1; i >= 0; i -= 1) {
+        const t = session.transcripts[i];
+        if (t.traineeId === ansTraineeId && !t.answeredAt) { t.answeredAt = new Date(); break; }
+      }
+      await session.save();
+    }
+
+    if (session.lifecycle !== LIFECYCLE.LIVE || !session.activeSpeakerId) {
       return this.releaseFloor(gsId, reason);
     }
     const qa = session.config?.qaRules || {};
@@ -384,18 +404,30 @@ class GroupRuntime {
     const elapsedMs = session.startedAt ? now - new Date(session.startedAt).getTime() : 0;
     const minPct = Number(session.config?.completionRules?.minAttendancePct || 75);
 
+    // Feature 2: freeze the assessment questions now (if any). Lifecycle still
+    // completes immediately below — assessment NEVER blocks the session end.
+    await captureAssessmentSnapshot(session);
+    const requireAssessmentPass = Boolean(session.config?.completionRules?.requireAssessmentPass);
+    const hasAssessment = (session.assessmentSnapshot?.checkpoints || []).length > 0;
+
     session.endedAt = new Date();
     session.activeSpeakerId = "";
-    session.closing = { active: false, startedAt: null, secs: 0 };
     session.active = false; // RULE 1: frees the one-active-session slot for the training
     session.attendees.forEach((a) => {
       if (a.connected && a.lastHeartbeat) a.totalActiveMs += now - new Date(a.lastHeartbeat).getTime();
       a.connected = false;
       if (!a.leftAt) a.leftAt = new Date();
       a.attendancePct = computeAttendancePct(a, elapsedMs);
-      const completed = a.attendancePct >= minPct;
-      a.completionStatus = completed ? "completed" : "incomplete";
-      a.attendanceState = completed ? ATTENDANCE_STATE.COMPLETED : a.attendanceState;
+      const attendancePass = a.attendancePct >= minPct;
+      // Attendance-only unless assessment is required AND exists; then a not-yet-
+      // submitted attendee becomes "assessment-pending" (finalized on submit).
+      a.completionStatus = resolveCompletionStatus({
+        attendancePass,
+        requireAssessmentPass,
+        hasAssessment,
+        assessment: a.assessment,
+      });
+      if (a.completionStatus === "completed") a.attendanceState = ATTENDANCE_STATE.COMPLETED;
       a.completionTime = new Date();
     });
     await session.save();
@@ -409,6 +441,15 @@ class GroupRuntime {
     logger.qa.info("Session auto-closed", { gsId, reason });
     this.io.to(roomName(gsId)).emit("session:ended", { reason });
     this._emitState(session);
+  }
+
+  // Feature 2: re-flatten a session into Training.payload.sessions after an
+  // out-of-band write (e.g. assessment submitted post-end), so reports/exports
+  // pick up the updated per-attendee score/completion. Idempotent (matches by id).
+  async reflattenSession(gsId) {
+    const session = await GroupSession.findOne({ appId: gsId });
+    if (!session) return;
+    await this._flattenToTraining(session);
   }
 
   async _flattenToTraining(session) {
@@ -645,23 +686,6 @@ class GroupRuntime {
       const session = await GroupSession.findOne({ appId: gsId });
       if (!session || session.presentationComplete) return;
       session.presentationComplete = true;
-      await session.save();
-      this._emitState(session);
-    });
-    // Persist the closing countdown so it survives a Hall refresh.
-    on("host:closing-start", async ({ secs } = {}) => {
-      if (role !== "host") return;
-      const session = await GroupSession.findOne({ appId: gsId });
-      if (!session || session.lifecycle !== LIFECYCLE.LIVE) return;
-      session.closing = { active: true, startedAt: new Date(), secs: Number(secs || 15) };
-      await session.save();
-      this._emitState(session);
-    });
-    on("host:closing-cancel", async () => {
-      if (role !== "host") return;
-      const session = await GroupSession.findOne({ appId: gsId });
-      if (!session || !session.closing?.active) return;
-      session.closing = { active: false, startedAt: null, secs: 0 };
       await session.save();
       this._emitState(session);
     });

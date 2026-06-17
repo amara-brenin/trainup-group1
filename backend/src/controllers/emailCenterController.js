@@ -1,6 +1,7 @@
 const Client = require("../models/Client");
 const { ok, fail } = require("../helpers/response");
 const { getTenantClientId } = require("../helpers/tenant");
+const { resolveImageField } = require("../helpers/imageStorage");
 
 const defaults = {
   setPasswordSubject: "Set your password",
@@ -74,7 +75,9 @@ const updateSettings = async (req, res) => {
   client.emailResetPasswordSubject = next.resetPasswordSubject;
   client.emailResetPasswordTemplate = next.resetPasswordTemplate;
   client.emailSignatureHtml = next.signatureHtml;
-  client.emailSignatureImageUrl = next.signatureImageUrl;
+  // Storage migration: base64 input is uploaded to S3 and replaced with the
+  // resulting URL; an existing URL passes through unchanged.
+  client.emailSignatureImageUrl = await resolveImageField(next.signatureImageUrl, "client-email-signatures");
   await client.save();
 
   return ok(res, "Email template saved.", toPayload(client.toObject()));

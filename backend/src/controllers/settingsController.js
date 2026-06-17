@@ -4,6 +4,7 @@ const { createDomainVerificationToken, buildWebhookConfigPayload } = require("..
 const { ok, fail } = require("../helpers/response");
 const { buildDefaultTenantAppSettings, buildTenantSettingsPayload, getTenantClientId, setTenantSetting } = require("../helpers/tenant");
 const { isValidEmail, isValidUrl } = require("../helpers/validation");
+const { resolveImageField } = require("../helpers/imageStorage");
 
 const parseList = (value) =>
   Array.isArray(value)
@@ -106,9 +107,11 @@ const updateWhitelabelSettings = async (client, values) => {
   client.applicationName = String(values.applicationName || "").trim() || client.name;
   client.primaryColor = String(values.primaryColor || client.primaryColor).trim();
   client.secondaryColor = String(values.secondaryColor || client.secondaryColor).trim();
-  client.logoUrl = String(values.logoUrl || "").trim();
-  client.darkLogoUrl = String(values.darkLogoUrl || "").trim();
-  client.faviconUrl = String(values.faviconUrl || "").trim();
+  // Storage migration: base64 input is uploaded to S3 and replaced with the
+  // resulting URL; an existing URL passes through unchanged.
+  client.logoUrl = await resolveImageField(values.logoUrl, "client-logos");
+  client.darkLogoUrl = await resolveImageField(values.darkLogoUrl, "client-dark-logos");
+  client.faviconUrl = await resolveImageField(values.faviconUrl, "client-favicons");
   return { errors: null };
 };
 

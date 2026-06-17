@@ -23,6 +23,7 @@ const config = require("../config");
 const { ok, fail } = require("../helpers/response");
 const { buildDefaultTenantAppSettings, buildPlatformAppSettings, findClientByHostname, getRequestHostname, getTenantClientId, getTenantSetting } = require("../helpers/tenant");
 const { isValidEmail } = require("../helpers/validation");
+const { resolveImageField } = require("../helpers/imageStorage");
 const {
   completePasswordToken,
   issuePasswordEmail,
@@ -37,6 +38,10 @@ const resolveRoleDefinitions = async (user) => {
   return getRoleDefinitions(roleSetting);
 };
 
+// Only usedCredits/totalCredits/plan are read off this client by callers below —
+// exclude the large base64 logo/favicon fields so they aren't fetched here.
+const CLIENT_PROFILE_EXCLUSION = { logoUrl: 0, darkLogoUrl: 0, faviconUrl: 0, emailSignatureImageUrl: 0 };
+
 const resolveClientForUser = async (user) => {
   const clientId = getTenantClientId(user);
 
@@ -44,7 +49,7 @@ const resolveClientForUser = async (user) => {
     return null;
   }
 
-  return Client.findOne({ appId: clientId }).lean();
+  return Client.findOne({ appId: clientId }, CLIENT_PROFILE_EXCLUSION).lean();
 };
 
 const settings = async (req, res) => {
@@ -66,10 +71,12 @@ const settings = async (req, res) => {
     return ok(res, "Settings loaded.", defaultSettings);
   }
 
+  // Only used below to resolve clientId — the avatar image is never rendered
+  // from this lookup, so skip pulling it over the wire.
   const user =
     payload.role === "super_admin"
-      ? await findSuperAdminByAppId(payload.sub)
-      : await User.findOne({ appId: payload.sub }).lean();
+      ? await findSuperAdminByAppId(payload.sub, { excludeImage: true })
+      : await User.findOne({ appId: payload.sub }, { image: 0 }).lean();
   const clientId = getTenantClientId(user);
 
   if (!user || !clientId) {
@@ -395,7 +402,15 @@ const profile = async (req, res) => {
   const roleDefinitions =
     req.user?.role === "super_admin" ? [] : await resolveRoleDefinitions(req.user);
   const client = req.user?.role === "super_admin" ? null : await resolveClientForUser(req.user);
-  return ok(res, "Profile loaded.", sanitizeUserForClient(req.user, roleDefinitions, client));
+  // req.user (from the auth middleware) excludes the avatar image for
+  // performance — this is the one place that legitimately renders it, so
+  // fetch just that single field here instead.
+  const imageRecord =
+    req.user?.role === "super_admin"
+      ? await SuperAdmin.findOne({ appId: req.user.appId }, { image: 1 }).lean()
+      : await User.findOne({ appId: req.user.appId }, { image: 1 }).lean();
+  const userWithImage = { ...req.user, image: imageRecord?.image };
+  return ok(res, "Profile loaded.", sanitizeUserForClient(userWithImage, roleDefinitions, client));
 };
 
 const updateProfile = async (req, res) => {
@@ -407,9 +422,25 @@ const updateProfile = async (req, res) => {
   const currentPassword = String(req.body.currentPassword || "").trim();
   const newPassword = String(req.body.newPassword || "").trim();
   const confirmPassword = String(req.body.confirmPassword || "").trim();
-  const nextImage = Object.prototype.hasOwnProperty.call(req.body, "image")
-    ? String(req.body.image || "").trim()
-    : String(req.user.image || "").trim();
+  // req.user no longer carries `image` (excluded in the auth middleware for
+  // performance) — fetch the current value directly only when no new image
+  // was submitted, instead of relying on the stale/absent req.user.image.
+  let nextImage;
+  if (Object.prototype.hasOwnProperty.call(req.body, "image")) {
+    nextImage = String(req.body.image || "").trim();
+  } else {
+    const existingImage =
+      req.user.role === "super_admin"
+        ? await SuperAdmin.findOne({ appId: req.user.appId }, { image: 1 }).lean()
+        : await User.findOne({ appId: req.user.appId }, { image: 1 }).lean();
+    nextImage = String(existingImage?.image || "").trim();
+  }
+  // Storage migration: base64 input is uploaded to S3 and replaced with the
+  // resulting URL; an existing URL (or no image) passes through unchanged.
+  nextImage = await resolveImageField(
+    nextImage,
+    req.user.role === "super_admin" ? "super-admin-avatars" : "avatars",
+  );
   const shouldUpdatePassword = Boolean(newPassword || confirmPassword);
 
   const errors = {};

@@ -46,6 +46,21 @@ export const superAdminProtectedRoutes: RouteObject[] = [
         },
       },
 
+      {
+        path: "plans",
+        lazy: async () => {
+          const module = await safeImport(() => import("../routes/super-admin/PlanManagement"));
+          return { Component: module.default };
+        },
+      },
+      {
+        path: "billing-insights",
+        lazy: async () => {
+          const module = await safeImport(() => import("../routes/super-admin/BillingInsights"));
+          return { Component: module.default };
+        },
+      },
+
 
       {
         path: "clients/:clientId",

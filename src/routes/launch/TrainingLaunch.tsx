@@ -44,6 +44,7 @@ import {
   getLaunchSessionSnapshot,
   setLaunchSessionSnapshot,
   setLaunchAuthToken,
+  getDemoSession,
 } from "../../helper/authSession";
 import { generateScriptAudioDataUri } from "../../helper/scriptAudio";
 import { resolveSlideMediaAsset } from "../../helper/slideMediaStore";
@@ -620,6 +621,8 @@ const TrainingLaunch = () => {
     new URLSearchParams(window.location.search).get("preview") === "1";
   const [forcePreviewMode, setForcePreviewMode] = useState(false);
   const effectivePreviewMode = previewMode || forcePreviewMode;
+  const [demoSession] = useState(() => getDemoSession());
+  const isDemoMode = Boolean(demoSession && demoSession.trainingId === trainingId);
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const autoAdvanceTimerRef = useRef<number | null>(null);
@@ -689,7 +692,7 @@ const TrainingLaunch = () => {
     getLaunchAuthToken(),
   );
   const [requiresLaunchLogin, setRequiresLaunchLogin] = useState(
-    !previewMode && !getLaunchAuthToken(),
+    !previewMode && !isDemoMode && !getLaunchAuthToken(),
   );
   const [launchLoginEmail, setLaunchLoginEmail] = useState("");
   const [launchLoginPassword, setLaunchLoginPassword] = useState("");
@@ -782,6 +785,11 @@ const TrainingLaunch = () => {
   );
 
   const buildLaunchConfig = () => {
+    if (isDemoMode && demoSession) {
+      return {
+        validateStatus: () => true,
+      };
+    }
     const token = effectivePreviewMode ? getAuthToken() : launchAuthToken;
 
     return {
@@ -807,7 +815,7 @@ const TrainingLaunch = () => {
 
       return axios.get<ApiEnvelope<T>>(getRequestUrl(url), buildLaunchConfig());
     },
-    [effectivePreviewMode, launchAuthToken],
+    [effectivePreviewMode, isDemoMode, launchAuthToken],
   );
 
   const postLaunchData = useCallback(
@@ -826,7 +834,7 @@ const TrainingLaunch = () => {
         buildLaunchConfig(),
       );
     },
-    [effectivePreviewMode, launchAuthToken],
+    [effectivePreviewMode, isDemoMode, launchAuthToken],
   );
 
   const clearAutoAdvanceTimer = () => {
@@ -1136,7 +1144,7 @@ const TrainingLaunch = () => {
   useEffect(() => {
     let active = true;
 
-    if (!effectivePreviewMode && !launchAuthToken) {
+    if (!effectivePreviewMode && !isDemoMode && !launchAuthToken) {
       setRequiresLaunchLogin(true);
       setTraining(null);
       setErrorMessage("");
@@ -1187,8 +1195,12 @@ const TrainingLaunch = () => {
     setLaunchLoginError("");
     setGoogleLoginError("");
 
+    const trainingUrl = isDemoMode && demoSession
+      ? `/demo/${demoSession.demoToken}?guestName=${encodeURIComponent(demoSession.guestName)}&guestEmail=${encodeURIComponent(demoSession.guestEmail)}`
+      : `/launch/trainings/${trainingId}${effectivePreviewMode ? "?preview=1" : ""}`;
+
     void getLaunchData<LaunchResponse>(
-      `/launch/trainings/${trainingId}${effectivePreviewMode ? "?preview=1" : ""}`,
+      trainingUrl,
     )
       .then((response) => {
         if (!active) {
@@ -1204,7 +1216,7 @@ const TrainingLaunch = () => {
         const nextTraining = response.data.data;
         setPublicLaunchBranding(nextTraining.branding ?? null);
         const restoredSession =
-          !effectivePreviewMode && launchAuthToken
+          !effectivePreviewMode && (launchAuthToken || isDemoMode)
             ? getLaunchSessionSnapshot(nextTraining.id)
             : null;
         const nextLaunchSequence = buildLaunchSequence(nextTraining);
@@ -1214,9 +1226,9 @@ const TrainingLaunch = () => {
 
         setTraining(nextTraining);
         setLearnerProfile((current) => ({
-          name: current?.name || nextTraining.viewerName || "Learner",
-          email: current?.email || launchLoginEmail.trim().toLowerCase(),
-          role: current?.role || "Trainee",
+          name: current?.name || (isDemoMode && demoSession ? demoSession.guestName : "") || nextTraining.viewerName || "Learner",
+          email: current?.email || (isDemoMode && demoSession ? demoSession.guestEmail : "") || launchLoginEmail.trim().toLowerCase(),
+          role: current?.role || (isDemoMode ? "Guest" : "Trainee"),
           trainingsCount: current?.trainingsCount || 1,
           sessionsCount: current?.sessionsCount || 0,
         }));
@@ -2595,10 +2607,17 @@ const TrainingLaunch = () => {
       return null;
     }
 
+    const sessionUrl = isDemoMode && demoSession
+      ? `/demo/${demoSession.demoToken}/session`
+      : `/launch/trainings/${training.id}/session`;
+    const demoGuestFields = isDemoMode && demoSession
+      ? { guestName: demoSession.guestName, guestEmail: demoSession.guestEmail }
+      : {};
+
     const response = await postLaunchData<
       SessionResponse,
       Record<string, unknown>
-    >(`/launch/trainings/${training.id}/session`, {
+    >(sessionUrl, {
       action,
       preview: effectivePreviewMode,
       sessionId: overrides.sessionId ?? sessionId,
@@ -2621,6 +2640,7 @@ const TrainingLaunch = () => {
       startedAt: sessionStartedAt
         ? new Date(sessionStartedAt).toISOString()
         : undefined,
+      ...demoGuestFields,
     });
 
     if (!response.data.status) {
@@ -3054,10 +3074,17 @@ const TrainingLaunch = () => {
     try {
       const activeSessionId = await ensureLaunchSession();
 
+      const askUrl = isDemoMode && demoSession
+        ? `/demo/${demoSession.demoToken}/ask`
+        : `/launch/trainings/${training.id}/ask`;
+      const askDemoFields = isDemoMode && demoSession
+        ? { guestName: demoSession.guestName, guestEmail: demoSession.guestEmail }
+        : {};
+
       const response = await postLaunchData<
         AskQuestionResponse,
         Record<string, unknown>
-      >(`/launch/trainings/${training.id}/ask`, {
+      >(askUrl, {
         message: trimmedQuestion,
         preview: effectivePreviewMode,
         sessionId: activeSessionId,
@@ -3066,6 +3093,7 @@ const TrainingLaunch = () => {
         sttProvider: metadata.sttProvider ?? null,
         language: metadata.language ?? selectedSpeechLocale,
         slideId: metadata.slideId ?? currentSlide?.id ?? null,
+        ...askDemoFields,
       });
 
       if (!response.data.status) {

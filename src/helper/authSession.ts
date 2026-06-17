@@ -119,6 +119,35 @@ export const clearLaunchAuthToken = () => {
 // standard JWTs issued by /auth/login and verified identically server-side.
 export const getGroupAuthToken = () => getLaunchAuthToken() || getAuthToken();
 
+const DEMO_SESSION_KEY = "trainup-demo-session";
+
+export type DemoSessionInfo = {
+  demoToken: string;
+  trainingId: string;
+  guestName: string;
+  guestEmail: string;
+};
+
+export const getDemoSession = (): DemoSessionInfo | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(DEMO_SESSION_KEY);
+    return raw ? (JSON.parse(raw) as DemoSessionInfo) : null;
+  } catch {
+    return null;
+  }
+};
+
+export const setDemoSession = (info: DemoSessionInfo) => {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.setItem(DEMO_SESSION_KEY, JSON.stringify(info));
+};
+
+export const clearDemoSession = () => {
+  if (typeof window === "undefined") return;
+  window.sessionStorage.removeItem(DEMO_SESSION_KEY);
+};
+
 const getLaunchSessionKey = (trainingId: string) =>
   `${LAUNCH_SESSION_KEY_PREFIX}${String(trainingId || "").trim()}`;
 

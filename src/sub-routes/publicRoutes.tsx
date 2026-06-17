@@ -31,6 +31,20 @@ export const publicRoutes: RouteObject[] = [
     },
   },
   {
+    path: "training/:trainingId/analytics",
+    lazy: async () => {
+      const module = await safeImport(() => import("../routes/launch/GroupTrainingAnalytics"));
+      return { Component: module.default };
+    },
+  },
+  {
+    path: "demo-training/:demoToken",
+    lazy: async () => {
+      const module = await safeImport(() => import("../routes/launch/DemoTrainingLaunch"));
+      return { Component: module.default };
+    },
+  },
+  {
     path: "trainer",
     lazy: async () => {
       const module = await safeImport(() => import("../routes/trainer/TrainerWorkspacePanel"));

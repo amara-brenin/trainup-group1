@@ -4,7 +4,10 @@ const Client = require("../models/Client");
 const User = require("../models/User");
 const { ok, fail } = require("../helpers/response");
 const { getTenantClientId, syncClientMetrics } = require("../helpers/tenant");
-const { CREDIT_COSTS, assertUsageWithinPlan, consumeClientCredits } = require("../helpers/credits");
+const {
+  CREDIT_COSTS, assertUsageWithinPlan, consumeClientCredits,
+  ensureClientEntitlement, assertLifetimeQuota, getClientEntitlement,
+} = require("../helpers/credits");
 const { notifyRolesInClient, notifyTrainingOwner } = require("../helpers/notifications");
 const { sendTrainingAssignmentEmails } = require("../helpers/clientDelivery");
 const { buildPublicUrl } = require("../helpers/publicUrl");
@@ -19,6 +22,59 @@ const toTrainingRecord = (training) => ({
   ...training.payload,
   sessions: Array.isArray(training.payload?.sessions) ? training.payload.sessions : [],
 });
+
+// Lightweight shape for the workspace LIST/library screen. Excludes slides,
+// scripts, narration, question payloads, and other large embedded content —
+// those are only fetched (via getOne) when a specific training is opened.
+const toTrainingListRecord = (record) => {
+  const payload = record.payload || {};
+  return {
+    id: record.appId,
+    title: payload.title || "",
+    type: payload.type || "Other",
+    audience: payload.audience || "All Learners",
+    trainer: payload.trainer || "",
+    status: payload.status || "draft",
+    created: payload.created || "",
+    submittedOn: payload.submittedOn ?? null,
+    approvedOn: payload.approvedOn ?? null,
+    lastActivity: payload.lastActivity || "",
+    trainingType: payload.trainingType,
+    avatarName: payload.avatarName || "",
+    avatarId: payload.avatarId || "",
+    ttsMode: payload.ttsMode,
+    ttsProvider: payload.ttsProvider || "",
+    voiceName: payload.voiceName || "",
+    voiceId: payload.voiceId || "",
+    questionButtonLabel: payload.questionButtonLabel || "",
+    isPublished: Boolean(payload.isPublished),
+    publishedOn: payload.publishedOn ?? null,
+    durationMins: Number(payload.durationMins || 0),
+    maxDurationMins: Number(payload.maxDurationMins || 0),
+    idleRefreshMins: payload.idleRefreshMins ?? null,
+    options: payload.options || {
+      allowSkipAhead: false,
+      allowMultipleAttempts: false,
+      showProgressBar: true,
+      showSubtitles: true,
+      disablePreviousButton: false,
+      enableReviewMode: false,
+      markAnswersInRealTime: false,
+      showMarksInProgressBar: false,
+      showFinalScore: true,
+    },
+    // Excluded on purpose: slides, sessions, scriptPrompt, presenterNotes,
+    // knowledgeDocuments, questionGeneratorConfig, questionCheckpoints,
+    // questionSets, localizedVoiceovers, reviewMessages, branding, theme,
+    // avatarEngine, groupConfig — not rendered by the listing screen.
+    slides: [],
+    sessions: [],
+    slidesCount: Number(record.slidesCount || 0),
+    sessionsCount: Number(record.sessionsCount || 0),
+    completedSessionsCount: Number(record.completedSessionsCount || 0),
+    traineesCount: Number(record.traineesCount || 0),
+  };
+};
 
 const buildAssignedTrainingSession = (training, trainee) => ({
   id: `assigned-${training.appId}-${trainee.appId}-${crypto.randomUUID().slice(0, 8)}`,
@@ -63,60 +119,147 @@ const buildLaunchUrl = (req, client, trainingId, isGroup = false) => {
 
 const list = async (req, res) => {
   const clientId = getTenantClientId(req.user);
-  const records = await Training.find({ clientId }).sort({ sortIndex: 1, createdAt: 1 }).lean();
-  return ok(res, "Training workspace loaded.", records.map(toTrainingRecord));
+  const records = await Training.aggregate([
+    { $match: { clientId } },
+    { $sort: { sortIndex: 1, createdAt: 1 } },
+    {
+      $project: {
+        appId: 1,
+        payload: {
+          title: 1, type: 1, audience: 1, trainer: 1, status: 1, created: 1,
+          submittedOn: 1, approvedOn: 1, lastActivity: 1, trainingType: 1,
+          avatarName: 1, avatarId: 1, ttsMode: 1, ttsProvider: 1, voiceName: 1,
+          voiceId: 1, questionButtonLabel: 1, isPublished: 1, publishedOn: 1,
+          durationMins: 1, maxDurationMins: 1, idleRefreshMins: 1, options: 1,
+        },
+        slidesCount: { $size: { $ifNull: ["$payload.slides", []] } },
+        sessionsCount: { $size: { $ifNull: ["$payload.sessions", []] } },
+        completedSessionsCount: {
+          $size: {
+            $filter: {
+              input: { $ifNull: ["$payload.sessions", []] },
+              as: "session",
+              cond: { $eq: ["$$session.status", "completed"] },
+            },
+          },
+        },
+        traineesCount: {
+          $size: {
+            $setUnion: [
+              {
+                $map: {
+                  input: { $ifNull: ["$payload.sessions", []] },
+                  as: "session",
+                  in: { $ifNull: ["$$session.learnerEmail", "$$session.ssoId"] },
+                },
+              },
+              [],
+            ],
+          },
+        },
+      },
+    },
+  ]);
+  return ok(res, "Training workspace loaded.", records.map(toTrainingListRecord));
+};
+
+const getOne = async (req, res) => {
+  const clientId = getTenantClientId(req.user);
+  const training = await Training.findOne({ appId: req.params.id, clientId }).lean();
+
+  if (!training) {
+    return fail(res, 404, "Training not found.");
+  }
+
+  return ok(res, "Training loaded.", toTrainingRecord(training));
 };
 
 const capacity = async (req, res) => {
   const clientId = getTenantClientId(req.user);
-  const client = await Client.findOne({ appId: clientId }).lean();
+  const client = await Client.findOne({ appId: clientId });
 
   if (!client) {
     return fail(res, 404, "Client not found.");
   }
 
   const metrics = await syncClientMetrics(clientId);
-  const trainingLimit = client.planLimits?.trainings ?? null;
-  const currentTrainingCount = Number(metrics?.trainings ?? client.trainings ?? 0);
-  const usageError = assertUsageWithinPlan({
-    client,
-    resource: "trainings",
-    nextCount: currentTrainingCount + 1,
+  // Backfill lifetime entitlement on first read so reporting is accurate.
+  if (!client.quotaInitialized) {
+    const publishedCount = await Training.countDocuments({ clientId, "payload.status": "approved" });
+    await ensureClientEntitlement(client, {
+      training: publishedCount,
+      session: Number(client.sessions || 0),
+      user: Number(client.activeUsers || 0),
+    });
+  }
+  const ent = getClientEntitlement(client);
+  // Task 2: gate is lifetime-based now (publishing #11 blocked even after deletes).
+  const quotaError = assertLifetimeQuota(client, "training", 1);
+
+  const report = (r) => ({
+    limit: ent[r].unlimited ? null : ent[r].limit,
+    used: ent[r].usedLifetime,
+    remaining: ent[r].unlimited ? null : ent[r].remaining,
+    unlimited: ent[r].unlimited,
   });
 
   return ok(res, "Training capacity loaded.", {
-    trainings: currentTrainingCount,
-    trainingLimit,
-    canCreateTraining: !usageError,
-    reason: usageError || null,
+    // Back-compat fields (existing UI):
+    trainings: Number(metrics?.trainings ?? client.trainings ?? 0),
+    trainingLimit: ent.training.unlimited ? null : ent.training.limit,
+    canCreateTraining: !quotaError,
+    reason: quotaError || null,
+    // Task 2 + Reporting: full lifetime usage for all three resources.
+    usage: {
+      training: report("training"),
+      session: report("session"),
+      user: report("user"),
+    },
   });
 };
 
 const listAssignableTrainees = async (req, res) => {
   const clientId = getTenantClientId(req.user);
-  const query = String(req.query.query || "").trim().toLowerCase();
-  const records = await User.find({ clientId, role: "trainee", status: "active" }).sort({ appId: 1 }).lean();
-  const filtered = records
-    .filter((user) => !query || [user.name, user.email].some((value) => String(value || "").toLowerCase().includes(query)))
-    .map((user) => ({
-      id: user.appId,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      roleName: user.roleName || "Trainee",
-      status: user.status,
-      trainings: Number(user.trainings || 0),
-      lastActive: user.lastActive || "Today",
-      permission: [],
-      allowed: [],
-      permissionSource: "role",
-    }));
+  const query = String(req.query.query || "").trim();
+  const limit = Math.max(1, Number(req.query.limit || 50));
+  const pageNo = Math.max(1, Number(req.query.pageNo || 1));
+  const skip = (pageNo - 1) * limit;
 
+  const filter = { clientId, role: "trainee", status: "active" };
+  if (query) {
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    filter.$or = [
+      { name: { $regex: escaped, $options: "i" } },
+      { email: { $regex: escaped, $options: "i" } },
+    ];
+  }
+
+  const [records, count] = await Promise.all([
+    User.find(filter, { appId: 1, name: 1, email: 1, role: 1, roleName: 1, status: 1, trainings: 1, lastActive: 1 })
+      .sort({ name: 1 }).skip(skip).limit(limit).lean(),
+    User.countDocuments(filter),
+  ]);
+
+  const record = records.map((user) => ({
+    id: user.appId,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    roleName: user.roleName || "Trainee",
+    status: user.status,
+    trainings: Number(user.trainings || 0),
+    lastActive: user.lastActive || "Today",
+    permission: [],
+    allowed: [],
+    permissionSource: "role",
+  }));
+
+  const totalPages = Math.max(1, Math.ceil(count / limit));
   return ok(res, "Trainees loaded.", {
-    count: filtered.length,
-    totalPages: 1,
-    record: filtered,
-    pagination: [1],
+    count,
+    totalPages,
+    record,
+    pagination: Array.from({ length: totalPages }, (_, i) => i + 1),
   });
 };
 
@@ -200,22 +343,45 @@ const sync = async (req, res) => {
   const pendingNotifications = [];
   const nextTrainingCreateCount = nextTrainings.filter((training) => !existingById.has(training.id)).length;
 
-  if (nextTrainingCreateCount > 0) {
-    const currentTrainingCount = await Training.countDocuments({ clientId });
-    const usageError = assertUsageWithinPlan({
-      client,
-      resource: "trainings",
-      nextCount: currentTrainingCount + nextTrainingCreateCount,
+  // Task 2: one-time lifetime-quota backfill (base from plan, used = MAX(current
+  // approved/published trainings, existing)). Never reduces existing usage.
+  if (!client.quotaInitialized) {
+    const publishedCount = await Training.countDocuments({ clientId, "payload.status": "approved" });
+    await ensureClientEntitlement(client, {
+      training: publishedCount,
+      session: Number(client.sessions || 0),
+      user: Number(client.activeUsers || 0),
     });
+  }
 
-    if (usageError) {
-      return fail(res, 400, usageError);
+  // Task 2: quota is consumed on the FIRST transition into "approved" (publish),
+  // exactly once per training (quotaConsumed flag). Drafts/pending consume nothing.
+  const publishConsumeIds = new Set();
+  for (const training of nextTrainings) {
+    const existingRecord = existingById.get(training.id);
+    const prevPayload = existingRecord?.payload || {};
+    const prevStatus = normalizeStatus(prevPayload.status);
+    const nextStatus = normalizeStatus(training.status);
+    if (nextStatus === "approved" && prevStatus !== "approved" && !prevPayload.quotaConsumed) {
+      publishConsumeIds.add(training.id);
     }
+  }
+  if (publishConsumeIds.size > 0) {
+    const quotaError = assertLifetimeQuota(client, "training", publishConsumeIds.size);
+    if (quotaError) {
+      return fail(res, 400, quotaError);
+    }
+  }
 
+  // Credits still charged at create time (existing billing behavior unchanged).
+  if (nextTrainingCreateCount > 0) {
     const creditResult = await consumeClientCredits({
       clientId,
       credits: CREDIT_COSTS.training * nextTrainingCreateCount,
       reason: `${nextTrainingCreateCount} training${nextTrainingCreateCount === 1 ? "" : "s"} created`,
+      actionType: "training_created",
+      entityType: "training",
+      performedBy: req.user?.fullname || req.user?.name || req.user?.email || "",
     });
 
     if (!creditResult.ok) {
@@ -235,6 +401,9 @@ const sync = async (req, res) => {
     const nextPayload = {
       ...payload,
       sessions: preservedSessions,
+      // Task 2: server-derived, permanent. Once consumed it stays consumed
+      // (republish/draft-toggle never re-charges quota); client cannot reset it.
+      quotaConsumed: Boolean(previousPayload.quotaConsumed) || publishConsumeIds.has(id),
     };
 
     const previousStatus = normalizeStatus(previousPayload.status);
@@ -389,6 +558,13 @@ const sync = async (req, res) => {
     await Training.deleteMany({ clientId });
   }
 
+  // Task 2: permanently record lifetime training usage for newly-published
+  // trainings. Deletes above never touch this counter (no refund).
+  if (publishConsumeIds.size > 0) {
+    client.trainingUsedLifetime = Number(client.trainingUsedLifetime || 0) + publishConsumeIds.size;
+    await client.save();
+  }
+
   await syncClientMetrics(clientId);
   if (pendingNotifications.length) {
     await Promise.allSettled(pendingNotifications);
@@ -399,6 +575,7 @@ const sync = async (req, res) => {
 
 module.exports = {
   list,
+  getOne,
   capacity,
   listAssignableTrainees,
   assignTraining,

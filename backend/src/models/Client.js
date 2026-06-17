@@ -19,6 +19,27 @@ const clientSchema = new Schema(
     activeUsers: { type: Number, default: 0 },
     trainings: { type: Number, default: 0 },
     sessions: { type: Number, default: 0 },
+
+    // Feature Set 6 / Task 2: lifetime quota model (additive, backward-compatible).
+    // Effective limit = base + purchased (purchased filled by Task-4 add-ons).
+    // Lifetime usage is permanent (consumed on publish/create, never refunded on
+    // delete). base `null` = unlimited (enterprise). `quotaInitialized` marks that
+    // the one-time backfill from plan + current counts has run for this client.
+    trainingBaseLimit: { type: Number, default: null },
+    trainingPurchasedLimit: { type: Number, default: 0 },
+    trainingUsedLifetime: { type: Number, default: 0 },
+    sessionBaseLimit: { type: Number, default: null },
+    sessionPurchasedLimit: { type: Number, default: 0 },
+    sessionUsedLifetime: { type: Number, default: 0 },
+    userBaseLimit: { type: Number, default: null },
+    userPurchasedLimit: { type: Number, default: 0 },
+    userUsedLifetime: { type: Number, default: 0 },
+    quotaInitialized: { type: Boolean, default: false },
+    // Phase C: entitlement snapshot frozen at purchase/upgrade (R3). Future plan
+    // edits never overwrite these — existing subscribers keep what they bought.
+    subscribedPlan: { type: String, default: "" },
+    creditBaseLimit: { type: Number, default: null },
+    entitlementSnapshotAt: { type: Date, default: null },
     joined: { type: String, default: "" },
     csm: { type: String, required: true, trim: true },
     logo: { type: String, default: "" },
@@ -97,5 +118,8 @@ const clientSchema = new Schema(
     timestamps: true,
   },
 );
+
+clientSchema.index({ status: 1, plan: 1 });
+clientSchema.index({ name: 1 });
 
 module.exports = models.Client || model("Client", clientSchema);

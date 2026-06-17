@@ -20,10 +20,14 @@ const authTokenAdmin = async (req, res, next) => {
       return fail(res, 401, "Unauthorized.");
     }
 
+    // Auth/permission resolution only needs identity + role/tenant fields —
+    // exclude the large base64 `image` field so it isn't dragged from the DB
+    // on every authenticated request. Endpoints that actually render the
+    // avatar (e.g. /profile) fetch it explicitly with a targeted query.
     const user =
       payload.role === "super_admin"
-        ? await findSuperAdminByAppId(payload.sub)
-        : await User.findOne({ appId: payload.sub }).lean();
+        ? await findSuperAdminByAppId(payload.sub, { excludeImage: true })
+        : await User.findOne({ appId: payload.sub }, { image: 0 }).lean();
 
     if (!user) {
       return fail(res, 401, "Unauthorized.");

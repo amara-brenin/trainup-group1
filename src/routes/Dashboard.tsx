@@ -7,11 +7,16 @@ import type { DashboardSummary } from "../constant/interfaces";
 import { getScopedAppPath } from "../helper/appShell";
 import AxiosHelper from "../helper/AxiosHelper";
 
+type ResourceUsage = { limit: number | null; used: number; remaining: number | null; unlimited: boolean; purchased: number };
+type CapacityUsage = { training: ResourceUsage; session: ResourceUsage; user: ResourceUsage };
+
 const Dashboard = () => {
   const navigate = useNavigate();
   const admin = useAppSelector((state) => state.admin);
   const scopedPath = (path: string) => getScopedAppPath(path, admin.role);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [capacity, setCapacity] = useState<CapacityUsage | null>(null);
+  const [creditsSummary, setCreditsSummary] = useState<{ availableCredits: number; totalCredits: number } | null>(null);
   const intro =
     admin.role === "super_admin"
       ? {
@@ -30,9 +35,20 @@ const Dashboard = () => {
     }
   }, []);
 
+  const fetchCapacity = useCallback(async () => {
+    if (admin.role === "super_admin") return;
+    const [addonRes, billingRes] = await Promise.all([
+      AxiosHelper.getData<{ usage: CapacityUsage }>("/billing/addons/history"),
+      AxiosHelper.getData<{ availableCredits: number; totalCredits: number }>("/billing/summary"),
+    ]);
+    if (addonRes.data.status && addonRes.data.data.usage) setCapacity(addonRes.data.data.usage);
+    if (billingRes.data.status) setCreditsSummary({ availableCredits: billingRes.data.data.availableCredits, totalCredits: billingRes.data.data.totalCredits });
+  }, [admin.role]);
+
   useEffect(() => {
     void fetchSummary();
-  }, [fetchSummary]);
+    void fetchCapacity();
+  }, [fetchSummary, fetchCapacity]);
 
   if (!summary) {
     return (
@@ -69,6 +85,85 @@ const Dashboard = () => {
           </div>
         ))}
       </div>
+
+      {/* Phase E / Task 3: Capacity Overview */}
+      {capacity && admin.role !== "super_admin" ? (() => {
+        const items: { label: string; key: "training" | "session" | "user" }[] = [
+          { label: "Trainings", key: "training" },
+          { label: "Sessions", key: "session" },
+          { label: "Users", key: "user" },
+        ];
+        const alerts: string[] = [];
+        for (const { label, key } of items) {
+          const u = capacity[key];
+          if (!u.unlimited && u.limit && u.remaining !== null && u.remaining / u.limit < 0.2) {
+            alerts.push(u.remaining <= 0 ? `${label} capacity is exhausted.` : `You have only ${u.remaining} ${label.toLowerCase()} slot${u.remaining === 1 ? "" : "s"} remaining.`);
+          }
+        }
+        const creditPct = creditsSummary && creditsSummary.totalCredits > 0 ? Math.min(100, Math.round((creditsSummary.availableCredits / creditsSummary.totalCredits) * 100)) : 100;
+        const creditTone = creditPct > 50 ? "success" : creditPct > 20 ? "warning" : "danger";
+        return (
+          <>
+            {alerts.length ? (
+              <div className="row g-3 mb-3">
+                <div className="col-12">
+                  {alerts.map((msg) => (
+                    <div key={msg} className="alert alert-warning d-flex align-items-center py-2 mb-2">
+                      <i className="ri-error-warning-line me-2 fs-5" />{msg}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            <div className="row g-3 mb-3">
+              {items.map(({ label, key }) => {
+                const u = capacity[key];
+                const pct = u.unlimited || !u.limit ? 100 : Math.min(100, Math.round((u.used / u.limit) * 100));
+                const remPct = u.unlimited ? 100 : (u.limit ? Math.min(100, Math.round(((u.remaining ?? 0) / u.limit) * 100)) : 0);
+                const tone = remPct > 50 ? "success" : remPct > 20 ? "warning" : "danger";
+                return (
+                  <div key={key} className="col-12 col-md-6 col-xl-3">
+                    <div className="card h-100">
+                      <div className="card-body">
+                        <div className="d-flex justify-content-between mb-2">
+                          <span className="small fw-semibold text-body-secondary">{label} Remaining</span>
+                          <span className={`badge text-bg-${tone}`}>{u.unlimited ? "Unlimited" : (u.remaining ?? 0).toLocaleString()}</span>
+                        </div>
+                        {!u.unlimited ? (
+                          <>
+                            <div className="progress mb-1" style={{ height: 6 }}>
+                              <div className={`progress-bar bg-${tone}`} style={{ width: `${pct}%` }} />
+                            </div>
+                            <div className="small text-body-secondary">{u.used.toLocaleString()} / {(u.limit ?? 0).toLocaleString()} used</div>
+                          </>
+                        ) : <div className="small text-body-secondary">No limit</div>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+              <div className="col-12 col-md-6 col-xl-3">
+                <div className="card h-100">
+                  <div className="card-body">
+                    <div className="d-flex justify-content-between mb-2">
+                      <span className="small fw-semibold text-body-secondary">Credits Remaining</span>
+                      <span className={`badge text-bg-${creditTone}`}>{creditsSummary ? creditsSummary.availableCredits.toLocaleString() : "—"}</span>
+                    </div>
+                    {creditsSummary ? (
+                      <>
+                        <div className="progress mb-1" style={{ height: 6 }}>
+                          <div className={`progress-bar bg-${creditTone}`} style={{ width: `${100 - creditPct}%` }} />
+                        </div>
+                        <div className="small text-body-secondary">{(creditsSummary.totalCredits - creditsSummary.availableCredits).toLocaleString()} / {creditsSummary.totalCredits.toLocaleString()} used</div>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>
+        );
+      })() : null}
 
       <div className="row g-3">
         <div className="col-12">

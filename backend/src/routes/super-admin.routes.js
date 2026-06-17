@@ -2,12 +2,21 @@ const express = require("express");
 
 const clientController = require("../controllers/super-admin/clientController");
 const superAdminController = require("../controllers/super-admin/superAdminController");
+const planController = require("../controllers/super-admin/planController");
 const { authTokenAdmin, allowRoles } = require("../middelwares");
 
 const router = express.Router();
 
 router.use(authTokenAdmin);
 router.use(allowRoles("super_admin"));
+
+// Phase C: dynamic plan management.
+router.get("/plans", planController.list);
+router.post("/plans", planController.create);
+router.put("/plans/:id", planController.update);
+router.patch("/plans/:id/status", planController.setStatus);
+router.get("/plans/:id/history", planController.history);
+router.get("/billing/insights", planController.billingInsights);
 
 router.get("/clients", clientController.list);
 router.post("/clients", clientController.create);

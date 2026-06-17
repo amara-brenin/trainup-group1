@@ -1,4 +1,24 @@
 const Client = require("../models/Client");
+const CreditAuditLog = require("../models/CreditAuditLog");
+
+// Task 3: best-effort audit write. NEVER throws into the credit flow — a logging
+// failure must not block a legitimate credit change.
+const recordCreditAudit = async (entry) => {
+  try {
+    await CreditAuditLog.create({
+      clientId: entry.clientId,
+      actionType: entry.actionType || "",
+      entityType: entry.entityType || "",
+      entityId: entry.entityId || "",
+      creditChange: Number(entry.creditChange || 0),
+      balanceBefore: Number(entry.balanceBefore || 0),
+      balanceAfter: Number(entry.balanceAfter || 0),
+      performedBy: entry.performedBy || "",
+      reason: entry.reason || "",
+      reference: entry.reference || "",
+    });
+  } catch (_e) { /* audit logging is non-fatal */ }
+};
 
 const CREDIT_COSTS = {
   training: 500,
@@ -66,6 +86,55 @@ const normalizePlan = (plan) => {
 };
 
 const getPlanConfig = (plan) => PLAN_CONFIGS[normalizePlan(plan)] || PLAN_CONFIGS.FREE;
+
+// Phase C: map a DB Plan row to the in-memory plan-config shape used everywhere.
+const planRowToConfig = (row) => ({
+  code: String(row.code || "").toUpperCase(),
+  label: row.name || row.code,
+  monthlyCredits: Number(row.credits || 0),
+  monthlyPrice: Number(row.monthlyPrice || 0),
+  yearlyPrice: Number(row.yearlyPrice || 0),
+  firstMonthPrice: Number(row.monthlyPrice || 0),
+  trialDays: 0,
+  validityDays: Number(row.validityDays || 30),
+  features: Array.isArray(row.features) ? row.features : [],
+  limits: {
+    trainings: row.trainingLimit ?? null,
+    users: row.userLimit ?? null,
+    sessions: row.sessionLimit ?? null,
+  },
+  contactSales: String(row.code || "").toUpperCase() === "ENTERPRISE" && Number(row.monthlyPrice || 0) <= 0,
+});
+
+// Phase C: resolve a plan from the DB (active row) and fall back to the hardcoded
+// PLAN_CONFIGS when no row exists — zero breakage if the Plan collection is empty.
+const resolvePlan = async (plan) => {
+  const normalized = normalizePlan(plan);
+  try {
+    const Plan = require("../models/Plan");
+    const row = await Plan.findOne({ code: normalized, active: true }).lean();
+    if (row) return planRowToConfig(row);
+  } catch (_e) { /* DB unavailable → fall back */ }
+  return PLAN_CONFIGS[normalized] || PLAN_CONFIGS.FREE;
+};
+
+// Phase C: freeze the entitlement snapshot on the client from the (DB) plan at
+// purchase/upgrade time. Future plan edits NEVER touch these frozen base limits.
+// Does NOT reset lifetime usage (permanent per Task 2). Mutates client; caller saves.
+const applyPlanSnapshot = async (client, planCode) => {
+  const cfg = await resolvePlan(planCode);
+  client.subscribedPlan = cfg.code;
+  client.trainingBaseLimit = cfg.limits.trainings ?? null;
+  client.sessionBaseLimit = cfg.limits.sessions ?? null;
+  client.userBaseLimit = cfg.limits.users ?? null;
+  client.creditBaseLimit = cfg.monthlyCredits;
+  // Credits are also DB-plan-driven + frozen here (purchased credits preserved).
+  client.monthlyCredits = cfg.monthlyCredits;
+  client.totalCredits = cfg.monthlyCredits + Math.max(0, Number(client.purchasedCredits || 0));
+  client.entitlementSnapshotAt = new Date();
+  client.quotaInitialized = true; // snapshot is now the authoritative base
+  return cfg;
+};
 
 const getClientCreatedAt = (client) => {
   const sourceDate = client?.createdAt || client?.updatedAt || new Date().toISOString();
@@ -200,6 +269,80 @@ const applyPlanToClient = (client, plan, options = {}) => {
   return buildClientCreditSnapshot(client);
 };
 
+// ---- Feature Set 6 / Task 2: lifetime entitlement model --------------------
+// Resource → (client field prefix, plan-limit key).
+const RESOURCE_MAP = {
+  training: { prefix: "training", planKey: "trainings", label: "training" },
+  session: { prefix: "session", planKey: "sessions", label: "session" },
+  user: { prefix: "user", planKey: "users", label: "user" },
+};
+
+// Effective entitlement per resource, read from client fields (NOT PLAN_CONFIGS
+// directly — Plan-snapshot compatible). base `null` ⇒ unlimited. Falls back to
+// the plan limit when the client's base hasn't been initialized yet.
+const getClientEntitlement = (client) => {
+  const { planConfig } = buildClientCreditSnapshot(client);
+  const out = {};
+  for (const [resource, { prefix, planKey }] of Object.entries(RESOURCE_MAP)) {
+    const rawBase = client?.[`${prefix}BaseLimit`];
+    const base = rawBase === null || rawBase === undefined ? planConfig.limits[planKey] : Number(rawBase);
+    const purchased = Math.max(0, Number(client?.[`${prefix}PurchasedLimit`] || 0));
+    const usedLifetime = Math.max(0, Number(client?.[`${prefix}UsedLifetime`] || 0));
+    const unlimited = base === null || base === undefined;
+    const limit = unlimited ? null : Number(base) + purchased;
+    out[resource] = {
+      base: unlimited ? null : Number(base),
+      purchased,
+      limit,
+      usedLifetime,
+      remaining: unlimited ? null : Math.max(0, limit - usedLifetime),
+      unlimited,
+    };
+  }
+  return out;
+};
+
+// One-time backfill: set base from the current plan and usedLifetime = MAX(current
+// real count, existing) so nobody is retroactively over/under counted. Mutates +
+// saves the client. `counts` = { training, session, user } current real counts.
+const ensureClientEntitlement = async (client, counts = {}) => {
+  if (client.quotaInitialized) return client;
+  const { planConfig } = buildClientCreditSnapshot(client);
+  for (const [resource, { prefix, planKey }] of Object.entries(RESOURCE_MAP)) {
+    const planLimit = planConfig.limits[planKey]; // may be null (unlimited)
+    if (client[`${prefix}BaseLimit`] === null || client[`${prefix}BaseLimit`] === undefined) {
+      client[`${prefix}BaseLimit`] = planLimit === null || planLimit === undefined ? null : Number(planLimit);
+    }
+    const current = Math.max(0, Number(counts[resource] || 0));
+    client[`${prefix}UsedLifetime`] = Math.max(Number(client[`${prefix}UsedLifetime`] || 0), current);
+  }
+  client.quotaInitialized = true;
+  await client.save();
+  return client;
+};
+
+// Returns an error string if consuming `addCount` of `resource` would exceed the
+// lifetime entitlement, else null. Unlimited always passes.
+// Phase D: add-on capacity pricing (per slot). Credits per slot + money per slot.
+const ADDON_CREDIT_UNIT = Object.freeze({ training: 200, session: 20, user: 5 });
+const ADDON_MONEY_UNIT = Object.freeze({ training: 500, session: 50, user: 20 }); // major currency units (e.g. INR)
+
+// Phase D: increase a client's PURCHASED quota bucket. Never touches the base
+// snapshot, so existing entitlements are unaffected; effective = base + purchased.
+const applyAddonQuota = (client, resource, quantity) => {
+  const field = `${resource}PurchasedLimit`;
+  client[field] = Math.max(0, Number(client[field] || 0)) + Math.max(0, Number(quantity || 0));
+  return client[field];
+};
+
+const assertLifetimeQuota = (client, resource, addCount = 1) => {
+  const ent = getClientEntitlement(client)[resource];
+  if (!ent || ent.unlimited) return null;
+  if (ent.usedLifetime + addCount <= ent.limit) return null;
+  const label = RESOURCE_MAP[resource]?.label || resource;
+  return `Your plan allows ${ent.limit} ${label}${ent.limit === 1 ? "" : "s"} (lifetime). ${ent.usedLifetime} already used. Upgrade your plan or buy additional ${label} capacity.`;
+};
+
 const assertUsageWithinPlan = ({ client, resource, nextCount }) => {
   const { planConfig } = buildClientCreditSnapshot(client);
   const limit = planConfig.limits[resource];
@@ -235,7 +378,11 @@ const assertCreditAvailability = (client, requiredCredits) => {
   return `Not enough credits. ${requiredCredits} credits required, ${snapshot.availableCredits} available.`;
 };
 
-const consumeClientCredits = async ({ clientId, credits, reason }) => {
+const consumeClientCredits = async ({
+  clientId, credits, reason,
+  // Task 3 (optional, backward-compatible): richer audit context.
+  actionType, entityType, entityId, performedBy, reference,
+}) => {
   const client = await Client.findOne({ appId: clientId });
 
   if (!client) {
@@ -253,6 +400,7 @@ const consumeClientCredits = async ({ clientId, credits, reason }) => {
   }
 
   const snapshot = buildClientCreditSnapshot(client);
+  const balanceBefore = snapshot.availableCredits;
   client.usedCredits = snapshot.usedCredits + credits;
   client.totalCredits = snapshot.totalCredits;
   client.monthlyCredits = snapshot.monthlyCredits;
@@ -263,14 +411,25 @@ const consumeClientCredits = async ({ clientId, credits, reason }) => {
   client.creditTransactions = client.creditTransactions.slice(0, 25);
   await client.save();
 
+  const after = buildClientCreditSnapshot(client);
+  await recordCreditAudit({
+    clientId, actionType: actionType || "debit", entityType: entityType || "credit", entityId,
+    creditChange: -Math.abs(credits), balanceBefore, balanceAfter: after.availableCredits,
+    performedBy, reason, reference,
+  });
+
   return {
     ok: true,
     client,
-    snapshot: buildClientCreditSnapshot(client),
+    snapshot: after,
   };
 };
 
-const addClientCredits = async ({ clientId, credits, note }) => {
+const addClientCredits = async ({
+  clientId, credits, note,
+  // Task 3 (optional, backward-compatible): richer audit context.
+  actionType, entityType, entityId, performedBy, reference,
+}) => {
   const client = await Client.findOne({ appId: clientId });
 
   if (!client) {
@@ -278,19 +437,27 @@ const addClientCredits = async ({ clientId, credits, note }) => {
   }
 
   const snapshot = buildClientCreditSnapshot(client);
+  const balanceBefore = snapshot.availableCredits;
   client.purchasedCredits = snapshot.purchasedCredits + credits;
   client.totalCredits = snapshot.totalCredits + credits;
   client.monthlyCredits = snapshot.monthlyCredits;
   client.usedCredits = snapshot.usedCredits;
   client.billingCycle = "monthly";
   client.creditTransactions = Array.isArray(client.creditTransactions) ? client.creditTransactions : [];
-  client.creditTransactions.unshift(createTransactionEntry("credit_purchase", credits, note || "Dummy gateway purchase"));
+  client.creditTransactions.unshift(createTransactionEntry("credit_purchase", credits, note || "Credit purchase"));
   client.creditTransactions = client.creditTransactions.slice(0, 25);
   await client.save();
 
+  const after = buildClientCreditSnapshot(client);
+  await recordCreditAudit({
+    clientId, actionType: actionType || "credit_purchase", entityType: entityType || "credit", entityId,
+    creditChange: Math.abs(credits), balanceBefore, balanceAfter: after.availableCredits,
+    performedBy, reason: note || "Credit purchase", reference,
+  });
+
   return {
     client,
-    snapshot: buildClientCreditSnapshot(client),
+    snapshot: after,
   };
 };
 
@@ -309,4 +476,14 @@ module.exports = {
   assertCreditAvailability,
   consumeClientCredits,
   addClientCredits,
+  recordCreditAudit,
+  getClientEntitlement,
+  ensureClientEntitlement,
+  assertLifetimeQuota,
+  resolvePlan,
+  planRowToConfig,
+  applyPlanSnapshot,
+  ADDON_CREDIT_UNIT,
+  ADDON_MONEY_UNIT,
+  applyAddonQuota,
 };

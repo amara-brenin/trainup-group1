@@ -1,4 +1,5 @@
 const Client = require("../models/Client");
+const CreditAuditLog = require("../models/CreditAuditLog");
 const Setting = require("../models/Setting");
 const Training = require("../models/Training");
 const User = require("../models/User");
@@ -12,19 +13,30 @@ const {
   sendSmtpTestEmail,
 } = require("../helpers/clientDelivery");
 const { sanitizeUserForClient } = require("../helpers/auth");
+const crypto = require("crypto");
 const {
   CREDIT_COSTS,
   PLAN_CONFIGS,
   applyPlanToClient,
+  applyPlanSnapshot,
+  resolvePlan,
   buildClientCreditSnapshot,
   createTransactionEntry,
   getFreeTrialMeta,
   getPlanChargeAmount,
+  consumeClientCredits,
+  getClientEntitlement,
+  ensureClientEntitlement,
+  ADDON_CREDIT_UNIT,
+  ADDON_MONEY_UNIT,
+  applyAddonQuota,
 } = require("../helpers/credits");
+const Plan = require("../models/Plan");
+const AddonPurchaseLog = require("../models/AddonPurchaseLog");
 const { notifyRolesInClient, notifySuperAdmins } = require("../helpers/notifications");
 const { ok, fail } = require("../helpers/response");
 const { isValidUrl, ensureArray } = require("../helpers/validation");
-const { getTenantClientId, getTenantSetting, setTenantSetting, syncClientMetrics } = require("../helpers/tenant");
+const { getTenantClientId, getTenantSetting, setTenantSetting } = require("../helpers/tenant");
 
 const buildMonthlyBillingDates = (client) => {
   const transactions = Array.isArray(client?.creditTransactions) ? client.creditTransactions : [];
@@ -113,6 +125,8 @@ const setConfigValue = async (key, value) => {
     { upsert: true },
   );
 };
+
+const CLIENT_HEAVY_EXCLUSION = { logoUrl: 0, darkLogoUrl: 0, faviconUrl: 0, emailSignatureImageUrl: 0 };
 
 const toClientRecord = (client) => ({
   id: client.appId,
@@ -239,35 +253,95 @@ const buildBillingSummaryResponse = (client, metrics = null) => {
 };
 
 const dashboard = async (req, res) => {
-  const clientRecords = (await Client.find({}).sort({ appId: 1 }).lean()).map(toClientRecord);
   const clientId = getTenantClientId(req.user);
-  const webhookConfig = clientId ? await getTenantSetting(clientId, "webhookConfig", {}) : await getConfigValue("webhookConfig");
-  const currentClient = clientId ? clientRecords.find((client) => client.id === clientId) || null : null;
-  const [tenantUsers, trainingRecords] = await Promise.all([
-    clientId
-      ? User.find({ clientId, role: { $ne: "super_admin" } }).lean()
-      : User.find({ role: { $ne: "super_admin" } }).lean(),
-    clientId
-      ? Training.find({ clientId }).lean()
-      : Training.find({}).lean(),
+  const isSuperAdmin = req.user?.role === "super_admin";
+
+  const clientFilter = clientId ? { appId: clientId } : {};
+  const userFilter = clientId
+    ? { clientId, role: { $ne: "super_admin" } }
+    : { role: { $ne: "super_admin" } };
+  const trainingFilter = clientId ? { clientId } : {};
+
+  const [
+    webhookConfig,
+    currentClient,
+    clientCount,
+    activeClientCount,
+    totalUserCount,
+    internalUserCount,
+    traineeCount,
+    trainingCount,
+    sessionAgg,
+  ] = await Promise.all([
+    clientId ? getTenantSetting(clientId, "webhookConfig", {}) : getConfigValue("webhookConfig"),
+    clientId ? Client.findOne({ appId: clientId }, CLIENT_HEAVY_EXCLUSION).lean().then((c) => c ? toClientRecord(c) : null) : null,
+    isSuperAdmin ? Client.countDocuments() : Promise.resolve(0),
+    isSuperAdmin ? Client.countDocuments({ status: "active" }) : Promise.resolve(0),
+    User.countDocuments(userFilter),
+    User.countDocuments(clientId ? { clientId, role: { $nin: ["super_admin", "trainee"] } } : { role: { $nin: ["super_admin", "trainee"] } }),
+    User.countDocuments(clientId ? { clientId, role: "trainee" } : { role: "trainee" }),
+    Training.countDocuments(trainingFilter),
+    Training.aggregate([
+      { $match: trainingFilter },
+      { $project: { sessions: { $ifNull: ["$payload.sessions", []] } } },
+      { $unwind: { path: "$sessions", preserveNullAndEmptyArrays: false } },
+      {
+        $group: {
+          _id: null,
+          totalSessions: { $sum: 1 },
+          activeSessions: {
+            $sum: { $cond: [{ $eq: [{ $toLower: { $ifNull: ["$sessions.status", ""] } }, "in-progress"] }, 1, 0] },
+          },
+          completionsToday: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: [{ $toLower: { $ifNull: ["$sessions.status", ""] } }, "completed"] },
+                    { $gte: [{ $toDate: { $ifNull: ["$sessions.completedAt", "1970-01-01"] } }, new Date(new Date().setHours(0, 0, 0, 0))] },
+                  ],
+                },
+                1, 0,
+              ],
+            },
+          },
+        },
+      },
+    ]),
   ]);
+
+  const snap = sessionAgg[0] || { totalSessions: 0, activeSessions: 0, completionsToday: 0 };
+  const combinedSessions = snap.activeSessions + snap.completionsToday;
+
   return ok(
     res,
     "Dashboard loaded.",
     buildDashboard({
-      clients: clientRecords,
+      clients: isSuperAdmin
+        ? [{ length: clientCount, activeCount: activeClientCount }]
+        : [],
       currentClient,
       webhookConfig,
-      tenantUsers: tenantUsers.map((user) => sanitizeUserForClient(user)),
-      trainingRecords,
+      tenantUsers: [],
+      trainingRecords: [],
       session: sanitizeUserForClient(req.user),
+      counts: {
+        clientCount,
+        activeClientCount,
+        totalUserCount,
+        internalUserCount,
+        traineeCount,
+        trainingCount,
+        sessionSnapshot: snap,
+        combinedSessions,
+      },
     }),
   );
 };
 
 const getApiConfig = async (req, res) => {
   const clientId = getTenantClientId(req.user);
-  const client = clientId ? await Client.findOne({ appId: clientId }).lean() : null;
+  const client = clientId ? await Client.findOne({ appId: clientId }, CLIENT_HEAVY_EXCLUSION).lean() : null;
   const data = clientId
     ? await getTenantSetting(clientId, "apiConfig", {
         baseUrl: client?.iframeBaseUrl || "",
@@ -316,7 +390,7 @@ const updateApiConfig = async (req, res) => {
 
 const getWebhooks = async (req, res) => {
   const clientId = getTenantClientId(req.user);
-  const client = clientId ? await Client.findOne({ appId: clientId }).lean() : null;
+  const client = clientId ? await Client.findOne({ appId: clientId }, CLIENT_HEAVY_EXCLUSION).lean() : null;
   const data = clientId
     ? buildWebhookConfigPayload(client, await getTenantSetting(clientId, "webhookConfig", (await getConfigValue("webhookConfig")) || {}))
     : await getConfigValue("webhookConfig");
@@ -409,7 +483,7 @@ const testWebhooks = async (req, res) => {
 
 const getIframe = async (req, res) => {
   const clientId = getTenantClientId(req.user);
-  const client = clientId ? await Client.findOne({ appId: clientId }).lean() : null;
+  const client = clientId ? await Client.findOne({ appId: clientId }, CLIENT_HEAVY_EXCLUSION).lean() : null;
   const data = clientId
     ? await getTenantSetting(clientId, "iframeConfig", {
         baseUrl: client?.iframeBaseUrl || "",
@@ -476,14 +550,19 @@ const getBillingSummary = async (req, res) => {
     return fail(res, 403, "Billing summary is available only for tenant admins.");
   }
 
-  const metrics = await syncClientMetrics(clientId);
-  const client = await Client.findOne({ appId: clientId }).lean();
+  // Metrics (activeUsers/trainings/sessions) are kept current incrementally —
+  // every user/training mutation already calls syncClientMetrics(clientId).
+  // Recomputing them here on every page load required a full, unprojected
+  // Training.find({clientId}) read; read the already-synced values off the
+  // client document instead (buildBillingSummaryResponse already falls back
+  // to client.trainings/activeUsers/sessions when no metrics are passed).
+  const client = await Client.findOne({ appId: clientId }, CLIENT_HEAVY_EXCLUSION).lean();
 
   if (!client) {
     return fail(res, 404, "Client billing profile not found.");
   }
 
-  return ok(res, "Billing summary loaded.", buildBillingSummaryResponse(client, metrics));
+  return ok(res, "Billing summary loaded.", buildBillingSummaryResponse(client));
 };
 
 const purchaseCredits = async (req, res) => {
@@ -524,6 +603,9 @@ const purchaseCredits = async (req, res) => {
       resetPurchasedCredits: false,
       carryAvailableCredits: true,
     });
+    // Phase C: freeze the entitlement snapshot from the (DB) plan at purchase
+    // time so future plan edits never change this subscriber's limits/credits.
+    await applyPlanSnapshot(client, planCode);
 
     client.creditTransactions.unshift({
       ...createTransactionEntry("plan_purchase", nextSnapshot.monthlyCredits, "Razorpay test plan checkout approved"),
@@ -582,6 +664,21 @@ const purchaseCredits = async (req, res) => {
   });
   client.creditTransactions = client.creditTransactions.slice(0, 25);
   await client.save();
+
+  // Task 3: audit the purchase (this branch adds credits directly, not via the
+  // addClientCredits helper, so log it explicitly here).
+  await CreditAuditLog.create({
+    clientId,
+    actionType: "credit_purchase",
+    entityType: "credit",
+    entityId: orderId,
+    creditChange: credits,
+    balanceBefore: snapshot.availableCredits,
+    balanceAfter: buildClientCreditSnapshot(client).availableCredits,
+    performedBy: req.user?.fullname || req.user?.name || req.user?.email || "",
+    reason: `Purchased ${credits} credits`,
+    reference: invoiceId,
+  }).catch(() => undefined);
 
   await notifyRolesInClient({
     clientId,
@@ -745,6 +842,261 @@ const verifyDomain = async (req, res) => {
   return ok(res, result.message, result);
 };
 
+// Phase C: plan catalog for the Upgrade & Billing cards — DB-driven, falls back
+// to PLAN_CONFIGS when the Plan collection is empty (no hardcoded values once seeded).
+const getBillingPlans = async (_req, res) => {
+  let rows = await Plan.find({ active: true }).sort({ monthlyPrice: 1 }).lean();
+  if (!rows.length) {
+    rows = Object.values(PLAN_CONFIGS).map((cfg) => ({
+      code: cfg.code, name: cfg.label, monthlyPrice: cfg.monthlyPrice, yearlyPrice: cfg.monthlyPrice * 10,
+      credits: cfg.monthlyCredits, trainingLimit: cfg.limits.trainings ?? null,
+      sessionLimit: cfg.limits.sessions ?? null, userLimit: cfg.limits.users ?? null,
+      features: [],
+    }));
+  }
+  return ok(res, "Plans loaded.", {
+    record: rows.map((r) => ({
+      code: r.code, name: r.name, monthlyPrice: r.monthlyPrice, yearlyPrice: r.yearlyPrice,
+      credits: r.credits, trainingLimit: r.trainingLimit, sessionLimit: r.sessionLimit,
+      userLimit: r.userLimit, features: r.features || [],
+    })),
+  });
+};
+
+// Phase D: usage panel shape from the entitlement (base + purchased − used).
+const usageView = (client) => {
+  const ent = getClientEntitlement(client);
+  const r = (k) => ({
+    limit: ent[k].unlimited ? null : ent[k].limit,
+    used: ent[k].usedLifetime,
+    remaining: ent[k].unlimited ? null : ent[k].remaining,
+    unlimited: ent[k].unlimited,
+    purchased: ent[k].purchased,
+  });
+  return { training: r("training"), session: r("session"), user: r("user") };
+};
+
+const ADDON_TYPES = ["training", "session", "user"];
+
+// POST /billing/addons/purchase
+//  credits:  { type, quantity, purchaseMethod:"credits", idempotencyKey }
+//  razorpay: { type, quantity, purchaseMethod:"razorpay", action:"create-order" }
+//            { ..., action:"verify", razorpay_order_id, razorpay_payment_id, razorpay_signature }
+const purchaseAddon = async (req, res) => {
+  const clientId = getTenantClientId(req.user);
+  const client = await Client.findOne({ appId: clientId });
+  if (!client) return fail(res, 404, "Client not found.");
+
+  const type = String(req.body.type || "").toLowerCase();
+  if (!ADDON_TYPES.includes(type)) return fail(res, 400, "Invalid add-on type.");
+  const quantity = Math.max(0, Math.floor(Number(req.body.quantity || 0)));
+  if (!quantity) return fail(res, 400, "Quantity must be greater than zero.");
+  const method = String(req.body.purchaseMethod || "credits").toLowerCase();
+  const performedBy = req.user?.fullname || req.user?.name || req.user?.email || "";
+
+  if (!client.quotaInitialized) {
+    const publishedCount = await Training.countDocuments({ clientId, "payload.status": "approved" });
+    await ensureClientEntitlement(client, {
+      training: publishedCount, session: Number(client.sessions || 0), user: Number(client.activeUsers || 0),
+    });
+  }
+
+  if (method === "credits") {
+    const idempotencyKey = String(req.body.idempotencyKey || "").trim();
+    if (idempotencyKey) {
+      const existing = await AddonPurchaseLog.findOne({ idempotencyKey }).lean();
+      if (existing) {
+        const freshClient = await Client.findOne({ appId: clientId });
+        return ok(res, `Added +${existing.quantity} ${existing.type} capacity using credits.`, { usage: usageView(freshClient || client) });
+      }
+    }
+
+    const unit = ADDON_CREDIT_UNIT[type];
+    const total = unit * quantity;
+    const result = await consumeClientCredits({
+      clientId, credits: total, reason: `Add-on: +${quantity} ${type} capacity`,
+      actionType: "addon_purchase", entityType: type, performedBy,
+    });
+    if (!result.ok) return fail(res, 400, result.message);
+    const fresh = await Client.findOne({ appId: clientId });
+    applyAddonQuota(fresh, type, quantity);
+    await fresh.save();
+    await AddonPurchaseLog.create({
+      appId: `addon-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`,
+      clientId, type, quantity, purchaseMethod: "credits", unitCost: unit, totalCost: total,
+      currency: "credits", status: "completed", performedBy,
+      idempotencyKey: idempotencyKey || "",
+    });
+    return ok(res, `Added +${quantity} ${type} capacity using credits.`, { usage: usageView(fresh) });
+  }
+
+  if (method !== "razorpay") return fail(res, 400, "Unsupported purchase method.");
+
+  const keyId = String(client.razorpayKeyId || "").trim();
+  const keySecret = String(client.razorpayKeySecret || "").trim();
+  if (!keyId || !keySecret) {
+    return ok(res, "Razorpay is not configured for this account.", { razorpayConfigured: false });
+  }
+  const unit = ADDON_MONEY_UNIT[type];
+  const total = unit * quantity;
+  const currency = client.billingCurrency || "INR";
+  const action = String(req.body.action || "create-order");
+
+  if (action === "create-order") {
+    try {
+      const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
+      const r = await fetch("https://api.razorpay.com/v1/orders", {
+        method: "POST",
+        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          amount: total * 100, currency,
+          receipt: `addon_${type}_${Date.now()}`,
+          notes: { type, quantity: String(quantity), clientId },
+        }),
+      });
+      if (!r.ok) return fail(res, 502, "Could not create the Razorpay order.");
+      const order = await r.json();
+      return ok(res, "Razorpay order created.", {
+        razorpayConfigured: true,
+        order: { id: order.id, amount: order.amount, currency: order.currency, keyId },
+      });
+    } catch (_e) {
+      return fail(res, 502, "Razorpay order creation failed.");
+    }
+  }
+
+  if (action === "verify") {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body || {};
+    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+      return fail(res, 400, "Missing Razorpay verification fields.");
+    }
+
+    const alreadyProcessed = await AddonPurchaseLog.findOne({ orderId: razorpay_order_id }).lean();
+    if (alreadyProcessed) {
+      return ok(res, `Added +${alreadyProcessed.quantity} ${alreadyProcessed.type} capacity via Razorpay.`, { usage: usageView(client) });
+    }
+
+    const expected = crypto.createHmac("sha256", keySecret).update(`${razorpay_order_id}|${razorpay_payment_id}`).digest("hex");
+    if (expected !== razorpay_signature) return fail(res, 400, "Payment signature verification failed.");
+
+    let rzpOrder;
+    try {
+      const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
+      const r = await fetch(`https://api.razorpay.com/v1/orders/${razorpay_order_id}`, {
+        headers: { Authorization: `Basic ${auth}` },
+      });
+      if (!r.ok) return fail(res, 502, "Could not fetch the Razorpay order for verification.");
+      rzpOrder = await r.json();
+    } catch (_e) {
+      return fail(res, 502, "Razorpay order fetch failed during verification.");
+    }
+
+    if (String(rzpOrder.notes?.clientId || "") !== clientId) {
+      return fail(res, 403, "Order does not belong to this account.");
+    }
+    const orderType = String(rzpOrder.notes?.type || "").toLowerCase();
+    const orderQty = Math.max(0, Math.floor(Number(rzpOrder.notes?.quantity || 0)));
+    if (orderType !== type || orderQty !== quantity) {
+      return fail(res, 400, "Order type/quantity does not match the request.");
+    }
+    const expectedAmount = ADDON_MONEY_UNIT[orderType] * orderQty * 100;
+    if (Number(rzpOrder.amount) !== expectedAmount) {
+      return fail(res, 400, "Order amount mismatch.");
+    }
+
+    applyAddonQuota(client, orderType, orderQty);
+    await client.save();
+    await AddonPurchaseLog.create({
+      appId: `addon-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`,
+      clientId, type: orderType, quantity: orderQty, purchaseMethod: "razorpay",
+      unitCost: ADDON_MONEY_UNIT[orderType], totalCost: ADDON_MONEY_UNIT[orderType] * orderQty,
+      currency, orderId: razorpay_order_id, paymentId: razorpay_payment_id, status: "captured", performedBy,
+    });
+    return ok(res, `Added +${orderQty} ${orderType} capacity via Razorpay.`, { usage: usageView(client) });
+  }
+
+  return fail(res, 400, "Unknown add-on action.");
+};
+
+// GET /billing/addons/history — history + current usage + pricing (one call).
+const getAddonHistory = async (req, res) => {
+  const clientId = getTenantClientId(req.user);
+  let client = await Client.findOne({ appId: clientId }, CLIENT_HEAVY_EXCLUSION).lean();
+  if (!client) return fail(res, 404, "Client not found.");
+  if (!client.quotaInitialized) {
+    const fullClient = await Client.findOne({ appId: clientId });
+    const publishedCount = await Training.countDocuments({ clientId, "payload.status": "approved" });
+    await ensureClientEntitlement(fullClient, {
+      training: publishedCount, session: Number(fullClient.sessions || 0), user: Number(fullClient.activeUsers || 0),
+    });
+    client = fullClient.toObject();
+  }
+  const pageNo = Math.max(1, Number(req.query.pageNo) || 1);
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25));
+  const skip = (pageNo - 1) * limit;
+  const addonFilter = { clientId };
+  const [rows, total] = await Promise.all([
+    AddonPurchaseLog.find(addonFilter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+    AddonPurchaseLog.countDocuments(addonFilter),
+  ]);
+  const totalPages = Math.max(1, Math.ceil(total / limit));
+  return ok(res, "Add-on history loaded.", {
+    record: rows.map((r) => ({
+      id: r.appId, type: r.type, quantity: r.quantity, purchaseMethod: r.purchaseMethod,
+      unitCost: r.unitCost, totalCost: r.totalCost, currency: r.currency,
+      status: r.status, performedBy: r.performedBy, createdAt: r.createdAt,
+    })),
+    count: total,
+    totalPages,
+    pagination: Array.from({ length: totalPages }, (_, i) => i + 1),
+    usage: usageView(client),
+    pricing: { creditUnit: ADDON_CREDIT_UNIT, moneyUnit: ADDON_MONEY_UNIT },
+    razorpayConfigured: Boolean(String(client.razorpayKeyId || "").trim() && String(client.razorpayKeySecret || "").trim()),
+  });
+};
+
+// Task 3: paginated credit audit trail for the Upgrade & Billing page.
+// Phase E / Task 6: added date range, actionType, performedBy filters.
+const getCreditHistory = async (req, res) => {
+  const clientId = getTenantClientId(req.user);
+  const pageNo = Math.max(1, Number(req.query.pageNo) || 1);
+  const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25));
+  const filter = { clientId };
+  if (req.query.dateFrom || req.query.dateTo) {
+    filter.timestamp = {};
+    if (req.query.dateFrom) filter.timestamp.$gte = new Date(req.query.dateFrom);
+    if (req.query.dateTo) filter.timestamp.$lte = new Date(req.query.dateTo);
+  }
+  if (req.query.actionType) filter.actionType = String(req.query.actionType);
+  if (req.query.performedBy) filter.performedBy = { $regex: String(req.query.performedBy), $options: "i" };
+  const [record, total] = await Promise.all([
+    CreditAuditLog.find(filter)
+      .sort({ timestamp: -1, _id: -1 })
+      .skip((pageNo - 1) * limit)
+      .limit(limit)
+      .lean(),
+    CreditAuditLog.countDocuments(filter),
+  ]);
+  return ok(res, "Credit history loaded.", {
+    record: record.map((r) => ({
+      id: String(r._id),
+      timestamp: r.timestamp,
+      actionType: r.actionType,
+      entityType: r.entityType,
+      entityId: r.entityId,
+      creditChange: r.creditChange,
+      balanceBefore: r.balanceBefore,
+      balanceAfter: r.balanceAfter,
+      performedBy: r.performedBy,
+      reason: r.reason,
+      reference: r.reference,
+    })),
+    total,
+    pageNo,
+    limit,
+  });
+};
+
 module.exports = {
   dashboard,
   getApiConfig,
@@ -756,6 +1108,10 @@ module.exports = {
   updateIframe,
   health,
   getBillingSummary,
+  getBillingPlans,
+  getCreditHistory,
+  purchaseAddon,
+  getAddonHistory,
   purchaseCredits,
   requestEnterprisePlan,
   testSmtp,

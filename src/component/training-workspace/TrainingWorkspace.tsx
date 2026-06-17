@@ -75,7 +75,7 @@ import {
 } from "../../constant/tts";
 import { AllowedKeys, PermissionKeys } from "../../constant/permissions";
 import AxiosHelper, { isServerApiEnabled } from "../../helper/AxiosHelper";
-import { createGroupSession } from "../../helper/groupSessionApi";
+import { createGroupSession, getTrainingAnalytics, type TrainingAnalytics } from "../../helper/groupSessionApi";
 import { withBase, withOrigin } from "../../helper/basePath";
 import { buildScriptAudioKey, generateScriptAudioDataUri } from "../../helper/scriptAudio";
 import { extractKnowledgeDocument } from "../../helper/trainingKnowledge";
@@ -242,6 +242,8 @@ type TrainingSetupValues = {
   markAnswersInRealTime: boolean;
   showMarksInProgressBar: boolean;
   showFinalScore: boolean;
+  allowPublicDemoAccess: boolean;
+  demoToken: string;
   theme: TrainingSlideshowTheme;
   branding: TrainingBrandingSettings;
   // Group Training Hall configuration (only used when deliveryType === "group").
@@ -1177,6 +1179,8 @@ const buildDefaultSetupValues = (
   markAnswersInRealTime: training?.options.markAnswersInRealTime ?? false,
   showMarksInProgressBar: training?.options.showMarksInProgressBar ?? false,
   showFinalScore: training?.options.showFinalScore ?? false,
+  allowPublicDemoAccess: training?.options.allowPublicDemoAccess ?? false,
+  demoToken: training?.options.demoToken ?? "",
   theme: training?.theme ? { ...defaultSlideshowTheme, ...training.theme } : { ...defaultSlideshowTheme },
   branding: training?.branding ? { ...defaultTrainingBranding, ...training.branding } : { ...defaultTrainingBranding },
   deliveryType: training?.trainingType === "group" ? "group" : "one_on_one",
@@ -4339,6 +4343,8 @@ const TrainingBuilder = ({
           markAnswersInRealTime: values.markAnswersInRealTime,
           showMarksInProgressBar: values.showMarksInProgressBar,
           showFinalScore: values.showFinalScore,
+          allowPublicDemoAccess: values.allowPublicDemoAccess,
+          demoToken: values.demoToken || "",
         },
         theme: { ...values.theme },
         branding: { ...values.branding },
@@ -4619,8 +4625,10 @@ const TrainingBuilder = ({
                                         height: "100%",
                                         padding: "16px",
                                         borderRadius: "12px",
-                                        border: `1px solid ${isActive ? "#ff6200" : "#dee2e6"}`,
-                                        background: isActive ? "rgba(255, 98, 0, 0.08)" : "#fff",
+                                        // Theme-aware (Bootstrap CSS vars) so the cards render correctly
+                                        // in BOTH light and dark mode instead of a hardcoded white card.
+                                        border: `1px solid ${isActive ? "#ff6200" : "var(--bs-border-color)"}`,
+                                        background: isActive ? "rgba(255, 98, 0, 0.12)" : "var(--bs-tertiary-bg)",
                                         transition: "border-color 0.15s ease, background 0.15s ease",
                                       }}
                                     >
@@ -4632,13 +4640,13 @@ const TrainingBuilder = ({
                                           gap: "12px",
                                         }}
                                       >
-                                        <span style={{ fontWeight: 600, color: "#1f2937" }}>{option.title}</span>
+                                        <span style={{ fontWeight: 600, color: "var(--bs-body-color)" }}>{option.title}</span>
                                         <i
                                           className={`bi ${isActive ? "bi-check-circle-fill" : "bi-circle"}`}
-                                          style={{ color: isActive ? "#ff6200" : "#adb5bd", fontSize: "1.1rem", flexShrink: 0 }}
+                                          style={{ color: isActive ? "#ff6200" : "var(--bs-secondary-color)", fontSize: "1.1rem", flexShrink: 0 }}
                                         />
                                       </div>
-                                      <div style={{ marginTop: "6px", fontSize: "0.8125rem", color: "#6b7280", lineHeight: 1.35 }}>
+                                      <div style={{ marginTop: "6px", fontSize: "0.8125rem", color: "var(--bs-secondary-color)", lineHeight: 1.35 }}>
                                         {option.caption}
                                       </div>
                                     </div>
@@ -5061,6 +5069,68 @@ const TrainingBuilder = ({
                                 <Field id="maxAttempts" name="maxAttempts" type="number" min="0" className="form-control" />
                                 <div className="form-text">Use 0 for unlimited retakes.</div>
                                 <ErrorMessage name="maxAttempts" component="small" className="text-danger" />
+                              </div>
+                            ) : null}
+                          </div>
+
+                          <div className="training-builder-subcaption mt-4">Public Demo Access</div>
+                          <div className="training-setting-group">
+                            <label className="form-label d-block mb-2">Allow Public Demo Access</label>
+                            <div className="row g-3">
+                              {[
+                                { value: true, title: "Enabled" },
+                                { value: false, title: "Disabled" },
+                              ].map((option) => (
+                                <div key={String(option.value)} className="col-12 col-lg-6">
+                                  <button
+                                    type="button"
+                                    className={`btn w-100 text-start p-3 ${values.allowPublicDemoAccess === option.value ? "btn-primary" : "btn-light border"}`}
+                                    onClick={() => {
+                                      setFieldValue("allowPublicDemoAccess", option.value);
+                                      if (option.value && !values.demoToken) {
+                                        setFieldValue("demoToken", crypto.randomUUID());
+                                      }
+                                    }}
+                                  >
+                                    <div className="d-flex align-items-start justify-content-between gap-3">
+                                      <strong className="d-block">{option.title}</strong>
+                                      <i className={`bi ${values.allowPublicDemoAccess === option.value ? "bi-check-circle-fill" : "bi-circle"}`} />
+                                    </div>
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="form-text mt-2">
+                              When enabled, anyone with the demo link can experience this training without logging in. They will be asked for their name and email before starting.
+                            </div>
+                            {values.allowPublicDemoAccess && values.demoToken ? (
+                              <div className="mt-3">
+                                <label className="form-label">Demo URL</label>
+                                <div className="input-group">
+                                  <input
+                                    type="text"
+                                    className="form-control form-control-sm bg-light"
+                                    readOnly
+                                    value={withOrigin(`/demo-training/${values.demoToken}`)}
+                                  />
+                                  <button
+                                    type="button"
+                                    className="btn btn-outline-secondary btn-sm"
+                                    onClick={() => {
+                                      void navigator.clipboard.writeText(withOrigin(`/demo-training/${values.demoToken}`));
+                                    }}
+                                  >
+                                    Copy
+                                  </button>
+                                </div>
+                                <div className="form-text">Share this link for public demo access. No login required.</div>
+                                <button
+                                  type="button"
+                                  className="btn btn-outline-warning btn-sm mt-2"
+                                  onClick={() => setFieldValue("demoToken", crypto.randomUUID())}
+                                >
+                                  Regenerate Token
+                                </button>
                               </div>
                             ) : null}
                           </div>
@@ -7138,6 +7208,24 @@ const TrainingDetail = ({
     setTraineeRecords(response.data.data.record.filter((user) => user.status === "active"));
   }, []);
 
+  // Feature 5: lazily load training-level group analytics so the workspace can
+  // show summary cards + the "View Analytics" entry only when sessions exist.
+  const [groupAnalytics, setGroupAnalytics] = useState<TrainingAnalytics | null>(null);
+  const [groupAnalyticsLoading, setGroupAnalyticsLoading] = useState(false);
+  useEffect(() => {
+    if (training.trainingType !== "group") { setGroupAnalytics(null); return; }
+    let active = true;
+    setGroupAnalyticsLoading(true);
+    (async () => {
+      const res = await getTrainingAnalytics(training.id);
+      if (!active) return;
+      setGroupAnalyticsLoading(false);
+      setGroupAnalytics(res.data.status && res.data.data?.analytics ? res.data.data.analytics : null);
+    })();
+    return () => { active = false; };
+  }, [training.trainingType, training.id]);
+  const openGroupAnalytics = () => window.open(withOrigin(`/training/${training.id}/analytics`), "_blank", "noopener");
+
   const handleLaunchHall = async () => {
     const response = await createGroupSession(training.id);
     if (!response.data.status) {
@@ -7864,6 +7952,13 @@ const TrainingDetail = ({
                   Launch Hall
                 </button>
               ) : null}
+              {/* Feature 5: only shown for group trainings that have ≥1 session. */}
+              {training.trainingType === "group" && (groupAnalytics?.totalSessions || 0) > 0 ? (
+                <button type="button" className="btn btn-info btn-sm" onClick={openGroupAnalytics}>
+                  <i className="bi bi-graph-up me-1" />
+                  View Analytics
+                </button>
+              ) : null}
             </>
           ) : (
             <span className="badge text-bg-light border text-dark">Awaiting approval</span>
@@ -7883,27 +7978,61 @@ const TrainingDetail = ({
         </div>
       </div>
 
-      <div className="row g-3 mb-4">
-        {[
-          ["Total Sessions", finalizedSessions.length, "bi bi-people", "text-primary"],
-          ["Completed", completedSessions, "bi bi-check2-circle", "text-success"],
-          ["In Progress", inProgressSessions, "bi bi-hourglass-split", "text-warning"],
-          ["Not Started", notStartedSessions, "bi bi-circle", "text-secondary"],
-          ["Avg Score", `${getScoreAverage(finalizedSessions)}%`, "bi bi-bar-chart", "text-info"],
-        ].map(([label, value, icon, tone]) => (
-          <div key={label} className="col-12 col-md-6 col-xl">
-            <div className="card admin-card-stat h-100">
-              <div className="card-body">
-                <div className={`fs-3 ${tone} mb-2`}>
-                  <i className={icon as string} />
+      {/* Feature 5: group-training analytics summary (with loading/empty states). */}
+      {training.trainingType === "group" ? (
+        groupAnalyticsLoading ? (
+          <div className="text-body-secondary small mb-3"><i className="bi bi-hourglass-split me-1" />Loading group analytics…</div>
+        ) : !groupAnalytics || groupAnalytics.totalSessions === 0 ? (
+          <div className="alert alert-light border small mb-3">
+            <i className="bi bi-graph-up me-1" />No group sessions yet — analytics will appear after the first session runs.
+          </div>
+        ) : (
+          <div className="row g-3 mb-3">
+            {[
+              ["Sessions", String(groupAnalytics.totalSessions), "bi bi-people", "text-primary"],
+              ["Avg Attendance", `${groupAnalytics.avgAttendancePct}%`, "bi bi-person-check", "text-success"],
+              ["Assessment Pass", `${groupAnalytics.assessmentPassRate}%`, "bi bi-mortarboard", "text-info"],
+              ["Avg Risk Score", String(groupAnalytics.avgRiskScore), "bi bi-shield-exclamation", "text-danger"],
+            ].map(([label, value, icon, tone]) => (
+              <div key={label} className="col-6 col-xl-3">
+                <div className="card admin-card-stat h-100" role="button" onClick={openGroupAnalytics}>
+                  <div className="card-body">
+                    <div className={`fs-3 ${tone} mb-2`}><i className={icon as string} /></div>
+                    <div className="fs-4 fw-semibold">{value}</div>
+                    <div className="small text-body-secondary">{label}</div>
+                  </div>
                 </div>
-                <div className="fs-4 fw-semibold">{value}</div>
-                <div className="small text-body-secondary">{label}</div>
+              </div>
+            ))}
+          </div>
+        )
+      ) : null}
+
+      {/* One-on-One session stats — not relevant for Group (Hall) trainings,
+          which show the group analytics cards above instead. */}
+      {training.trainingType !== "group" ? (
+        <div className="row g-3 mb-4">
+          {[
+            ["Total Sessions", finalizedSessions.length, "bi bi-people", "text-primary"],
+            ["Completed", completedSessions, "bi bi-check2-circle", "text-success"],
+            ["In Progress", inProgressSessions, "bi bi-hourglass-split", "text-warning"],
+            ["Not Started", notStartedSessions, "bi bi-circle", "text-secondary"],
+            ["Avg Score", `${getScoreAverage(finalizedSessions)}%`, "bi bi-bar-chart", "text-info"],
+          ].map(([label, value, icon, tone]) => (
+            <div key={label} className="col-12 col-md-6 col-xl">
+              <div className="card admin-card-stat h-100">
+                <div className="card-body">
+                  <div className={`fs-3 ${tone} mb-2`}>
+                    <i className={icon as string} />
+                  </div>
+                  <div className="fs-4 fw-semibold">{value}</div>
+                  <div className="small text-body-secondary">{label}</div>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      ) : null}
 
       {detailTab !== "report" ? (
         <div className="d-flex gap-2 flex-wrap mb-3">
@@ -8822,6 +8951,20 @@ const TrainingWorkspace = ({
     setWorkspaceReady(true);
   }, [dispatch]);
 
+  // Fetches the full payload (slides, scripts, sessions, etc.) for a single
+  // training and merges it into state — used when opening detail/builder so
+  // the list endpoint above can stay lightweight.
+  const loadTrainingDetail = useCallback(
+    async (trainingId: string) => {
+      const response = await AxiosHelper.getData<TrainingWorkspaceRecord>(`/training-workspace/${trainingId}`);
+      if (response.data.status && response.data.data) {
+        dispatch(saveTraining(response.data.data));
+      }
+      return response.data.status;
+    },
+    [dispatch],
+  );
+
   useEffect(() => {
     setWorkspaceSessionName(sessionName);
   }, [sessionName]);
@@ -8838,7 +8981,7 @@ const TrainingWorkspace = ({
   }, [loadWorkspace]);
 
   useEffect(() => {
-    if (!isServerApiEnabled || view !== "detail") {
+    if (!isServerApiEnabled || view !== "detail" || !selectedTrainingId) {
       return;
     }
 
@@ -8847,8 +8990,8 @@ const TrainingWorkspace = ({
       return;
     }
 
-    void loadWorkspace().catch(() => undefined);
-  }, [detailTab, loadWorkspace, selectedTrainingId, view]);
+    void loadTrainingDetail(selectedTrainingId).catch(() => undefined);
+  }, [detailTab, loadTrainingDetail, selectedTrainingId, view]);
 
   const visibleTrainings = useMemo(
     () => trainings.filter((training) => (role === "reviewer" ? training.status !== "draft" : true)),
@@ -8970,6 +9113,15 @@ const TrainingWorkspace = ({
         return;
       } finally {
         setCheckingTrainingLimit(false);
+      }
+    }
+
+    if (trainingId && isServerApiEnabled) {
+      try {
+        await loadTrainingDetail(trainingId);
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Unable to load training details.");
+        return;
       }
     }
 
@@ -9121,7 +9273,7 @@ const TrainingWorkspace = ({
                                 <div>
                                   <div className="fw-semibold">{training.title}</div>
                                   <div className="small text-body-secondary">
-                                    {training.trainer} | {training.slides.length} slides | {training.lastActivity}
+                                    {training.trainer} | {training.slidesCount ?? training.slides.length} slides | {training.lastActivity}
                                   </div>
                                 </div>
                                 {renderTrainingStatusBadge(training.status)}
@@ -9160,8 +9312,8 @@ const TrainingWorkspace = ({
                                 <div>
                                   <div className="fw-semibold">{training.title}</div>
                                   <div className="small text-body-secondary">
-                                    Approved {training.approvedOn} | {normalizeTrainingSessions(training.sessions).filter((session) => session.status === "completed").length} session
-                                    {normalizeTrainingSessions(training.sessions).filter((session) => session.status === "completed").length === 1 ? "" : "s"}
+                                    Approved {training.approvedOn} | {training.completedSessionsCount ?? normalizeTrainingSessions(training.sessions).filter((session) => session.status === "completed").length} session
+                                    {(training.completedSessionsCount ?? normalizeTrainingSessions(training.sessions).filter((session) => session.status === "completed").length) === 1 ? "" : "s"}
                                   </div>
                                 </div>
                                 <span className="small text-body-secondary">Live</span>
@@ -9248,12 +9400,10 @@ const TrainingWorkspace = ({
                         <thead>
                           <tr>
                             <th>Training</th>
-                            <th>Type</th>
-                            <th>Audience</th>
                             <th>Trainer</th>
                             <th>Slides</th>
                             <th>Status</th>
-                            <th>Last Activity</th>
+                            <th>Delivery Type</th>
                             <th className="text-end">Actions</th>
                           </tr>
                         </thead>
@@ -9273,16 +9423,16 @@ const TrainingWorkspace = ({
                                     <div className="fw-semibold">{training.title}</div>
                                     <div className="small text-body-secondary">ID: {training.id}</div>
                                   </td>
-                                  <td>
-                                    <span className="badge text-bg-light border text-dark">{training.type}</span>
-                                  </td>
-                                  <td>{training.audience}</td>
                                   <td>{training.trainer}</td>
-                                  <td>{training.slides.length}</td>
+                                  <td>{training.slidesCount ?? training.slides.length}</td>
                                   <td>
                                     {renderTrainingStatusBadge(training.status)}
                                   </td>
-                                  <td>{training.lastActivity}</td>
+                                  <td>
+                                    <span className={`badge ${training.trainingType === "group" ? "text-bg-warning" : "text-bg-secondary"}`}>
+                                      {training.trainingType === "group" ? "Group (Hall)" : "One-on-One"}
+                                    </span>
+                                  </td>
                                   <td className="text-end">
                                     <ActionDropdown label={`Open actions for ${training.title}`}>
                                       {({ close }) => (

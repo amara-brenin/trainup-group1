@@ -79,6 +79,9 @@ const DEFAULT_GROUP_CONFIG = Object.freeze({
     followUpPromptDelaySecs: 5, // after answer: wait, then ask "are you still there?"
     finalSilenceTimeoutSecs: 8, // after the prompt: wait, then release the floor
     closingCountdownSecs: 15, // queue empty + presentation done: countdown then end
+    // Feature 1: after the floor is granted, if the mic stays silent / is denied
+    // for this long, the trainee UI offers the Type-a-question fallback.
+    voiceFallbackSilenceSecs: 8,
   },
   completionRules: { minAttendancePct: 75, requireAssessmentPass: false },
   assessment: { passPct: 60, scoring: "both" },

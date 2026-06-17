@@ -35,4 +35,8 @@ const userSchema = new Schema(
   },
 );
 
+userSchema.index({ status: 1 });
+userSchema.index({ clientId: 1, role: 1, status: 1 });
+userSchema.index({ name: 1 });
+
 module.exports = models.User || model("User", userSchema);

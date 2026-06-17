@@ -12,4 +12,8 @@ const trainingSchema = new Schema(
   },
 );
 
+trainingSchema.index({ "payload.status": 1 });
+trainingSchema.index({ clientId: 1, "payload.status": 1 });
+trainingSchema.index({ "payload.options.demoToken": 1 }, { sparse: true });
+
 module.exports = models.Training || model("Training", trainingSchema);

@@ -25,6 +25,10 @@ router.post("/notifications/read-all", notificationsController.markAllRead);
 router.put("/profile", allowAccess("profile.edit", "profile"), authController.updateProfile);
 router.get("/dashboard", allowAccess("dashboard.view", "dashboard"), commonController.dashboard);
 router.get("/billing/summary", allowAccess("billing.view", "billing"), commonController.getBillingSummary);
+router.get("/billing/credit-history", allowAccess("billing.view", "billing"), commonController.getCreditHistory);
+router.get("/billing/plans", allowAccess("billing.view", "billing"), commonController.getBillingPlans);
+router.post("/billing/addons/purchase", allowAccess("billing.manage", "billing"), commonController.purchaseAddon);
+router.get("/billing/addons/history", allowAccess("billing.view", "billing"), commonController.getAddonHistory);
 router.post("/billing/purchase", allowAccess("billing.manage", "billing"), commonController.purchaseCredits);
 router.post("/billing/enterprise-request", allowAccess("billing.view", "billing"), commonController.requestEnterprisePlan);
 
@@ -66,12 +70,16 @@ router.put("/email-center", allowAccess("settings.edit", "settings"), emailCente
 router.get("/training-workspace", allowAccess(undefined, "trainingWorkspace"), workspaceController.list);
 router.get("/training-workspace/capacity", allowAccess("training.create", "trainingWorkspace"), workspaceController.capacity);
 router.get("/training-workspace/trainees", allowAccess("training.assign", "trainingWorkspace"), workspaceController.listAssignableTrainees);
+router.get("/training-workspace/:id", allowAccess(undefined, "trainingWorkspace"), workspaceController.getOne);
 router.post("/training-workspace/:id/assign", allowAccess("training.assign", "trainingWorkspace"), workspaceController.assignTraining);
 router.put("/training-workspace/sync", allowAccess(undefined, "trainingWorkspace"), workspaceController.sync);
 
 // Group Training Hall — session management.
 router.post("/training-workspace/:id/group-session", allowRoles("admin", "trainer", "super_admin"), groupSessionController.createGroupSession);
+router.get("/training-workspace/:trainingId/group-report", allowRoles("admin", "trainer", "super_admin"), groupSessionController.getTrainingGroupReport);
+router.get("/training/:trainingId/analytics", allowRoles("admin", "trainer", "super_admin"), groupSessionController.getTrainingAnalytics);
 router.get("/group-sessions/:gsId/live", allowRoles("admin", "trainer", "super_admin"), groupSessionController.getLiveSnapshot);
+router.get("/group-sessions/:gsId/report", allowRoles("admin", "trainer", "super_admin"), groupSessionController.getConsolidatedReport);
 router.get("/group-sessions/:gsId/debug", allowRoles("admin", "trainer", "super_admin"), groupSessionController.debugSnapshot);
 router.post("/group-sessions/:gsId/control", allowRoles("admin", "trainer", "super_admin"), groupSessionController.controlGroupSession);
 router.get("/group/:gsId/host", allowRoles("admin", "trainer", "super_admin"), groupSessionController.bootstrapHost);

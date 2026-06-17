@@ -436,24 +436,25 @@ const buildSessionSnapshot = (trainingRecords = []) => {
   };
 };
 
-const buildDashboard = ({ clients, currentClient, webhookConfig, session, tenantUsers = [], trainingRecords = [] }) => {
-  const activeClients = clients.filter((client) => client.status === "active").length;
+const buildDashboard = ({ clients, currentClient, webhookConfig, session, tenantUsers = [], trainingRecords = [], counts }) => {
   const isSuperAdmin = session.role === "super_admin";
-  const currentTenant = currentClient || clients[0] || null;
-  const internalUsers = tenantUsers.filter((user) => user.role !== "trainee");
-  const traineeUsers = tenantUsers.filter((user) => user.role === "trainee");
-  const totalUsers = isSuperAdmin ? tenantUsers.length : clients.reduce((sum, client) => sum + client.activeUsers, 0);
-  const totalTrainingCount = isSuperAdmin ? trainingRecords.length : Number(currentTenant?.trainings || trainingRecords.length || 0);
-  const tenantUserCount = internalUsers.length || Number(currentTenant?.activeUsers || 0);
-  const traineeCount = traineeUsers.length;
+  const currentTenant = currentClient || null;
+
+  const c = counts || {};
+  const activeClients = c.activeClientCount ?? clients.filter((client) => client.status === "active").length;
+  const clientCount = c.clientCount ?? clients.length;
+  const totalUsers = c.totalUserCount ?? tenantUsers.length;
+  const totalTrainingCount = c.trainingCount ?? trainingRecords.length;
+  const tenantUserCount = c.internalUserCount ?? (tenantUsers.filter((u) => u.role !== "trainee").length || Number(currentTenant?.activeUsers || 0));
+  const traineeCount = c.traineeCount ?? tenantUsers.filter((u) => u.role === "trainee").length;
   const tenantTrainingCount = totalTrainingCount;
-  const sessionSnapshot = buildSessionSnapshot(trainingRecords);
-  const combinedSessions = sessionSnapshot.activeSessions + sessionSnapshot.completionsToday;
+  const sessionSnapshot = c.sessionSnapshot || buildSessionSnapshot(trainingRecords);
+  const combinedSessions = c.combinedSessions ?? (sessionSnapshot.activeSessions + sessionSnapshot.completionsToday);
 
   return {
     kpis: isSuperAdmin
       ? [
-        { label: "Total Clients", value: String(clients.length), icon: "bi bi-buildings", color: "#3e60d5", subtle: "#ebf2ff", hint: `${activeClients} active accounts` },
+        { label: "Total Clients", value: String(clientCount), icon: "bi bi-buildings", color: "#3e60d5", subtle: "#ebf2ff", hint: `${activeClients} active accounts` },
         { label: "Total Sessions", value: String(sessionSnapshot.totalSessions), icon: "bi bi-play-circle", color: "#a020f0", subtle: "#f4e1ff", hint: "Learner training attempts recorded overall" },
         { label: "Total Trainings", value: String(totalTrainingCount), icon: "bi bi-journal-richtext", color: "#47ad77", subtle: "#e6faf3", hint: "Training modules created across all clients" },
         { label: "Total User", value: String(totalUsers), icon: "bi bi-people", color: "#16a7e9", subtle: "#e6f6fd", hint: "Users added across all clients" },

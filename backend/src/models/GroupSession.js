@@ -5,6 +5,27 @@ const { Schema, model, models } = require("mongoose");
 // attendees are flattened into Training.payload.sessions (reusing the existing
 // TrainingSessionRecord shape) so the existing reports keep working.
 
+// Feature 2: one graded answer. `response` is Mixed (string for objective/text,
+// array for multi_select). `correct` is null when the question is unscoreable.
+const assessmentAnswerSchema = new Schema(
+  {
+    checkpointId: { type: String, default: "" },
+    response: { type: Schema.Types.Mixed, default: null },
+    correct: { type: Boolean, default: null },
+  },
+  { _id: false },
+);
+
+// Feature 4: one proctoring event (event-only — NO video/frames are ever stored).
+const proctoringEventSchema = new Schema(
+  {
+    ts: { type: Date, default: Date.now },
+    type: { type: String, default: "" },
+    severity: { type: String, default: "low" },
+  },
+  { _id: false },
+);
+
 const attendeeSchema = new Schema(
   {
     traineeId: { type: String, required: true },
@@ -22,12 +43,44 @@ const attendeeSchema = new Schema(
     questionsAsked: { type: Number, default: 0 },
     questionsAnswered: { type: Number, default: 0 },
     attendancePct: { type: Number, default: 0 },
-    assessmentScore: { type: Number, default: null },
+    assessmentScore: { type: Number, default: null }, // kept for flatten back-compat
     completionStatus: { type: String, default: "in-progress" },
     // Attendance progression: registered → joined → waiting → present → completed
     attendanceState: { type: String, default: "joined" },
     confirmTime: { type: Date, default: null },
     completionTime: { type: Date, default: null },
+    // Feature 2: end-of-training assessment result (server-graded). Absent on
+    // historical docs → treated as "no assessment taken".
+    assessment: {
+      startedAt: { type: Date, default: null },
+      completedAt: { type: Date, default: null },
+      score: { type: Number, default: null },
+      passFail: { type: String, default: "" }, // "pass" | "fail" | ""
+      timeTakenMs: { type: Number, default: 0 },
+      submitted: { type: Boolean, default: false }, // idempotency guard
+      answers: { type: [assessmentAnswerSchema], default: [] },
+    },
+    // Feature 4: lightweight proctoring (events only, capped). Absent on
+    // historical docs → treated as "no proctoring data".
+    proctoring: {
+      riskScore: { type: Number, default: 0 },
+      events: { type: [proctoringEventSchema], default: [] },
+    },
+  },
+  { _id: false },
+);
+
+// Feature 2: immutable copy of the end_of_training checkpoints used for THIS
+// session, captured at end / first request, so future training edits never
+// change a historical assessment. Includes answer keys (server-only).
+const snapshotCheckpointSchema = new Schema(
+  {
+    id: { type: String, default: "" },
+    prompt: { type: String, default: "" },
+    questionType: { type: String, default: "subjective" },
+    options: { type: [String], default: [] },
+    expectedAnswer: { type: String, default: "" },
+    keywordMatches: { type: [String], default: [] },
   },
   { _id: false },
 );
@@ -70,6 +123,16 @@ const transcriptSchema = new Schema(
     question: { type: String, default: "" },
     answer: { type: String, default: "" },
     askedAt: { type: Date, default: Date.now },
+    // Feature 1: how the question was asked. Absent on historical docs → treated
+    // as "voice" by the report aggregator (backward compatible).
+    questionType: { type: String, enum: ["voice", "text"], default: "voice" },
+    // Feature 3 answer timing: answer playback start, and completion. Null on
+    // historical docs. responseTimeSec is derived (answeredAt − askedAt).
+    answerStartedAt: { type: Date, default: null },
+    answeredAt: { type: Date, default: null },
+    // Time the speaker held the floor for this question (ms), from floorGrantedAt
+    // → answer time. 0 = unknown (e.g. historical docs).
+    speakerDurationMs: { type: Number, default: 0 },
   },
   { _id: false },
 );
@@ -104,17 +167,19 @@ const groupSessionSchema = new Schema(
     floorGrantedAt: { type: Date, default: null },
     queue: { type: [queueEntrySchema], default: [] },
 
-    // Q&A wrap-up state — persisted so a Hall refresh can rehydrate without
-    // getting stuck or re-presenting (see closing/loop-prevention logic).
+    // Persisted so a Hall refresh rehydrates without re-presenting: once the
+    // presentation is finished the Hall shows the host-controlled wrap-up.
     presentationComplete: { type: Boolean, default: false },
-    closing: {
-      active: { type: Boolean, default: false },
-      startedAt: { type: Date, default: null },
-      secs: { type: Number, default: 0 },
-    },
 
     attendees: { type: [attendeeSchema], default: [] },
     transcripts: { type: [transcriptSchema], default: [] },
+
+    // Feature 2: frozen end-of-training assessment for THIS session.
+    assessmentSnapshot: {
+      capturedAt: { type: Date, default: null },
+      passPct: { type: Number, default: 60 },
+      checkpoints: { type: [snapshotCheckpointSchema], default: [] },
+    },
 
     config: { type: Schema.Types.Mixed, default: {} },
 

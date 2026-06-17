@@ -90,5 +90,123 @@ export const bootstrapGroupHost = (gsId: string) =>
     `/group/${gsId}/host`,
   );
 
-export const askGroupQuestion = (gsId: string, token: string, message: string) =>
-  groupPost<{ reply: string }>(`/group/${gsId}/ask`, { token, message });
+export const askGroupQuestion = (
+  gsId: string,
+  token: string,
+  message: string,
+  questionType: "voice" | "text" = "voice",
+) => groupPost<{ reply: string }>(`/group/${gsId}/ask`, { token, message, questionType });
+
+// ---- Phase 1: Consolidated report (read-only) ----
+export type GroupReportStatus = "live" | "final";
+export type GroupReport = {
+  reportStatus: GroupReportStatus;
+  dataQuality: {
+    reportStatus: GroupReportStatus;
+    hasQuestionTypes: boolean;
+    hasResponseTimes: boolean;
+    hasSpeakerDurations: boolean;
+    hasAssessmentData: boolean;
+    hasProctoringData: boolean;
+  };
+  sessionSummary: {
+    trainingName: string; trainingId: string; sessionId: string; lifecycle: string;
+    date: string | null; startTime: string | null; endTime: string | null; durationMin: number;
+    invitedCount: number; joinedCount: number; completedCount: number; dropOffCount: number;
+    averageAttendancePct: number; averageDurationMin: number; totalQuestions: number;
+    totalVoiceQuestions: number; totalTextQuestions: number; textQuestionRatio: number; totalHandRaises: number;
+    assessmentSubmittedCount: number; assessmentPassedCount: number;
+    assessmentPassRatePct: number; averageAssessmentScore: number | null;
+    averageRiskScore: number; totalProctoringEvents: number;
+  };
+  participants: Array<{
+    name: string; email: string; joinTime: string | null; leaveTime: string | null; durationMin: number;
+    attendancePct: number; completionStatus: string; questionsAsked: number; handRaises: number;
+    questionTypes: string[] | null; lastActivity: string | null;
+    assessmentScore: number | null; assessmentPassFail: string | null; assessmentTimeTakenMs: number | null;
+    proctoringRiskScore: number; proctoringEventCount: number;
+  }>;
+  interactions: Array<{
+    question: string; questionType: string | null; askedBy: string;
+    askedAt: string | null; answeredAt: string | null; responseTimeSec: number | null;
+    speakerDurationMs: number | null;
+  }>;
+  engagement: {
+    mostActiveParticipant: string; mostQuestionsAsked: string;
+    highestAttendance: { name: string; pct: number } | null;
+    lowestAttendance: { name: string; pct: number } | null;
+    dropOffRatePct: number; participationRatePct: number;
+  };
+};
+
+export type TrainingGroupReport = {
+  trainingId: string; trainingName: string;
+  sessionsCount: number; finalSessionsCount: number;
+  invitedCount: number; joinedCount: number; completedCount: number;
+  avgAttendancePct: number; avgQuestionsAsked: number;
+  assessmentPassRatePct: number; avgAssessmentScore: number | null; averageRiskScore: number;
+  sessions: Array<{
+    sessionId: string; reportStatus: GroupReportStatus; date: string | null; durationMin: number;
+    joinedCount: number; completedCount: number; averageAttendancePct: number; totalQuestions: number;
+    averageAssessmentScore: number | null; assessmentPassRatePct: number;
+  }>;
+};
+
+// Feature 2: end-of-training assessment.
+export type GroupAssessmentQuestion = { id: string; prompt: string; questionType: string; options: string[] };
+export type GroupAssessmentView = {
+  available: boolean; skipAllowed: boolean; passPct: number;
+  alreadySubmitted: boolean; result: { score: number | null; passFail: string } | null;
+  checkpoints: GroupAssessmentQuestion[];
+};
+
+export const getGroupAssessment = (gsId: string, token: string) =>
+  groupGet<GroupAssessmentView>(`/group/${gsId}/assessment?token=${encodeURIComponent(token)}`);
+
+export const submitGroupAssessment = (
+  gsId: string,
+  token: string,
+  answers: Record<string, string | string[]>,
+  startedAt?: string,
+) => groupPost<{ score: number | null; passFail: string; completionStatus: string }>(
+  `/group/${gsId}/assessment`,
+  { token, answers, startedAt },
+);
+
+// Feature 4: batched proctoring events (no video/frames).
+export type ProctoringEventType =
+  | "CAMERA_DENIED" | "CAMERA_OFF" | "MULTIPLE_FACES" | "NO_FACE" | "TAB_SWITCH" | "WINDOW_BLUR";
+export const submitProctoringEvents = (
+  gsId: string,
+  token: string,
+  events: Array<{ type: ProctoringEventType; ts: string }>,
+) => groupPost<{ riskScore: number; eventCount: number }>(
+  `/group/${gsId}/proctoring`,
+  { token, events },
+);
+
+export const getGroupReport = (gsId: string) =>
+  groupGet<{ report: GroupReport }>(`/group-sessions/${gsId}/report`);
+
+export const getTrainingGroupReport = (trainingId: string) =>
+  groupGet<{ report: TrainingGroupReport }>(`/training-workspace/${trainingId}/group-report`);
+
+// Feature 3: training-level analytics dashboard.
+export type TrainingAnalyticsTrend = {
+  sessionId: string; sessionDate: string | null; reportStatus: GroupReportStatus;
+  joinedCount: number; attendancePct: number; questionsAsked: number;
+  assessmentPassRate: number; riskScore: number;
+};
+export type TrainingAnalytics = {
+  trainingId: string; trainingName: string;
+  totalSessions: number; completedSessions: number; liveSessions: number;
+  totalInvited: number; totalJoined: number; totalCompleted: number;
+  avgAttendancePct: number; avgSessionDuration: number; avgQuestionsPerSession: number;
+  totalQuestions: number; totalVoiceQuestions: number; totalTextQuestions: number; textQuestionRatio: number;
+  avgAssessmentScore: number | null; assessmentPassRate: number;
+  avgRiskScore: number; totalProctoringEvents: number;
+  sessionTrend: TrainingAnalyticsTrend[];
+};
+
+export const getTrainingAnalytics = (trainingId: string) =>
+  groupGet<{ analytics: TrainingAnalytics }>(`/training/${trainingId}/analytics`);

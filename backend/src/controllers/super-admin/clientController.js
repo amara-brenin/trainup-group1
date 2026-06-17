@@ -15,7 +15,8 @@ const {
   verifyDomainRecord,
   sendSmtpTestEmail,
 } = require("../../helpers/clientDelivery");
-const { CREDIT_COSTS, buildClientCreditSnapshot, applyPlanToClient, addClientCredits, normalizePlan } = require("../../helpers/credits");
+const { CREDIT_COSTS, buildClientCreditSnapshot, applyPlanToClient, applyPlanSnapshot, addClientCredits, normalizePlan } = require("../../helpers/credits");
+const { resolveImageField } = require("../../helpers/imageStorage");
 const { notifyRolesInClient, notifySuperAdmins, notifyUserIds } = require("../../helpers/notifications");
 const { getEditableRoleDefaults, getRoleDefinitions, getRoleDefinitionById, filterPermissionArrayForRole, buildAllowedFromPermissions } = require("../../helpers/permissions");
 const { ok, fail } = require("../../helpers/response");
@@ -37,6 +38,80 @@ const paginate = (records, query) => {
     pagination: Array.from({ length: totalPages }, (_, index) => index + 1),
   };
 };
+
+const buildListFilter = (queryParams) => {
+  const filter = {};
+  const query = String(queryParams.query || "").trim();
+  const status = String(queryParams.status || "all").trim().toLowerCase();
+  const plan = String(queryParams.plan || "all").trim().toUpperCase();
+
+  if (query) {
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    filter.$or = [
+      { name: { $regex: escaped, $options: "i" } },
+      { industry: { $regex: escaped, $options: "i" } },
+      { csm: { $regex: escaped, $options: "i" } },
+      { subdomain: { $regex: escaped, $options: "i" } },
+      { domain: { $regex: escaped, $options: "i" } },
+    ];
+  }
+  if (status !== "all") filter.status = status;
+  if (plan !== "ALL") filter.plan = plan;
+  return filter;
+};
+
+const buildListSort = (queryParams) => {
+  const sortBy = String(queryParams.sortBy || "name").trim();
+  if (sortBy === "industry") return { industry: 1 };
+  if (sortBy === "users") return { activeUsers: -1 };
+  if (sortBy === "trainings") return { trainings: -1 };
+  return { name: 1 };
+};
+
+// logoUrl/darkLogoUrl are excluded here on purpose: both are base64 image
+// blobs and the list table only ever renders one of them (logoUrl falling
+// back to darkLogoUrl — see toClientListRecord's `thumbnailUrl`). Sending
+// both duplicated the heaviest field in this response. The edit screen
+// (ClientDetail.tsx) fetches the full client via GET /clients/:id and still
+// gets both fields there, so editing is unaffected.
+const LIST_PROJECTION = {
+  appId: 1, name: 1, industry: 1, plan: 1, status: 1,
+  monthlyCredits: 1, purchasedCredits: 1, usedCredits: 1, totalCredits: 1,
+  activeUsers: 1, trainings: 1, sessions: 1,
+  domain: 1, domainStatus: 1, subdomain: 1, joined: 1, csm: 1,
+  logo: 1, logoColor: 1, logoBg: 1,
+  firstUserName: 1, enterpriseRequests: 1, enterpriseMonthlyCredits: 1,
+  enterpriseMonthlyPrice: 1, billingCycle: 1, createdAt: 1,
+  thumbnailUrl: { $ifNull: ["$logoUrl", "$darkLogoUrl"] },
+};
+
+const toClientListRecord = (client) => ({
+  id: client.appId,
+  name: client.name,
+  industry: client.industry,
+  plan: normalizePlan(client.plan),
+  status: client.status,
+  monthlyCredits: Number(client.monthlyCredits || 0),
+  purchasedCredits: Math.max(0, Number(client.purchasedCredits || 0)),
+  usedCredits: Math.max(0, Number(client.usedCredits || 0)),
+  totalCredits: Number(client.totalCredits || 0),
+  billingCycle: client.billingCycle || "monthly",
+  activeUsers: client.activeUsers || 0,
+  trainings: client.trainings || 0,
+  sessions: client.sessions || 0,
+  domain: client.domain || "",
+  domainStatus: client.domainStatus || "not_configured",
+  subdomain: client.subdomain || "",
+  joined: client.joined || "",
+  csm: client.csm || "",
+  logo: client.logo || "",
+  logoColor: client.logoColor || "#3e60d5",
+  logoBg: client.logoBg || "#ebf2ff",
+  thumbnailUrl: client.thumbnailUrl || "",
+  firstUserName: client.firstUserName || "",
+  enterpriseRequests: Array.isArray(client.enterpriseRequests) ? client.enterpriseRequests : [],
+  createdAt: client.createdAt || "",
+});
 
 const contains = (value, query) => String(value || "").toLowerCase().includes(String(query || "").trim().toLowerCase());
 const applyClientListControls = (records, queryParams) => {
@@ -228,9 +303,8 @@ const applyClientAdminRolePermissions = async (clientId, nextPermission) => {
   return filteredPermission;
 };
 
-const validateClient = async (values, existingClients, currentId, currentUserId = "") => {
+const validateClient = async (values, currentId, currentUserId = "") => {
   const errors = {};
-  const existingUsers = await User.find({}).lean();
 
   if (!String(values.name || "").trim()) {
     errors.name = "Client name is required.";
@@ -243,14 +317,13 @@ const validateClient = async (values, existingClients, currentId, currentUserId 
   }
   if (!String(values.subdomain || "").trim()) {
     errors.subdomain = "Subdomain is required.";
-  } else if (
-    existingClients.some(
-      (client) =>
-        String(client.subdomain).toLowerCase() === String(values.subdomain).toLowerCase() &&
-        client.appId !== currentId,
-    )
-  ) {
-    errors.subdomain = "Subdomain already exists.";
+  } else {
+    const subdomainFilter = { subdomain: { $regex: `^${String(values.subdomain).trim()}$`, $options: "i" } };
+    if (currentId) subdomainFilter.appId = { $ne: currentId };
+    const duplicateSubdomain = await Client.findOne(subdomainFilter).lean();
+    if (duplicateSubdomain) {
+      errors.subdomain = "Subdomain already exists.";
+    }
   }
 
   if (values.domain && !String(values.domain).includes(".")) {
@@ -263,14 +336,13 @@ const validateClient = async (values, existingClients, currentId, currentUserId 
 
   if (!isValidEmail(values.firstUserEmail)) {
     errors.firstUserEmail = "Use a valid client admin email.";
-  } else if (
-    existingUsers.some(
-      (user) =>
-        String(user.email).toLowerCase() === String(values.firstUserEmail).toLowerCase() &&
-        user.appId !== currentUserId,
-    )
-  ) {
-    errors.firstUserEmail = "Email already exists.";
+  } else {
+    const emailFilter = { email: String(values.firstUserEmail).trim().toLowerCase() };
+    if (currentUserId) emailFilter.appId = { $ne: currentUserId };
+    const duplicateEmail = await User.findOne(emailFilter).lean();
+    if (duplicateEmail) {
+      errors.firstUserEmail = "Email already exists.";
+    }
   }
 
   if (!currentId && (!Array.isArray(values.clientAdminPermission) || values.clientAdminPermission.length === 0)) {
@@ -297,16 +369,34 @@ const validateClient = async (values, existingClients, currentId, currentUserId 
 };
 
 const list = async (req, res) => {
-  const allClients = await Client.find({}).sort({ appId: 1 }).lean();
-  const records = await Promise.all(allClients.map((client) => toClientRecord(client)));
-  const filtered = applyClientListControls(records, req.query);
+  const filter = buildListFilter(req.query);
+  const sort = buildListSort(req.query);
+  const limit = Math.max(1, Number(req.query.limit || 10));
+  const pageNo = Math.max(1, Number(req.query.pageNo || 1));
+  const skip = (pageNo - 1) * limit;
 
-  return ok(res, "Clients loaded.", paginate(filtered, req.query));
+  const [clients, count] = await Promise.all([
+    Client.aggregate([
+      { $match: filter },
+      { $sort: sort },
+      { $skip: skip },
+      { $limit: limit },
+      { $project: LIST_PROJECTION },
+    ]),
+    Client.countDocuments(filter),
+  ]);
+
+  const totalPages = Math.max(1, Math.ceil(count / limit));
+  return ok(res, "Clients loaded.", {
+    count,
+    totalPages,
+    record: clients.map(toClientListRecord),
+    pagination: Array.from({ length: totalPages }, (_, i) => i + 1),
+  });
 };
 
 const create = async (req, res) => {
-  const existingClients = await Client.find({}).lean();
-  const errors = await validateClient(req.body, existingClients, null, "");
+  const errors = await validateClient(req.body, null, "");
 
   if (Object.keys(errors).length) {
     return fail(res, 400, "Please correct the highlighted fields.", errors);
@@ -314,6 +404,13 @@ const create = async (req, res) => {
 
   const clientId = `client-${Date.now()}`;
   const name = String(req.body.name).trim();
+  // Storage migration: base64 logo/dark-logo/favicon input is uploaded to S3
+  // and replaced with the resulting URL; an existing URL passes through unchanged.
+  const [resolvedLogoUrl, resolvedDarkLogoUrl, resolvedFaviconUrl] = await Promise.all([
+    resolveImageField(req.body.logoUrl, "client-logos"),
+    resolveImageField(req.body.darkLogoUrl, "client-dark-logos"),
+    resolveImageField(req.body.faviconUrl, "client-favicons"),
+  ]);
   const client = new Client({
     appId: clientId,
     name,
@@ -356,9 +453,9 @@ const create = async (req, res) => {
     companyPhone: String(req.body.companyPhone || "").trim(),
     companyAddress: String(req.body.companyAddress || "").trim(),
     applicationName: String(req.body.applicationName || name).trim(),
-    logoUrl: String(req.body.logoUrl || "").trim(),
-    darkLogoUrl: String(req.body.darkLogoUrl || "").trim(),
-    faviconUrl: String(req.body.faviconUrl || "").trim(),
+    logoUrl: resolvedLogoUrl,
+    darkLogoUrl: resolvedDarkLogoUrl,
+    faviconUrl: resolvedFaviconUrl,
     allowedOrigins: parseList(req.body.allowedOrigins),
     webhookUrl: String(req.body.webhookUrl || "").trim(),
     lastWebhookTestStatus: "not_tested",
@@ -389,6 +486,7 @@ const create = async (req, res) => {
   });
   applyDomainConfiguration(client, req.body.domain);
   applyPlanToClient(client, req.body.plan, { resetUsage: true, resetPurchasedCredits: true });
+  await applyPlanSnapshot(client, req.body.plan); // Phase C: freeze entitlement from DB plan
   await client.save();
 
   const tenantRoleDefaults = getEditableRoleDefaults();
@@ -515,14 +613,12 @@ const update = async (req, res) => {
     return fail(res, 404, "Client not found.");
   }
 
-  const existingClients = await Client.find({}).lean();
   const errors = await validateClient(
     {
       ...req.body,
       firstUserName: req.body.firstUserName || client.firstUserName,
       firstUserEmail: req.body.firstUserEmail || client.firstUserEmail,
     },
-    existingClients,
     client.appId,
     client.clientAdminUserId,
   );
@@ -542,6 +638,7 @@ const update = async (req, res) => {
         resetPurchasedCredits: false,
         carryAvailableCredits: true,
       });
+      await applyPlanSnapshot(client, nextPlan); // Phase C: re-snapshot on plan change
     }
     client.plan = nextPlan;
   }
@@ -652,9 +749,11 @@ const updateSettings = async (req, res) => {
     client.applicationName = String(values.applicationName || client.name).trim();
     client.primaryColor = String(values.primaryColor || client.primaryColor).trim();
     client.secondaryColor = String(values.secondaryColor || client.secondaryColor).trim();
-    client.logoUrl = String(values.logoUrl || "").trim();
-    client.darkLogoUrl = String(values.darkLogoUrl || "").trim();
-    client.faviconUrl = String(values.faviconUrl || "").trim();
+    // Storage migration: base64 input is uploaded to S3 and replaced with the
+    // resulting URL; an existing URL passes through unchanged.
+    client.logoUrl = await resolveImageField(values.logoUrl, "client-logos");
+    client.darkLogoUrl = await resolveImageField(values.darkLogoUrl, "client-dark-logos");
+    client.faviconUrl = await resolveImageField(values.faviconUrl, "client-favicons");
   } else if (section === "integrations") {
     if (values.webhookUrl && !isValidUrl(values.webhookUrl)) {
       return fail(res, 400, "Please correct the highlighted fields.", {
@@ -759,6 +858,7 @@ const updateSettings = async (req, res) => {
         resetPurchasedCredits: false,
         carryAvailableCredits: nextPlan !== previousPlan && !shouldResetToPlanCredits,
       });
+      await applyPlanSnapshot(client, nextPlan); // Phase C: re-snapshot on billing plan change
     }
 
     if (nextPlan === "ENTERPRISE" && Array.isArray(client.enterpriseRequests)) {

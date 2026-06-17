@@ -1413,6 +1413,212 @@ const handleTrulienceEvent = async (req, res) => {
   }
 };
 
+// ---------------------------------------------------------------------------
+// Public Demo Access — no auth, guest name/email in body, mode="demo"
+// ---------------------------------------------------------------------------
+
+const findTrainingByDemoToken = async (demoToken) => {
+  const token = normalizeValue(demoToken);
+  if (!token) return null;
+  return Training.findOne({
+    "payload.options.allowPublicDemoAccess": true,
+    "payload.options.demoToken": token,
+  }).lean();
+};
+
+const resolveDemoTraining = async (req, res) => {
+  const training = await findTrainingByDemoToken(req.params.demoToken);
+  if (!training) return fail(res, 404, "Demo training not found or demo access is disabled.");
+  if (normalizeValue(training.payload?.status) !== "approved") {
+    return fail(res, 404, "This training is not currently available for demo.");
+  }
+  const brandingPayload = await buildLaunchBrandingPayload(training);
+  return ok(res, "Demo training resolved.", {
+    trainingId: training.appId,
+    title: normalizeValue(training.payload?.title),
+    ...brandingPayload,
+  });
+};
+
+const getDemoTraining = async (req, res) => {
+  const training = await findTrainingByDemoToken(req.params.demoToken);
+  if (!training) return fail(res, 404, "Demo training not found or demo access is disabled.");
+  if (normalizeValue(training.payload?.status) !== "approved") {
+    return fail(res, 404, "This training is not currently available for demo.");
+  }
+  const guestName = normalizeValue(req.query.guestName || req.headers["x-guest-name"]);
+  const guestEmail = normalizeValue(req.query.guestEmail || req.headers["x-guest-email"]);
+  if (!guestName || !guestEmail) {
+    return fail(res, 400, "Guest name and email are required for demo access.");
+  }
+  const demoViewer = { fullname: guestName, email: guestEmail, role: "guest", clientId: training.clientId };
+  const payload = await buildLaunchPayload({ training, viewer: demoViewer, preview: false });
+  payload.sessions = [];
+  payload.learnerSessionHistory = [];
+  return ok(res, "Demo training loaded successfully.", payload);
+};
+
+const buildDemoViewerIdentity = (guestName, guestEmail, sessionId) => ({
+  ssoId: guestEmail || guestName || `Demo:${sessionId.slice(-8)}`,
+  learnerName: guestName,
+  learnerEmail: guestEmail,
+});
+
+const upsertDemoSession = async (req, res) => {
+  const training = await findTrainingByDemoToken(req.params.demoToken);
+  if (!training) return fail(res, 404, "Demo training not found or demo access is disabled.");
+  if (normalizeValue(training.payload?.status) !== "approved") {
+    return fail(res, 404, "This training is not currently available for demo.");
+  }
+
+  const guestName = normalizeValue(req.body.guestName);
+  const guestEmail = normalizeValue(req.body.guestEmail);
+  if (!guestName || !guestEmail) {
+    return fail(res, 400, "Guest name and email are required for demo session.");
+  }
+
+  const action = normalizeValue(req.body.action || "progress").toLowerCase();
+  const slidesViewed = clampProgress(req.body.slidesViewed, req.body.totalSlides);
+  const totalSlides = Math.max(1, Number(req.body.totalSlides || 1));
+  const progressPercent = Math.round((slidesViewed / totalSlides) * 100);
+  const explicitScore = req.body.score;
+  const correctAnswers = Number(req.body.correctAnswers || 0);
+  const totalQuestions = Number(req.body.totalQuestions || 0);
+  const score =
+    explicitScore === null || explicitScore === undefined || explicitScore === ""
+      ? totalQuestions > 0
+        ? Math.round((correctAnswers / Math.max(totalQuestions, 1)) * 100)
+        : null
+      : Number(explicitScore);
+  const viewedSlideIds = Array.from(
+    new Set(
+      (Array.isArray(req.body.viewedSlideIds) ? req.body.viewedSlideIds : [])
+        .map((item) => normalizeValue(item))
+        .filter(Boolean),
+    ),
+  );
+  const requestedSessionId = normalizeValue(req.body.sessionId);
+  const sessionId = requestedSessionId || `demo-session-${crypto.randomUUID()}`;
+  const sessions = Array.isArray(training.payload?.sessions) ? [...training.payload.sessions] : [];
+  const existingIndex = sessions.findIndex((s) => normalizeValue(s.id) === sessionId);
+  const existingSession = existingIndex >= 0 ? sessions[existingIndex] : null;
+
+  const now = formatDateTime();
+  const sessionRecord = {
+    ...(existingSession || {}),
+    id: sessionId,
+    ssoId: guestEmail || guestName,
+    learnerName: guestName,
+    learnerEmail: guestEmail,
+    status: action === "complete" ? "completed" : "in_progress",
+    timeSpent: Number(req.body.timeSpentSeconds ?? req.body.timeSpent ?? existingSession?.timeSpent ?? 0),
+    slidesViewed,
+    totalSlides,
+    viewedSlideIds,
+    score: action === "complete" ? score : (existingSession?.score ?? null),
+    latestScore: score,
+    bestScore: Math.max(
+      typeof score === "number" ? score : -Infinity,
+      typeof existingSession?.bestScore === "number" ? existingSession.bestScore : -Infinity,
+    ) === -Infinity ? null : Math.max(score ?? -Infinity, existingSession?.bestScore ?? -Infinity),
+    startedAt: existingSession?.startedAt || now,
+    completedAt: action === "complete" ? now : (existingSession?.completedAt || null),
+    correctAnswers,
+    totalQuestions,
+    progressPercent,
+    mode: "demo",
+    role: "guest",
+    attemptNo: existingSession?.attemptNo || 1,
+    askHistory: existingSession?.askHistory || [],
+    askTranscripts: existingSession?.askTranscripts || [],
+  };
+
+  if (existingIndex >= 0) {
+    sessions[existingIndex] = sessionRecord;
+  } else {
+    sessions.push(sessionRecord);
+  }
+
+  await Training.updateOne(
+    { appId: training.appId, clientId: training.clientId },
+    { $set: { "payload.sessions": sessions, "payload.lastActivity": "Today" } },
+  );
+
+  return ok(res, `Demo session ${action === "complete" ? "completed" : "updated"} successfully.`, {
+    sessionId,
+    status: sessionRecord.status,
+    progressPercent,
+    score: sessionRecord.score,
+  });
+};
+
+const askDemoQuestion = async (req, res) => {
+  const training = await findTrainingByDemoToken(req.params.demoToken);
+  if (!training) return fail(res, 404, "Demo training not found or demo access is disabled.");
+  if (normalizeValue(training.payload?.status) !== "approved") {
+    return fail(res, 404, "This training is not currently available for demo.");
+  }
+
+  const message = normalizeValue(req.body.message);
+  if (!message) return fail(res, 400, "Question is required.");
+
+  const guestName = normalizeValue(req.body.guestName);
+  const guestEmail = normalizeValue(req.body.guestEmail);
+  if (!guestName || !guestEmail) {
+    return fail(res, 400, "Guest name and email are required.");
+  }
+
+  try {
+    const reply = await createTrainingReply({
+      training,
+      message,
+      history: Array.isArray(req.body.history) ? req.body.history : [],
+    });
+
+    const historyEntry = {
+      question: message,
+      answer: reply,
+      askedAt: formatDateTime(),
+      inputMode: normalizeValue(req.body.inputMode) || "typed",
+      sttProvider: normalizeValue(req.body.sttProvider) || null,
+      language: normalizeValue(req.body.language) || null,
+      slideId: normalizeValue(req.body.slideId) || null,
+    };
+    const requestedSessionId = normalizeValue(req.body.sessionId);
+    const resolvedSessionId = requestedSessionId || `demo-session-${crypto.randomUUID()}`;
+
+    if (requestedSessionId && Array.isArray(training.payload?.sessions)) {
+      const sessions = [...training.payload.sessions];
+      const sessionIndex = sessions.findIndex((s) => normalizeValue(s?.id) === requestedSessionId);
+      if (sessionIndex >= 0) {
+        const mergedAskHistory = dedupeAskHistory([
+          ...(Array.isArray(sessions[sessionIndex]?.askTranscripts) ? sessions[sessionIndex].askTranscripts : []),
+          ...(Array.isArray(sessions[sessionIndex]?.askHistory) ? sessions[sessionIndex].askHistory : []),
+          historyEntry,
+        ]);
+        sessions[sessionIndex] = {
+          ...sessions[sessionIndex],
+          askHistory: mergedAskHistory,
+          askTranscripts: mergedAskHistory,
+        };
+        await Training.updateOne(
+          { appId: training.appId, clientId: training.clientId },
+          { $set: { "payload.sessions": sessions, "payload.lastActivity": "Today" } },
+        );
+      }
+    }
+
+    return ok(res, "Demo question answered successfully.", {
+      reply,
+      model: config.groq.model,
+      sessionId: resolvedSessionId,
+      historyEntry,
+    });
+  } catch (error) {
+    return fail(res, 502, error instanceof Error ? error.message : "Unable to answer the question right now.");
+  }
+};
+
 module.exports = {
   getTraining,
   getTrainingBranding,
@@ -1423,4 +1629,8 @@ module.exports = {
   buildLaunchPayload,
   findTrainingById,
   buildLaunchBrandingPayload,
+  resolveDemoTraining,
+  getDemoTraining,
+  upsertDemoSession,
+  askDemoQuestion,
 };

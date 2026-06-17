@@ -31,8 +31,19 @@ router.post("/launch/trainings/:id/session", launchController.upsertLaunchSessio
 router.post("/launch/trainings/:id/ask", launchController.askQuestion);
 router.post("/trulience", launchController.handleTrulienceEvent);
 
+// Public Demo Access — no auth, guest name/email required.
+router.get("/demo/:demoToken/resolve", resolveLimiter, launchController.resolveDemoTraining);
+router.get("/demo/:demoToken", resolveLimiter, launchController.getDemoTraining);
+router.post("/demo/:demoToken/session", askLimiter, launchController.upsertDemoSession);
+router.post("/demo/:demoToken/ask", askLimiter, launchController.askDemoQuestion);
+
 // Group Training Hall — public surfaces (token-scoped, no admin auth).
 router.get("/group/:joinToken/resolve", resolveLimiter, groupSessionController.resolveJoin);
 router.post("/group/:gsId/ask", askLimiter, groupSessionController.askGroupQuestion);
+// Feature 2: end-of-training assessment (session-token auth, no admin auth).
+router.get("/group/:gsId/assessment", groupSessionController.getGroupAssessment);
+router.post("/group/:gsId/assessment", askLimiter, groupSessionController.submitGroupAssessment);
+// Feature 4: batched proctoring events (session-token auth, no admin auth).
+router.post("/group/:gsId/proctoring", groupSessionController.submitProctoringEvents);
 
 module.exports = router;

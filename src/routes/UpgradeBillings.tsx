@@ -9,6 +9,16 @@ import { PermissionKeys } from "../constant/permissions";
 import AxiosHelper from "../helper/AxiosHelper";
 import { updateAdmin } from "../redux/authSlice";
 
+// Phase D: add-on marketplace quantity options per resource.
+const ADDON_OPTIONS: Record<"training" | "session" | "user", number[]> = {
+  training: [5, 10, 25],
+  session: [50, 100, 250],
+  user: [100, 500, 1000],
+};
+const ADDON_LABEL: Record<"training" | "session" | "user", string> = {
+  training: "Trainings", session: "Sessions", user: "Users",
+};
+
 const planLabels: Record<string, string> = {
   FREE: "Free",
   PRO: "Pro",
@@ -23,9 +33,6 @@ const formatCurrency = (amount?: number | null, currency = "INR") => {
     maximumFractionDigits: 0,
   }).format(value);
 };
-
-const formatNumber = (value: number | null | undefined) =>
-  value === null || value === undefined ? "Unlimited" : value.toLocaleString();
 
 const formatDateLabel = (value?: string | null) => {
   if (!value) {
@@ -66,6 +73,28 @@ const getExpiryDateLabel = (value?: string | null, planCode?: string) => {
     month: "2-digit",
     year: "numeric",
   });
+};
+
+// D2: DB-driven plan row from GET /billing/plans.
+type BillingPlanRow = {
+  code: string; name: string; monthlyPrice: number; yearlyPrice: number; credits: number;
+  trainingLimit: number | null; sessionLimit: number | null; userLimit: number | null; features: string[];
+};
+
+// Phase D: add-on usage + history.
+type ResourceUsage = { limit: number | null; used: number; remaining: number | null; unlimited: boolean; purchased: number };
+type AddonUsage = { training: ResourceUsage; session: ResourceUsage; user: ResourceUsage };
+type AddonHistoryRow = {
+  id: string; type: string; quantity: number; purchaseMethod: string;
+  unitCost: number; totalCost: number; currency: string; status: string; performedBy: string; createdAt: string;
+};
+type AddonPricing = { creditUnit: Record<string, number>; moneyUnit: Record<string, number> };
+
+// Task 3: credit audit log row.
+type CreditAuditRow = {
+  id: string; timestamp: string; actionType: string; entityType: string; entityId: string;
+  creditChange: number; balanceBefore: number; balanceAfter: number; performedBy: string;
+  reason: string; reference: string;
 };
 
 const getTransactionStatus = (type?: string) => {
@@ -247,6 +276,17 @@ const UpgradeBillings = () => {
   const dispatch = useAppDispatch();
   const admin = useAppSelector((state) => state.admin);
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
+  const [creditHistory, setCreditHistory] = useState<CreditAuditRow[]>([]);
+  const [dbPlans, setDbPlans] = useState<BillingPlanRow[]>([]);
+  const [addonUsage, setAddonUsage] = useState<AddonUsage | null>(null);
+  const [addonHistory, setAddonHistory] = useState<AddonHistoryRow[]>([]);
+  const [addonPricing, setAddonPricing] = useState<AddonPricing | null>(null);
+  const [razorpayConfigured, setRazorpayConfigured] = useState(false);
+  const [addonBusy, setAddonBusy] = useState(false);
+  const [creditFilterFrom, setCreditFilterFrom] = useState("");
+  const [creditFilterTo, setCreditFilterTo] = useState("");
+  const [creditFilterAction, setCreditFilterAction] = useState("");
+  const [creditFilterBy, setCreditFilterBy] = useState("");
   const [supportOpen, setSupportOpen] = useState(false);
   const [supportMessage, setSupportMessage] = useState("");
   const [selectedInvoice, setSelectedInvoice] = useState<BillingSummary["recentTransactions"][number] | null>(null);
@@ -274,11 +314,101 @@ const UpgradeBillings = () => {
     }
   }, [dispatch]);
 
+  const fetchCreditHistory = useCallback(async (filters?: { dateFrom?: string; dateTo?: string; actionType?: string; performedBy?: string }) => {
+    const params: Record<string, unknown> = { pageNo: 1, limit: 50 };
+    if (filters?.dateFrom) params.dateFrom = filters.dateFrom;
+    if (filters?.dateTo) params.dateTo = filters.dateTo;
+    if (filters?.actionType) params.actionType = filters.actionType;
+    if (filters?.performedBy) params.performedBy = filters.performedBy;
+    const response = await AxiosHelper.getData<{ record: CreditAuditRow[] }>("/billing/credit-history", params);
+    if (response.data.status) {
+      setCreditHistory(response.data.data.record || []);
+    }
+  }, []);
+
+  const fetchPlans = useCallback(async () => {
+    const response = await AxiosHelper.getData<{ record: BillingPlanRow[] }>("/billing/plans");
+    if (response.data.status) {
+      setDbPlans(response.data.data.record || []);
+    }
+  }, []);
+
+  const fetchAddons = useCallback(async () => {
+    const response = await AxiosHelper.getData<{ record: AddonHistoryRow[]; usage: AddonUsage; pricing: AddonPricing; razorpayConfigured: boolean }>("/billing/addons/history");
+    if (response.data.status) {
+      setAddonHistory(response.data.data.record || []);
+      setAddonUsage(response.data.data.usage || null);
+      setAddonPricing(response.data.data.pricing || null);
+      setRazorpayConfigured(Boolean(response.data.data.razorpayConfigured));
+    }
+  }, []);
+
   useEffect(() => {
     if (canViewBilling) {
       void fetchBillingSummary();
+      void fetchCreditHistory();
+      void fetchPlans();
+      void fetchAddons();
     }
-  }, [canViewBilling, fetchBillingSummary]);
+  }, [canViewBilling, fetchBillingSummary, fetchCreditHistory, fetchPlans, fetchAddons]);
+
+  const loadRazorpayScript = () => new Promise<boolean>((resolve) => {
+    if ((window as unknown as { Razorpay?: unknown }).Razorpay) return resolve(true);
+    const s = document.createElement("script");
+    s.src = "https://checkout.razorpay.com/v1/checkout.js";
+    s.onload = () => resolve(true);
+    s.onerror = () => resolve(false);
+    document.body.appendChild(s);
+  });
+
+  const buyAddonWithCredits = async (type: "training" | "session" | "user", quantity: number) => {
+    setAddonBusy(true);
+    const idempotencyKey = crypto.randomUUID();
+    const res = await AxiosHelper.postData<{ usage: AddonUsage }, { type: string; quantity: number; purchaseMethod: string; idempotencyKey: string }>(
+      "/billing/addons/purchase", { type, quantity, purchaseMethod: "credits", idempotencyKey });
+    setAddonBusy(false);
+    if (res.data.status) {
+      toast.success(`Added +${quantity} ${type} capacity.`);
+      if (res.data.data.usage) setAddonUsage(res.data.data.usage);
+      void fetchAddons();
+      void fetchBillingSummary(); // credits changed
+      void fetchCreditHistory();
+    } else {
+      toast.error(res.data.message);
+    }
+  };
+
+  const buyAddonWithRazorpay = async (type: "training" | "session" | "user", quantity: number) => {
+    setAddonBusy(true);
+    const orderRes = await AxiosHelper.postData<{ razorpayConfigured?: boolean; order?: { id: string; amount: number; currency: string; keyId: string } }, Record<string, unknown>>(
+      "/billing/addons/purchase", { type, quantity, purchaseMethod: "razorpay", action: "create-order" });
+    if (!orderRes.data.status) { setAddonBusy(false); toast.error(orderRes.data.message); return; }
+    if (orderRes.data.data.razorpayConfigured === false || !orderRes.data.data.order) {
+      setAddonBusy(false); toast.info("Razorpay is not configured for this account."); return;
+    }
+    const order = orderRes.data.data.order;
+    const loaded = await loadRazorpayScript();
+    setAddonBusy(false);
+    if (!loaded) { toast.error("Could not load Razorpay checkout."); return; }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rzp = new (window as any).Razorpay({
+      key: order.keyId, amount: order.amount, currency: order.currency, order_id: order.id,
+      name: "Capacity add-on", description: `+${quantity} ${type}`,
+      handler: async (resp: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => {
+        const verify = await AxiosHelper.postData<{ usage: AddonUsage }, Record<string, unknown>>(
+          "/billing/addons/purchase",
+          { type, quantity, purchaseMethod: "razorpay", action: "verify", ...resp });
+        if (verify.data.status) {
+          toast.success(`Added +${quantity} ${type} capacity via Razorpay.`);
+          if (verify.data.data.usage) setAddonUsage(verify.data.data.usage);
+          void fetchAddons();
+        } else {
+          toast.error(verify.data.message);
+        }
+      },
+    });
+    rzp.open();
+  };
 
   useEffect(() => {
     if (!selectedInvoice) {
@@ -475,52 +605,35 @@ const UpgradeBillings = () => {
       ? "Custom"
       : formatCurrency(billingSummary.planPrice, billingSummary.billingCurrency);
 
-  const statCards = [
-    {
-      label: "User Count",
-      value: `${formatNumber(billingSummary.planUsage?.users ?? 0)} / ${formatNumber(billingSummary.planLimits.users)}`,
-      hint: "Company-wide active users including client admin and trainees",
-      icon: "ri-user-3-line",
-      iconTone: "users",
-    },
-    {
-      label: "Effective Dates",
-      value: `${formatDateLabel(derived.startDate.toISOString())} to ${formatDateLabel(derived.endDate.toISOString())}`,
-      hint: billingSummary.freeTrialActive ? "Free trial running" : "Monthly plan",
-      icon: "ri-calendar-line",
-      iconTone: "dates",
-    },
-    {
-      label: "Training Count",
-      value: `${formatNumber(billingSummary.planUsage?.trainings ?? 0)} / ${formatNumber(billingSummary.planLimits.trainings)}`,
-      hint: "Company-wide trainings created by all roles",
-      icon: "ri-book-open-line",
-      iconTone: "training",
-    },
-    {
-      label: "Session Count",
-      value: `${formatNumber(billingSummary.planUsage?.sessions ?? 0)} / ${formatNumber(billingSummary.planLimits.sessions)}`,
-      hint: "Company-wide launch sessions",
-      icon: "ri-play-list-line",
-      iconTone: "sessions",
-    },
-    {
-      label: "Used Credits",
-      value: `${billingSummary.usedCredits.toLocaleString()} / ${billingSummary.totalCredits.toLocaleString()}`,
-      hint: "Shared company wallet usage",
-      icon: "ri-coin-line",
-      iconTone: "used-credits",
-    },
-    {
-      label: "Available Credits",
-      value: billingSummary.availableCredits.toLocaleString(),
-      hint: isExpired ? "Renewal or top-up required" : "Ready for upcoming usage",
-      icon: "ri-wallet-3-line",
-      iconTone: "available-credits",
-    },
-  ];
+  // D2: plan cards are DB-driven (GET /billing/plans). Fall back to the legacy
+  // billingSummary.planCatalog when the DB list is empty.
+  const limitLabel = (n: number | null) => (n === null || n === undefined ? "Unlimited" : Number(n).toLocaleString());
+  const dbPlanCards = dbPlans.map((plan) => ({
+    code: plan.code,
+    monthlyPrice: plan.monthlyPrice,
+    firstMonthPrice: plan.monthlyPrice,
+    title: plan.name || planLabels[plan.code] || plan.code,
+    headlinePrice:
+      plan.code === "ENTERPRISE" && !plan.monthlyPrice
+        ? "Custom"
+        : formatCurrency(plan.monthlyPrice, billingSummary.billingCurrency),
+    recurringPrice:
+      plan.code === "ENTERPRISE" && !plan.monthlyPrice
+        ? "Custom after discussion"
+        : formatCurrency(plan.monthlyPrice, billingSummary.billingCurrency),
+    unitLabel: plan.code === "ENTERPRISE" ? "" : "/month",
+    seatLabel: plan.userLimit === null ? "Custom enterprise allocation" : `${Number(plan.userLimit).toLocaleString()} Users`,
+    features: plan.features?.length
+      ? plan.features
+      : [
+          `${limitLabel(plan.trainingLimit)} trainings`,
+          `Up to ${limitLabel(plan.userLimit)} active users`,
+          `${limitLabel(plan.sessionLimit)} sessions`,
+          `${Number(plan.credits).toLocaleString()} credits / month`,
+        ],
+  }));
 
-  const planCards = billingSummary.planCatalog.map((plan: BillingPlanCatalogItem) => ({
+  const fallbackPlanCards = billingSummary.planCatalog.map((plan: BillingPlanCatalogItem) => ({
     ...plan,
     title: planLabels[plan.code] ?? plan.code,
     headlinePrice:
@@ -559,6 +672,8 @@ const UpgradeBillings = () => {
               "Assigned manually by super admin after discussion",
             ],
   }));
+
+  const planCards = dbPlanCards.length ? dbPlanCards : fallbackPlanCards;
 
   return (
     <>
@@ -668,37 +783,86 @@ const UpgradeBillings = () => {
         {selectedPlanCode ? null : (
           <>
 
-            <div className="admin-billing-tile-grid">
-              {statCards.map((card) => (
-                <div key={card.label} className="card admin-billing-tile">
-                  <div className="card-body">
-                    <div className="admin-billing-tile-head">
-                      <span>{card.label}</span>
-                      <span className={`admin-billing-tile-icon admin-billing-tile-icon-${card.iconTone}`}>
-                        <i className={card.icon} />
-                      </span>
+            {/* Phase E / Task 4: capacity alert banners */}
+            {addonUsage ? (() => {
+              const alerts: string[] = [];
+              for (const [k, label] of [["training", "training"], ["session", "session"], ["user", "user"]] as const) {
+                const u = addonUsage[k];
+                if (!u.unlimited && u.limit && u.remaining !== null && u.remaining / u.limit < 0.2) {
+                  alerts.push(u.remaining <= 0
+                    ? `${label.charAt(0).toUpperCase() + label.slice(1)} capacity is exhausted.`
+                    : `You have only ${u.remaining.toLocaleString()} ${label} slot${u.remaining === 1 ? "" : "s"} remaining.`);
+                }
+              }
+              return alerts.length ? (
+                <div className="mb-3">
+                  {alerts.map((msg) => (
+                    <div key={msg} className="alert alert-warning d-flex align-items-center py-2 mb-2">
+                      <i className="ri-error-warning-line me-2 fs-5" />{msg}
                     </div>
-                    <strong>{card.value}</strong>
-                    <small>{card.hint}</small>
-                  </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              ) : null;
+            })() : null}
 
-            <div className="card admin-billing-progress-card">
+            {/* Phase E / Task 1: Current Subscription */}
+            <div className="card mb-3">
               <div className="card-body">
-                <div className="admin-billing-progress-head">
-                  <div>
-                    <span>Credit Usage Progress</span>
-                    <small>{derived.usedPercent}% of your current credit pool used</small>
+                <h2 className="h4 fw-semibold mb-3">Current Subscription</h2>
+                <div className="row g-2 mb-3">
+                  <div className="col-6 col-md-4 col-lg-2"><div className="small text-body-secondary">Plan</div><div className="fw-semibold">{activePlan}</div></div>
+                  <div className="col-6 col-md-4 col-lg-2"><div className="small text-body-secondary">Start Date</div><div className="fw-semibold">{formatDateLabel(billingSummary.startedOn)}</div></div>
+                  <div className="col-6 col-md-4 col-lg-2"><div className="small text-body-secondary">Expiry Date</div><div className="fw-semibold">{formatDateLabel(billingSummary.expiresOn)}</div></div>
+                  <div className="col-6 col-md-4 col-lg-2"><div className="small text-body-secondary">Monthly Credits</div><div className="fw-semibold">{billingSummary.monthlyCredits.toLocaleString()}</div></div>
+                  <div className="col-6 col-md-4 col-lg-2"><div className="small text-body-secondary">Total Credits</div><div className="fw-semibold">{billingSummary.totalCredits.toLocaleString()}</div></div>
+                  <div className="col-6 col-md-4 col-lg-2"><div className="small text-body-secondary">Available</div><div className="fw-semibold">{billingSummary.availableCredits.toLocaleString()}</div></div>
+                </div>
+                {addonUsage ? (
+                  <div className="row g-3">
+                    {(["training", "session", "user"] as const).map((k) => {
+                      const u = addonUsage[k];
+                      const pct = u.unlimited || !u.limit ? 0 : Math.min(100, Math.round((u.used / u.limit) * 100));
+                      const tone = u.unlimited ? "success" : (u.limit && u.remaining !== null ? (u.remaining / u.limit > 0.5 ? "success" : u.remaining / u.limit > 0.2 ? "warning" : "danger") : "success");
+                      return (
+                        <div key={k} className="col-12 col-md-4">
+                          <div className="border rounded p-3 h-100">
+                            <div className="fw-semibold mb-1">{ADDON_LABEL[k]} Usage</div>
+                            <div className="d-flex justify-content-between small mb-1">
+                              <span>Used <strong>{u.used.toLocaleString()}</strong> / {u.unlimited ? <span className="badge text-bg-info">Unlimited</span> : (u.limit ?? 0).toLocaleString()}</span>
+                              <span>Remaining: <strong>{u.unlimited ? "∞" : (u.remaining ?? 0).toLocaleString()}</strong></span>
+                            </div>
+                            {!u.unlimited ? (
+                              <div className="progress" style={{ height: 6 }}>
+                                <div className={`progress-bar bg-${tone}`} style={{ width: `${pct}%` }} />
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <strong>{derived.usedPercent}%</strong>
-                </div>
-                <div className="admin-billing-progress-rail">
-                  <span style={{ width: `${derived.usedPercent}%` }} />
-                </div>
+                ) : null}
               </div>
             </div>
+
+            {/* Phase E / Task 2: Purchased Capacity (add-ons only) */}
+            {addonUsage && (addonUsage.training.purchased > 0 || addonUsage.session.purchased > 0 || addonUsage.user.purchased > 0) ? (
+              <div className="card mb-3">
+                <div className="card-body">
+                  <h2 className="h5 fw-semibold mb-3">Purchased Capacity (Add-Ons)</h2>
+                  <div className="row g-3">
+                    {(["training", "session", "user"] as const).map((k) => (
+                      <div key={k} className="col-12 col-md-4">
+                        <div className="border rounded p-3 text-center">
+                          <div className="small text-body-secondary mb-1">Additional {ADDON_LABEL[k]}</div>
+                          <div className="fs-4 fw-semibold">{addonUsage[k].purchased > 0 ? `+${addonUsage[k].purchased.toLocaleString()}` : "—"}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : null}
 
             <div className="admin-billing-support card">
               <div className="card-body">
@@ -840,6 +1004,200 @@ const UpgradeBillings = () => {
                             No billing transactions yet.
                           </td>
                         </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* Task 3 + Phase E / Task 6: credit audit trail with filters + export. */}
+            <div className="card admin-billing-transactions-card">
+              <div className="card-body">
+                <div className="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+                  <div>
+                    <h2 className="h4 fw-semibold mb-1">Credit History</h2>
+                    <p className="text-body-secondary mb-0">Every credit change with reason, balance and who performed it.</p>
+                  </div>
+                  <div className="d-flex gap-1">
+                    <button className="btn btn-sm btn-outline-secondary" onClick={() => {
+                      const header = "Date,Change,Balance After,Action,Reason,Reference,By\n";
+                      const rows = creditHistory.map((r) => `${r.timestamp},${r.creditChange},${r.balanceAfter},${r.actionType},"${(r.reason || "").replace(/"/g, '""')}",${r.reference || ""},${r.performedBy || "System"}`).join("\n");
+                      const blob = new Blob([header + rows], { type: "text/csv" });
+                      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "credit-history.csv"; a.click();
+                    }}>CSV</button>
+                    <button className="btn btn-sm btn-outline-secondary" onClick={() => {
+                      const pdf = new jsPDF({ unit: "pt", format: "a4", orientation: "landscape" });
+                      pdf.setFontSize(14); pdf.text("Credit History", 40, 40);
+                      let y = 70;
+                      pdf.setFontSize(8);
+                      pdf.text("Date", 40, y); pdf.text("Change", 150, y); pdf.text("Balance", 220, y); pdf.text("Action", 290, y); pdf.text("Reason", 380, y); pdf.text("By", 620, y);
+                      y += 16;
+                      for (const r of creditHistory) {
+                        if (y > 560) { pdf.addPage(); y = 40; }
+                        pdf.text(formatDateLabel(r.timestamp), 40, y);
+                        pdf.text(String(r.creditChange), 150, y);
+                        pdf.text(String(r.balanceAfter ?? 0), 220, y);
+                        pdf.text(r.actionType || "", 290, y);
+                        pdf.text((r.reason || "").slice(0, 50), 380, y);
+                        pdf.text(r.performedBy || "System", 620, y);
+                        y += 14;
+                      }
+                      pdf.save("credit-history.pdf");
+                    }}>PDF</button>
+                  </div>
+                </div>
+                <div className="row g-2 mb-3">
+                  <div className="col-auto"><input type="date" className="form-control form-control-sm" value={creditFilterFrom} onChange={(e) => setCreditFilterFrom(e.target.value)} placeholder="From" /></div>
+                  <div className="col-auto"><input type="date" className="form-control form-control-sm" value={creditFilterTo} onChange={(e) => setCreditFilterTo(e.target.value)} placeholder="To" /></div>
+                  <div className="col-auto">
+                    <select className="form-select form-select-sm" value={creditFilterAction} onChange={(e) => setCreditFilterAction(e.target.value)}>
+                      <option value="">All Actions</option>
+                      <option value="debit">Debit</option>
+                      <option value="credit_purchase">Credit Purchase</option>
+                      <option value="addon_purchase">Add-On Purchase</option>
+                    </select>
+                  </div>
+                  <div className="col-auto"><input className="form-control form-control-sm" placeholder="Performed by..." value={creditFilterBy} onChange={(e) => setCreditFilterBy(e.target.value)} /></div>
+                  <div className="col-auto">
+                    <button className="btn btn-sm btn-primary" onClick={() => void fetchCreditHistory({ dateFrom: creditFilterFrom, dateTo: creditFilterTo, actionType: creditFilterAction, performedBy: creditFilterBy })}>Filter</button>
+                    <button className="btn btn-sm btn-outline-secondary ms-1" onClick={() => { setCreditFilterFrom(""); setCreditFilterTo(""); setCreditFilterAction(""); setCreditFilterBy(""); void fetchCreditHistory(); }}>Clear</button>
+                  </div>
+                </div>
+                <div className="table-responsive">
+                  <table className="table align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Credit Change</th>
+                        <th>Balance After</th>
+                        <th>Reason</th>
+                        <th>Reference</th>
+                        <th>Performed By</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {creditHistory.length ? (
+                        creditHistory.map((row) => (
+                          <tr key={row.id}>
+                            <td>{formatDateLabel(row.timestamp)}</td>
+                            <td className={row.creditChange < 0 ? "text-danger fw-semibold" : "text-success fw-semibold"}>
+                              {row.creditChange > 0 ? `+${row.creditChange.toLocaleString()}` : row.creditChange.toLocaleString()}
+                            </td>
+                            <td>{Number(row.balanceAfter ?? 0).toLocaleString()}</td>
+                            <td>{row.reason || row.actionType || "—"}</td>
+                            <td>{row.reference || row.entityId || "—"}</td>
+                            <td>{row.performedBy || "System"}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan={6} className="text-center text-body-secondary py-4">
+                            No credit history yet.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* Capacity Usage is now shown in the Current Subscription section above (Task 1). */}
+
+            {/* Phase D: add-on marketplace. */}
+            <div className="card admin-billing-transactions-card">
+              <div className="card-body">
+                <div className="mb-3">
+                  <h2 className="h4 fw-semibold mb-1">Add-On Marketplace</h2>
+                  <p className="text-body-secondary mb-0">Buy extra capacity without changing your plan. Add-ons never expire and stack.</p>
+                </div>
+                <div className="row g-3">
+                  {(["training", "session", "user"] as const).map((type) => (
+                    <div key={type} className="col-12 col-lg-4">
+                      <div className="border rounded p-3 h-100">
+                        <div className="fw-semibold mb-2">{ADDON_LABEL[type]} capacity</div>
+                        {ADDON_OPTIONS[type].map((qty) => (
+                          <div key={qty} className="d-flex align-items-center justify-content-between mb-2">
+                            <span>+{qty.toLocaleString()} {ADDON_LABEL[type]}</span>
+                            <span className="d-flex gap-1">
+                              <button
+                                className="btn btn-sm btn-outline-primary"
+                                disabled={addonBusy || !canManageBilling}
+                                title={addonPricing ? `${(addonPricing.creditUnit[type] * qty).toLocaleString()} credits` : ""}
+                                onClick={() => void buyAddonWithCredits(type, qty)}
+                              >
+                                Credits{addonPricing ? ` (${(addonPricing.creditUnit[type] * qty).toLocaleString()})` : ""}
+                              </button>
+                              <button
+                                className="btn btn-sm btn-outline-secondary"
+                                disabled={addonBusy || !canManageBilling || !razorpayConfigured}
+                                title={razorpayConfigured ? "Pay with Razorpay" : "Razorpay not configured"}
+                                onClick={() => void buyAddonWithRazorpay(type, qty)}
+                              >
+                                Pay
+                              </button>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {!razorpayConfigured ? (
+                  <div className="small text-body-secondary mt-2"><i className="bi bi-info-circle me-1" />Razorpay not configured — payment purchases are disabled. Use credits, or configure Razorpay keys.</div>
+                ) : null}
+              </div>
+            </div>
+
+            {/* Phase D + Phase E / Task 6: add-on purchase history with export. */}
+            <div className="card admin-billing-transactions-card">
+              <div className="card-body">
+                <div className="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
+                  <h2 className="h4 fw-semibold mb-0">Add-On Purchase History</h2>
+                  <div className="d-flex gap-1">
+                    <button className="btn btn-sm btn-outline-secondary" onClick={() => {
+                      const header = "Date,Resource,Quantity,Method,Cost,Currency,Status,By\n";
+                      const rows = addonHistory.map((r) => `${r.createdAt},${r.type},${r.quantity},${r.purchaseMethod},${r.totalCost},${r.currency},${r.status},${r.performedBy || ""}`).join("\n");
+                      const blob = new Blob([header + rows], { type: "text/csv" });
+                      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "addon-history.csv"; a.click();
+                    }}>CSV</button>
+                    <button className="btn btn-sm btn-outline-secondary" onClick={() => {
+                      const pdf = new jsPDF({ unit: "pt", format: "a4", orientation: "landscape" });
+                      pdf.setFontSize(14); pdf.text("Add-On Purchase History", 40, 40);
+                      let y = 70; pdf.setFontSize(8);
+                      pdf.text("Date", 40, y); pdf.text("Resource", 150, y); pdf.text("Qty", 230, y); pdf.text("Method", 280, y); pdf.text("Cost", 370, y); pdf.text("Status", 450, y); pdf.text("By", 530, y);
+                      y += 16;
+                      for (const r of addonHistory) {
+                        if (y > 560) { pdf.addPage(); y = 40; }
+                        pdf.text(formatDateLabel(r.createdAt), 40, y); pdf.text(r.type, 150, y); pdf.text(`+${r.quantity}`, 230, y);
+                        pdf.text(r.purchaseMethod, 280, y); pdf.text(`${r.totalCost} ${r.currency}`, 370, y); pdf.text(r.status, 450, y); pdf.text(r.performedBy || "", 530, y);
+                        y += 14;
+                      }
+                      pdf.save("addon-history.pdf");
+                    }}>PDF</button>
+                  </div>
+                </div>
+                <div className="table-responsive">
+                  <table className="table align-middle mb-0">
+                    <thead>
+                      <tr><th>Date</th><th>Resource</th><th>Quantity</th><th>Method</th><th>Cost</th><th>Status</th><th>By</th></tr>
+                    </thead>
+                    <tbody>
+                      {addonHistory.length ? (
+                        addonHistory.map((row) => (
+                          <tr key={row.id}>
+                            <td>{formatDateLabel(row.createdAt)}</td>
+                            <td className="text-capitalize">{row.type}</td>
+                            <td>+{row.quantity.toLocaleString()}</td>
+                            <td className="text-capitalize">{row.purchaseMethod}</td>
+                            <td>{row.totalCost.toLocaleString()} {row.currency === "credits" ? "credits" : row.currency}</td>
+                            <td><span className="badge text-bg-success text-capitalize">{row.status}</span></td>
+                            <td>{row.performedBy || "—"}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr><td colSpan={7} className="text-center text-body-secondary py-4">No add-on purchases yet.</td></tr>
                       )}
                     </tbody>
                   </table>

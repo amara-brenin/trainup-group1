@@ -5,7 +5,25 @@ const Training = require("../models/Training");
 const { hashPassword } = require("../helpers/auth");
 const { issuePasswordEmail } = require("../services/authService");
 const { ok, fail } = require("../helpers/response");
-const { CREDIT_COSTS, assertUsageWithinPlan, consumeClientCredits } = require("../helpers/credits");
+const {
+  CREDIT_COSTS, consumeClientCredits,
+  ensureClientEntitlement, assertLifetimeQuota,
+} = require("../helpers/credits");
+
+// Task 2 (user lifetime): one-time backfill + lifetime check + permanent
+// increment. Returns an error string if the lifetime user quota would be
+// exceeded, else null. `currentActiveUsers` seeds the backfill.
+const enforceUserLifetime = async (client, clientId, currentActiveUsers, addCount) => {
+  if (!client.quotaInitialized) {
+    const publishedCount = await Training.countDocuments({ clientId, "payload.status": "approved" });
+    await ensureClientEntitlement(client, {
+      training: publishedCount,
+      session: Number(client.sessions || 0),
+      user: Number(currentActiveUsers || 0),
+    });
+  }
+  return assertLifetimeQuota(client, "user", addCount);
+};
 const { notifyUserIds } = require("../helpers/notifications");
 const { isValidEmail } = require("../helpers/validation");
 const {
@@ -218,29 +236,96 @@ const validateTrainee = (values, existingUsers, currentId) => {
   return errors;
 };
 
+const buildUserDbFilter = (clientId, queryParams, baseRoleFilter) => {
+  const filter = { clientId, ...baseRoleFilter };
+  const query = String(queryParams.query || "").trim();
+  const status = String(queryParams.status || "all").trim().toLowerCase();
+  const role = String(queryParams.role || "all").trim();
+
+  if (query) {
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    filter.$or = [
+      { name: { $regex: escaped, $options: "i" } },
+      { email: { $regex: escaped, $options: "i" } },
+    ];
+  }
+  if (status !== "all") filter.status = status;
+  if (role !== "all" && !baseRoleFilter.role) filter.role = role;
+  return filter;
+};
+
+const buildUserDbSort = (sortBy) => {
+  if (sortBy === "role") return { roleName: 1, name: 1 };
+  if (sortBy === "status") return { status: 1, name: 1 };
+  if (sortBy === "activity") return { lastActive: -1 };
+  return { name: 1 };
+};
+
 const list = async (req, res) => {
   const clientId = getTenantClientId(req.user);
-  const roleDefinitions = await getStoredRoleDefinitions(clientId);
-  const client = await Client.findOne({ appId: clientId }).lean();
-  const allUsers = (await User.find({ clientId, role: { $nin: ["super_admin", "trainee"] } }).sort({ appId: 1 }).lean()).map((user) =>
+  const limit = Math.max(1, Number(req.query.limit || 10));
+  const pageNo = Math.max(1, Number(req.query.pageNo || 1));
+  const skip = (pageNo - 1) * limit;
+  const sortBy = String(req.query.sortBy || "name").trim();
+
+  const filter = buildUserDbFilter(clientId, req.query, { role: { $nin: ["super_admin", "trainee"] } });
+  const sort = buildUserDbSort(sortBy);
+
+  const [roleDefinitions, client, users, count] = await Promise.all([
+    getStoredRoleDefinitions(clientId),
+    Client.findOne({ appId: clientId }, { clientAdminUserId: 1 }).lean(),
+    // sanitizeUserRecord never reads `image` — exclude it so this list read
+    // doesn't drag every user's base64 avatar over the wire just to discard it.
+    User.find(filter, { image: 0 }).sort(sort).skip(skip).limit(limit).lean(),
+    User.countDocuments(filter),
+  ]);
+
+  const record = users.map((user) =>
     sanitizeUserRecord(user, roleDefinitions, { primaryAdminUserId: client?.clientAdminUserId }),
   );
-  const filtered = applyUserListControls(allUsers, req.query);
-  return ok(res, "Users loaded.", paginate(filtered, req.query));
+  const totalPages = Math.max(1, Math.ceil(count / limit));
+  return ok(res, "Users loaded.", {
+    count,
+    totalPages,
+    record,
+    pagination: Array.from({ length: totalPages }, (_, i) => i + 1),
+  });
 };
 
 const listTrainees = async (req, res) => {
   const clientId = getTenantClientId(req.user);
-  const roleDefinitions = await getStoredRoleDefinitions(clientId);
-  const traineeRecords = await User.find({ clientId, role: "trainee" }).sort({ appId: 1 }).lean();
-  const trainings = await Training.find({ clientId }, { "payload.sessions": 1 }).lean();
-  const assignedTrainingCounts = buildAssignedTrainingCounts(traineeRecords, trainings);
-  const allUsers = traineeRecords.map((user) => ({
+  const limit = Math.max(1, Number(req.query.limit || 10));
+  const pageNo = Math.max(1, Number(req.query.pageNo || 1));
+  const skip = (pageNo - 1) * limit;
+  const sortBy = String(req.query.sortBy || "name").trim();
+
+  const filter = buildUserDbFilter(clientId, req.query, { role: "trainee" });
+  const sort = buildUserDbSort(sortBy);
+
+  const [roleDefinitions, trainees, count] = await Promise.all([
+    getStoredRoleDefinitions(clientId),
+    User.find(filter, { image: 0 }).sort(sort).skip(skip).limit(limit).lean(),
+    User.countDocuments(filter),
+  ]);
+
+  // Build training counts only for the paginated trainees (not all)
+  let assignedTrainingCounts = new Map();
+  if (trainees.length) {
+    const trainings = await Training.find({ clientId }, { "payload.sessions": 1 }).lean();
+    assignedTrainingCounts = buildAssignedTrainingCounts(trainees, trainings);
+  }
+
+  const record = trainees.map((user) => ({
     ...sanitizeUserRecord(user, roleDefinitions),
     trainings: assignedTrainingCounts.get(user.appId) || 0,
   }));
-  const filtered = applyUserListControls(allUsers, req.query, { skipRoleFilter: true });
-  return ok(res, "Trainees loaded.", paginate(filtered, req.query));
+  const totalPages = Math.max(1, Math.ceil(count / limit));
+  return ok(res, "Trainees loaded.", {
+    count,
+    totalPages,
+    record,
+    pagination: Array.from({ length: totalPages }, (_, i) => i + 1),
+  });
 };
 
 const getTraineeSessions = async (req, res) => {
@@ -398,15 +483,12 @@ const create = async (req, res) => {
     return fail(res, 403, "You can only assign permissions available to your account.", grantErrors);
   }
 
-  const nextActiveUserCount = (await User.countDocuments({ clientId, role: { $ne: "super_admin" }, status: "active" })) + (req.body.status === "inactive" ? 0 : 1);
-  const usageError = assertUsageWithinPlan({
-    client,
-    resource: "users",
-    nextCount: nextActiveUserCount,
-  });
-
-  if (usageError) {
-    return fail(res, 400, usageError);
+  const currentActiveUsers = await User.countDocuments({ clientId, role: { $ne: "super_admin" }, status: "active" });
+  // D1: user limit is now SNAPSHOT-based only (never PLAN_CONFIGS). Lifetime gate
+  // reads client.userBaseLimit + userPurchasedLimit − userUsedLifetime.
+  const lifetimeError = await enforceUserLifetime(client, clientId, currentActiveUsers, 1);
+  if (lifetimeError) {
+    return fail(res, 400, lifetimeError);
   }
 
   const creditResult = await consumeClientCredits({
@@ -418,6 +500,10 @@ const create = async (req, res) => {
   if (!creditResult.ok) {
     return fail(res, 400, creditResult.message);
   }
+
+  // Permanent lifetime consume (never decremented on deactivate/delete).
+  client.userUsedLifetime = Number(client.userUsedLifetime || 0) + 1;
+  await client.save();
 
   const roleAccess = buildAccessFromPayload(req.body, roleDefinitions, requester);
   const appId = `user-${Date.now()}`;
@@ -586,15 +672,11 @@ const createTrainee = async (req, res) => {
     return fail(res, 404, "Client not found.");
   }
 
-  const nextActiveUserCount = existingUsers.filter((user) => user.role !== "super_admin" && user.status === "active").length + (req.body.status === "inactive" ? 0 : 1);
-  const usageError = assertUsageWithinPlan({
-    client,
-    resource: "users",
-    nextCount: nextActiveUserCount,
-  });
-
-  if (usageError) {
-    return fail(res, 400, usageError);
+  const currentActiveUsers = existingUsers.filter((user) => user.role !== "super_admin" && user.status === "active").length;
+  // D1: snapshot-based user limit (no PLAN_CONFIGS).
+  const lifetimeError = await enforceUserLifetime(client, clientId, currentActiveUsers, 1);
+  if (lifetimeError) {
+    return fail(res, 400, lifetimeError);
   }
 
   const creditResult = await consumeClientCredits({
@@ -606,6 +688,9 @@ const createTrainee = async (req, res) => {
   if (!creditResult.ok) {
     return fail(res, 400, creditResult.message);
   }
+
+  client.userUsedLifetime = Number(client.userUsedLifetime || 0) + 1;
+  await client.save();
 
   const roleAccess = resolveUserAccess({ role: "trainee", permission: [], allowed: [], useRoleDefaults: true }, roleDefinitions);
   const appId = `user-${Date.now()}`;
@@ -751,16 +836,11 @@ const importTrainees = async (req, res) => {
     return fail(res, 404, "Client not found.");
   }
 
-  const newActiveUsers = docs.filter((user) => user.status !== "inactive").length;
   const currentActiveUsers = existingUsers.filter((user) => user.role !== "super_admin" && user.status === "active").length;
-  const usageError = assertUsageWithinPlan({
-    client,
-    resource: "users",
-    nextCount: currentActiveUsers + newActiveUsers,
-  });
-
-  if (usageError) {
-    return fail(res, 400, usageError);
+  // D1: snapshot-based user limit for the whole import batch (one slot per created user).
+  const lifetimeError = await enforceUserLifetime(client, clientId, currentActiveUsers, docs.length);
+  if (lifetimeError) {
+    return fail(res, 400, lifetimeError);
   }
 
   const creditResult = await consumeClientCredits({
@@ -772,6 +852,9 @@ const importTrainees = async (req, res) => {
   if (!creditResult.ok) {
     return fail(res, 400, creditResult.message);
   }
+
+  client.userUsedLifetime = Number(client.userUsedLifetime || 0) + docs.length;
+  await client.save();
 
   await User.insertMany(docs);
   await syncClientMetrics(clientId);

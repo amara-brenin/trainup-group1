@@ -645,7 +645,7 @@ const Clients = () => {
                         <td>
                           <div className="d-flex align-items-center gap-3">
                             <div
-                              className={`client-logo-mark d-inline-flex align-items-center justify-content-center rounded-3 fw-semibold${client.logoUrl || client.darkLogoUrl ? " has-image" : ""}`}
+                              className={`client-logo-mark d-inline-flex align-items-center justify-content-center rounded-3 fw-semibold${client.thumbnailUrl || client.logoUrl || client.darkLogoUrl ? " has-image" : ""}`}
                               style={{
                                 width: 42,
                                 height: 42,
@@ -653,8 +653,8 @@ const Clients = () => {
                                 color: client.logoColor,
                               }}
                             >
-                              {client.logoUrl || client.darkLogoUrl ? (
-                                <img src={client.logoUrl || client.darkLogoUrl} alt={`${client.name} logo`} />
+                              {client.thumbnailUrl || client.logoUrl || client.darkLogoUrl ? (
+                                <img src={client.thumbnailUrl || client.logoUrl || client.darkLogoUrl} alt={`${client.name} logo`} />
                               ) : (
                                 client.logo
                               )}
