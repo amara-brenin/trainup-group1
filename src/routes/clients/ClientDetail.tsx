@@ -814,6 +814,82 @@ const ClientDetail = () => {
                 </p>
               </div>
               <div className="card-body">
+                {client.billing ? (
+                  <div className="mb-4">
+                    <h3 className="h6 fw-semibold mb-2">
+                      Subscription overview <span className="small text-body-secondary fw-normal">(client&apos;s live billing view)</span>
+                    </h3>
+                    <div className="row g-2 mb-3">
+                      <div className="col-6 col-md-3">
+                        <div className="border rounded p-2 h-100">
+                          <div className="small text-body-secondary">Current plan</div>
+                          <div className="fw-semibold">
+                            {planLabels[client.billing.currentPlan] ?? client.billing.currentPlan}
+                            {client.billing.planExpired ? (
+                              <span className="badge text-bg-danger ms-2">Expired</span>
+                            ) : (
+                              <span className="badge text-bg-success ms-2">Active</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="col-6 col-md-3">
+                        <div className="border rounded p-2 h-100">
+                          <div className="small text-body-secondary">Purchase / start date</div>
+                          <div className="fw-semibold">{client.billing.startedOn ? new Date(client.billing.startedOn).toLocaleDateString() : "—"}</div>
+                        </div>
+                      </div>
+                      <div className="col-6 col-md-3">
+                        <div className="border rounded p-2 h-100">
+                          <div className="small text-body-secondary">Expiry date</div>
+                          <div className={`fw-semibold ${client.billing.planExpired ? "text-danger" : ""}`}>
+                            {client.billing.expiresOn ? new Date(client.billing.expiresOn).toLocaleDateString() : "—"}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="col-6 col-md-3">
+                        <div className="border rounded p-2 h-100">
+                          <div className="small text-body-secondary">Available / total credits</div>
+                          <div className={`fw-semibold ${client.billing.planExpired ? "text-danger" : ""}`}>
+                            {Number(client.billing.availableCredits ?? 0).toLocaleString()} / {Number(client.billing.totalCredits ?? 0).toLocaleString()}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="small fw-semibold text-body-secondary mb-1">Purchase history</div>
+                    {client.billing.recentTransactions?.length ? (
+                      <div className="table-responsive">
+                        <table className="table table-sm align-middle mb-0">
+                          <thead>
+                            <tr>
+                              <th>Date</th>
+                              <th>Type</th>
+                              <th>Plan</th>
+                              <th className="text-end">Credits</th>
+                              <th className="text-end">Amount</th>
+                              <th>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {client.billing.recentTransactions.map((t, i) => (
+                              <tr key={t.id ?? t.invoiceId ?? i}>
+                                <td>{t.createdAt ? new Date(t.createdAt).toLocaleDateString() : "—"}</td>
+                                <td className="text-capitalize">{(t.type ?? "").replace(/_/g, " ") || "—"}</td>
+                                <td>{t.planCode ?? "—"}</td>
+                                <td className="text-end">{t.credits != null ? Number(t.credits).toLocaleString() : "—"}</td>
+                                <td className="text-end">{t.amount != null ? `${client.billing?.billingCurrency ?? "INR"} ${Number(t.amount).toLocaleString()}` : "—"}</td>
+                                <td><span className="badge text-bg-light border text-capitalize">{t.status ?? "—"}</span></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="small text-body-secondary mb-0">No purchase history yet.</p>
+                    )}
+                    <hr className="my-4" />
+                  </div>
+                ) : null}
                 <Formik
                   initialValues={{
                     plan: client.plan,

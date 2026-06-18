@@ -1123,4 +1123,5 @@ module.exports = {
   requestEnterprisePlan,
   testSmtp,
   verifyDomain,
+  buildBillingSummaryResponse,
 };

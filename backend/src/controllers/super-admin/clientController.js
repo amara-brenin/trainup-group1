@@ -77,6 +77,9 @@ const buildListSort = (queryParams) => {
 const LIST_PROJECTION = {
   appId: 1, name: 1, industry: 1, plan: 1, status: 1,
   monthlyCredits: 1, purchasedCredits: 1, usedCredits: 1, totalCredits: 1,
+  // planExpiryDate is required so the list's expiry badge reflects the stored
+  // (renewed) expiry instead of falling back to the createdAt+1mo computation.
+  planExpiryDate: 1, subscribedPlan: 1, entitlementSnapshotAt: 1,
   activeUsers: 1, trainings: 1, sessions: 1,
   domain: 1, domainStatus: 1, subdomain: 1, joined: 1, csm: 1,
   logo: 1, logoColor: 1, logoBg: 1,
@@ -185,8 +188,15 @@ const getClientAdminRoleDefinition = async (clientId) => getRoleDefinitionById("
 const toClientRecord = async (client) => {
   const adminRole = await getClientAdminRoleDefinition(client.appId);
   const creditSnapshot = buildClientCreditSnapshot(client);
+  // Embed the exact billing view the client sees in their Upgrade & Billing
+  // page (expiry-aware credits, start/expiry dates, plan usage, purchase
+  // history) so the super-admin detail page renders identical dynamic data.
+  // Lazy require avoids a load-time circular dependency with commonController.
+  const { buildBillingSummaryResponse } = require("../commonController");
+  const billing = buildBillingSummaryResponse(client);
 
   return {
+    billing,
     id: client.appId,
     name: client.name,
     industry: client.industry,

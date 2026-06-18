@@ -127,6 +127,9 @@ export interface ClientRecord {
   totalCredits?: number;
   planExpired?: boolean;
   expiresOn?: string | null;
+  // Mirror of the client's own Upgrade & Billing view (expiry-aware credits,
+  // start/expiry dates, plan usage, purchase history) for the super-admin detail page.
+  billing?: BillingSummary;
   billingCycle?: "monthly";
   trainingCreditCost?: number;
   userCreditCost?: number;
