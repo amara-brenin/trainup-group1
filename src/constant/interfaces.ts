@@ -125,6 +125,8 @@ export interface ClientRecord {
   purchasedCredits?: number;
   usedCredits?: number;
   totalCredits?: number;
+  planExpired?: boolean;
+  expiresOn?: string | null;
   billingCycle?: "monthly";
   trainingCreditCost?: number;
   userCreditCost?: number;

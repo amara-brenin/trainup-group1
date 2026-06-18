@@ -670,8 +670,9 @@ const Clients = () => {
                         <td>{client.industry}</td>
                         <td className="text-center">
                           <span className={`badge ${formatPlanBadge[client.plan] ?? "text-bg-light border"}`}>{client.plan}</span>
+                          {client.planExpired ? <span className="badge text-bg-danger ms-1">Expired</span> : null}
                           <div className="small text-body-secondary mt-1">
-                            {Math.max(Number(client.totalCredits ?? 0) - Number(client.usedCredits ?? 0), 0)} credits left
+                            {client.planExpired ? 0 : Math.max(Number(client.totalCredits ?? 0) - Number(client.usedCredits ?? 0), 0)} credits left
                           </div>
                           {client.enterpriseRequests?.some((item) => item.status === "pending") ? (
                             <div className="small text-primary mt-1">

@@ -58,13 +58,17 @@ const ClientDetail = () => {
     }
 
     return [
-      { label: "Plan", value: planLabels[client.plan] ?? client.plan, icon: "bi bi-stars" },
+      {
+        label: "Plan",
+        value: client.planExpired ? `${planLabels[client.plan] ?? client.plan} (Expired)` : planLabels[client.plan] ?? client.plan,
+        icon: "bi bi-stars",
+      },
       { label: "Active users", value: client.activeUsers, icon: "bi bi-people" },
       { label: "Trainings", value: client.trainings, icon: "bi bi-journal-richtext" },
       { label: "Sessions", value: client.sessions, icon: "bi bi-play-circle" },
       {
         label: "Credits left",
-        value: Math.max(Number(client.totalCredits ?? 0) - Number(client.usedCredits ?? 0), 0),
+        value: client.planExpired ? 0 : Math.max(Number(client.totalCredits ?? 0) - Number(client.usedCredits ?? 0), 0),
         icon: "bi bi-coin",
       },
       { label: "SSO", value: client.ssoStatus, icon: "bi bi-shield-check" },
@@ -850,12 +854,23 @@ const ClientDetail = () => {
                     <div className="admin-billing-summary-grid">
                       <div className="admin-billing-summary-card">
                         <span>Current plan</span>
-                        <strong>{planLabels[client.plan] ?? client.plan}</strong>
-                        <small>Monthly billing</small>
+                        <strong>
+                          {planLabels[client.plan] ?? client.plan}
+                          {client.planExpired ? <span className="badge text-bg-danger ms-2">Expired</span> : null}
+                        </strong>
+                        <small>
+                          {client.planExpired
+                            ? "Subscription expired — renew to restore credits"
+                            : client.expiresOn
+                              ? `Renews ${new Date(client.expiresOn).toLocaleDateString()}`
+                              : "Monthly billing"}
+                        </small>
                       </div>
                       <div className="admin-billing-summary-card">
                         <span>Available credits</span>
-                        <strong>{Math.max(Number(client.totalCredits ?? 0) - Number(client.usedCredits ?? 0), 0)}</strong>
+                        <strong className={client.planExpired ? "text-danger" : undefined}>
+                          {client.planExpired ? 0 : Math.max(Number(client.totalCredits ?? 0) - Number(client.usedCredits ?? 0), 0)}
+                        </strong>
                         <small>Ready for training usage</small>
                       </div>
                       <div className="admin-billing-summary-card">

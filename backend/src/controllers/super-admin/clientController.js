@@ -15,7 +15,7 @@ const {
   verifyDomainRecord,
   sendSmtpTestEmail,
 } = require("../../helpers/clientDelivery");
-const { CREDIT_COSTS, buildClientCreditSnapshot, applyPlanToClient, applyPlanSnapshot, addClientCredits, normalizePlan } = require("../../helpers/credits");
+const { CREDIT_COSTS, buildClientCreditSnapshot, applyPlanToClient, applyPlanSnapshot, addClientCredits, normalizePlan, isSubscriptionExpired, getSubscriptionExpiry } = require("../../helpers/credits");
 const { resolveImageField } = require("../../helpers/imageStorage");
 const { notifyRolesInClient, notifySuperAdmins, notifyUserIds } = require("../../helpers/notifications");
 const { getEditableRoleDefaults, getRoleDefinitions, getRoleDefinitionById, filterPermissionArrayForRole, buildAllowedFromPermissions } = require("../../helpers/permissions");
@@ -95,6 +95,8 @@ const toClientListRecord = (client) => ({
   purchasedCredits: Math.max(0, Number(client.purchasedCredits || 0)),
   usedCredits: Math.max(0, Number(client.usedCredits || 0)),
   totalCredits: Number(client.totalCredits || 0),
+  planExpired: Boolean(isSubscriptionExpired(client)),
+  expiresOn: (() => { const d = getSubscriptionExpiry(client); return d ? d.toISOString() : null; })(),
   billingCycle: client.billingCycle || "monthly",
   activeUsers: client.activeUsers || 0,
   trainings: client.trainings || 0,
