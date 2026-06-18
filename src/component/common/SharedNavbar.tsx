@@ -71,9 +71,12 @@ const SharedNavbar = ({ leftContent, usedCredits, totalCredits, planExpired = fa
     }
   };
 
-  // Issue 1: an expired plan shows ZERO effective credits in the topbar meter.
+  // Issue 1: an expired plan shows ZERO effective credits in the topbar meter —
+  // both the available AND total collapse to 0 (the granted credits no longer
+  // apply; fresh credits appear only after a new plan is purchased).
+  const effectiveTotal = planExpired ? 0 : totalCredits;
   const effectiveAvailable = planExpired ? 0 : Math.max(totalCredits - usedCredits, 0);
-  const creditPercent = planExpired ? 0 : totalCredits > 0 ? Math.min(100, Math.round((effectiveAvailable / totalCredits) * 100)) : 0;
+  const creditPercent = planExpired ? 0 : effectiveTotal > 0 ? Math.min(100, Math.round((effectiveAvailable / effectiveTotal) * 100)) : 0;
 
   return (
     <div className="navbar-custom">
@@ -108,14 +111,14 @@ const SharedNavbar = ({ leftContent, usedCredits, totalCredits, planExpired = fa
 
           {showCredits ? (
             <li className="d-none d-md-inline-block">
-              <div className="app-credit-meter" aria-label={`Credits available ${effectiveAvailable} of ${totalCredits}`}>
+              <div className="app-credit-meter" aria-label={`Credits available ${effectiveAvailable} of ${effectiveTotal}`}>
                 <div className="app-credit-icon">
                   <i className="ri-wallet-3-line" />
                 </div>
                 <div className="app-credit-copy">
                   <span>{planExpired ? "Credits (Expired)" : "Credits"}</span>
                   <strong className={planExpired ? "text-danger" : undefined}>
-                    {effectiveAvailable.toLocaleString()} / {totalCredits.toLocaleString()}
+                    {effectiveAvailable.toLocaleString()} / {effectiveTotal.toLocaleString()}
                   </strong>
                   <div className="app-credit-track">
                     <span style={{ width: `${creditPercent}%` }} />

@@ -75,9 +75,16 @@ const Sidebar = () => {
         </ul>
 
         {!isSuperAdmin && admin.planExpired ? (
-          <div className="app-sidebar-upgrade px-3 mt-3">
-            <div className="alert alert-danger p-2 mb-2 small">
-              <strong className="d-block">Plan Expired</strong>
+          <div className="app-sidebar-upgrade px-3 mt-3 mb-4">
+            <div
+              className="rounded p-2 mb-2 small"
+              style={{
+                background: "rgba(244, 63, 94, 0.12)",
+                border: "1px solid rgba(244, 63, 94, 0.35)",
+                color: "rgba(255, 255, 255, 0.72)",
+              }}
+            >
+              <strong className="d-block" style={{ color: "#ff8a9b" }}>Plan Expired</strong>
               Upgrade your plan to continue.
             </div>
             <Link

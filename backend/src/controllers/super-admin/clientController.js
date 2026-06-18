@@ -858,7 +858,11 @@ const updateSettings = async (req, res) => {
         resetPurchasedCredits: false,
         carryAvailableCredits: nextPlan !== previousPlan && !shouldResetToPlanCredits,
       });
-      await applyPlanSnapshot(client, nextPlan); // Phase C: re-snapshot on billing plan change
+      // A same-plan "reset monthly credits" is a renewal/new billing cycle →
+      // reset lifetime counters (full quota again). A plan CHANGE (upgrade/
+      // downgrade) preserves usage so a downgrade can't grant new creates.
+      const isSamePlanRenewal = shouldResetToPlanCredits && nextPlan === previousPlan;
+      await applyPlanSnapshot(client, nextPlan, { resetLifetime: isSamePlanRenewal });
     }
 
     if (nextPlan === "ENTERPRISE" && Array.isArray(client.enterpriseRequests)) {
