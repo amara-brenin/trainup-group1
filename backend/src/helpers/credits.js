@@ -145,6 +145,13 @@ const applyPlanSnapshot = async (client, planCode, { resetLifetime = false } = {
     client.trainingUsedLifetime = 0;
     client.sessionUsedLifetime = 0;
     client.userUsedLifetime = 0;
+    // A fresh plan purchase grants exactly the plan's credit allocation: any
+    // leftover purchased/credit-pack balance from the previous (possibly
+    // expired) cycle is NOT carried into the new plan as an add-on, and the
+    // consumed balance resets so the full allocation is available.
+    client.purchasedCredits = 0;
+    client.usedCredits = 0;
+    client.totalCredits = cfg.monthlyCredits;
   }
   client.quotaInitialized = true; // snapshot is now the authoritative base
   return cfg;
