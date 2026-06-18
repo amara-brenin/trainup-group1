@@ -15,6 +15,7 @@ export const Navbar = () => {
     <SharedNavbar
       usedCredits={admin.usedCredits}
       totalCredits={admin.totalCredits}
+      planExpired={admin.planExpired}
       showCredits={!isSuperAdminRole(admin.role)}
       userSlot={<UserBox />}
       leftContent={

@@ -73,6 +73,22 @@ const Sidebar = () => {
             );
           })}
         </ul>
+
+        {!isSuperAdmin && admin.planExpired ? (
+          <div className="app-sidebar-upgrade px-3 mt-3">
+            <div className="alert alert-danger p-2 mb-2 small">
+              <strong className="d-block">Plan Expired</strong>
+              Upgrade your plan to continue.
+            </div>
+            <Link
+              to={getScopedAppPath("/upgrade-billings", admin.role)}
+              className="btn btn-primary btn-sm w-100 d-inline-flex align-items-center justify-content-center gap-1"
+            >
+              <i className="ri-arrow-up-circle-line" />
+              Upgrade your plan
+            </Link>
+          </div>
+        ) : null}
     </SharedSidebar>
   );
 };

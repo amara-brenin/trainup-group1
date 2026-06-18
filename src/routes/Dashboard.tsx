@@ -119,6 +119,24 @@ const Dashboard = () => {
                 </div>
               </div>
             ) : null}
+            {creditsSummary?.planExpired ? (
+              <div className="row g-3 mb-3">
+                <div className="col-12">
+                  <div className="card border-danger">
+                    <div className="card-body d-flex flex-wrap align-items-center justify-content-between gap-3">
+                      <div>
+                        <span className="badge text-bg-danger mb-1">Plan Expired</span>
+                        <div className="fw-semibold">Your subscription has expired.</div>
+                        <div className="small text-body-secondary">Renew your plan to continue creating trainings, sessions and users.</div>
+                      </div>
+                      <button type="button" className="btn btn-primary" onClick={() => navigate(scopedPath("/upgrade-billings"))}>
+                        Upgrade your plan
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
             <div className="row g-3 mb-3">
               {items.map(({ label, key }) => {
                 const u = capacity[key];
@@ -174,6 +192,7 @@ const Dashboard = () => {
                 </div>
               </div>
             </div>
+            )}
           </>
         );
       })() : null}

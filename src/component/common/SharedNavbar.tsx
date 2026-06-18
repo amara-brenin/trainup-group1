@@ -7,11 +7,12 @@ type SharedNavbarProps = {
   leftContent?: ReactNode;
   usedCredits: number;
   totalCredits: number;
+  planExpired?: boolean;
   userSlot: ReactNode;
   showCredits?: boolean;
 };
 
-const SharedNavbar = ({ leftContent, usedCredits, totalCredits, userSlot, showCredits = true }: SharedNavbarProps) => {
+const SharedNavbar = ({ leftContent, usedCredits, totalCredits, planExpired = false, userSlot, showCredits = true }: SharedNavbarProps) => {
   const dispatch = useAppDispatch();
   const { bsTheme } = useAppSelector((state) => state.theme);
 
@@ -70,7 +71,9 @@ const SharedNavbar = ({ leftContent, usedCredits, totalCredits, userSlot, showCr
     }
   };
 
-  const creditPercent = totalCredits > 0 ? Math.min(100, Math.round((usedCredits / totalCredits) * 100)) : 0;
+  // Issue 1: an expired plan shows ZERO effective credits in the topbar meter.
+  const effectiveAvailable = planExpired ? 0 : Math.max(totalCredits - usedCredits, 0);
+  const creditPercent = planExpired ? 0 : totalCredits > 0 ? Math.min(100, Math.round((effectiveAvailable / totalCredits) * 100)) : 0;
 
   return (
     <div className="navbar-custom">
@@ -105,14 +108,14 @@ const SharedNavbar = ({ leftContent, usedCredits, totalCredits, userSlot, showCr
 
           {showCredits ? (
             <li className="d-none d-md-inline-block">
-              <div className="app-credit-meter" aria-label={`Credits used ${usedCredits} of ${totalCredits}`}>
+              <div className="app-credit-meter" aria-label={`Credits available ${effectiveAvailable} of ${totalCredits}`}>
                 <div className="app-credit-icon">
                   <i className="ri-wallet-3-line" />
                 </div>
                 <div className="app-credit-copy">
-                  <span>Credits</span>
-                  <strong>
-                    {usedCredits} / {totalCredits}
+                  <span>{planExpired ? "Credits (Expired)" : "Credits"}</span>
+                  <strong className={planExpired ? "text-danger" : undefined}>
+                    {effectiveAvailable.toLocaleString()} / {totalCredits.toLocaleString()}
                   </strong>
                   <div className="app-credit-track">
                     <span style={{ width: `${creditPercent}%` }} />

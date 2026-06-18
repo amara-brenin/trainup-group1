@@ -96,6 +96,7 @@ export interface AdminUser {
   image: string;
   usedCredits: number;
   totalCredits: number;
+  planExpired?: boolean;
   isUnreadNotifications: boolean;
 }
 
