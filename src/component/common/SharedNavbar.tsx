@@ -71,11 +71,13 @@ const SharedNavbar = ({ leftContent, usedCredits, totalCredits, planExpired = fa
     }
   };
 
-  // Issue 1: an expired plan shows ZERO effective credits in the topbar meter —
-  // both the available AND total collapse to 0 (the granted credits no longer
-  // apply; fresh credits appear only after a new plan is purchased).
+  // The topbar meter reads "used / total": a fresh plan shows 0 / 40,000 and
+  // climbs as credits are consumed (e.g. 500 / 40,000). An expired plan shows
+  // 0 / 0 — the granted credits no longer apply until a new plan is purchased.
   const effectiveTotal = planExpired ? 0 : totalCredits;
+  const effectiveUsed = planExpired ? 0 : Math.min(Math.max(usedCredits, 0), effectiveTotal);
   const effectiveAvailable = planExpired ? 0 : Math.max(totalCredits - usedCredits, 0);
+  // Track depletes as credits are used (full when none used, empty when spent).
   const creditPercent = planExpired ? 0 : effectiveTotal > 0 ? Math.min(100, Math.round((effectiveAvailable / effectiveTotal) * 100)) : 0;
 
   return (
@@ -111,14 +113,14 @@ const SharedNavbar = ({ leftContent, usedCredits, totalCredits, planExpired = fa
 
           {showCredits ? (
             <li className="d-none d-md-inline-block">
-              <div className="app-credit-meter" aria-label={`Credits available ${effectiveAvailable} of ${effectiveTotal}`}>
+              <div className="app-credit-meter" aria-label={`Credits used ${effectiveUsed} of ${effectiveTotal}`}>
                 <div className="app-credit-icon">
                   <i className="ri-wallet-3-line" />
                 </div>
                 <div className="app-credit-copy">
                   <span>{planExpired ? "Credits (Expired)" : "Credits"}</span>
                   <strong className={planExpired ? "text-danger" : undefined}>
-                    {effectiveAvailable.toLocaleString()} / {effectiveTotal.toLocaleString()}
+                    {effectiveUsed.toLocaleString()} / {effectiveTotal.toLocaleString()}
                   </strong>
                   <div className="app-credit-track">
                     <span style={{ width: `${creditPercent}%` }} />
