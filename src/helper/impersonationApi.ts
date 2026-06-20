@@ -10,10 +10,29 @@ type ImpersonationStartResult = {
   targetClientId: string;
 };
 
+const isLocalHostName = (host: string) => /^(localhost|127\.0\.0\.1|\[::1\]|::1)$/i.test(host);
+
+// Resolve the configured app URL against where we're actually running. If a
+// build accidentally baked a localhost URL (e.g. a stray .env.local during a
+// production build) but the page is served from a real domain, keep only the
+// configured base PATH and use the current (live) origin. Genuine cross-origin
+// production URLs (non-localhost) are used as-is.
+const resolveAppBase = (configured: string): string => {
+  try {
+    const u = new URL(configured);
+    if (isLocalHostName(u.hostname) && !isLocalHostName(window.location.hostname)) {
+      return `${window.location.origin}${u.pathname}`;
+    }
+    return configured;
+  } catch {
+    return configured;
+  }
+};
+
 // Send the browser to the app that owns the target identity, carrying only the
 // opaque one-time code. Works whether the two apps share an origin or not.
 const redirectToHandoff = (targetRole: string, code: string) => {
-  const base = targetRole === "super_admin" ? superAdminAppUrl : adminAppUrl;
+  const base = resolveAppBase(targetRole === "super_admin" ? superAdminAppUrl : adminAppUrl);
   // The target app is served under a base path (e.g. the super-admin app at
   // "/console/"). Keep the trailing slash on that base BEFORE the query, or the
   // dev/static server reports a base-URL mismatch (".../console?imp" vs the
