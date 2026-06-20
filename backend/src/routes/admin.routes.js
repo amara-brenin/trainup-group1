@@ -4,6 +4,7 @@ const authController = require("../controllers/authController");
 const commonController = require("../controllers/commonController");
 const notificationsController = require("../controllers/notificationsController");
 const userController = require("../controllers/userController");
+const impersonationController = require("../controllers/impersonationController");
 const roleController = require("../controllers/roleController");
 const apiKeyController = require("../controllers/apiKeyController");
 const workspaceController = require("../controllers/workspaceController");
@@ -19,6 +20,9 @@ const router = express.Router();
 router.use(authTokenAdmin);
 
 router.get("/profile", authController.profile);
+// FEATURE 3: return flow — available to ANY impersonated session (incl. a
+// trainee with no module permissions), so no allowAccess guard here.
+router.post("/auth/restore-session", impersonationController.restoreSession);
 router.get("/notifications", notificationsController.list);
 router.post("/notifications/read", notificationsController.markRead);
 router.post("/notifications/read-all", notificationsController.markAllRead);
@@ -37,6 +41,8 @@ router.post("/users", allowAccess("users.add", "users"), userController.create);
 router.put("/users/:id", allowAccess("users.edit", "users"), userController.update);
 router.post("/users/:id/password-email", allowAccess("users.edit", "users"), userController.sendPasswordReset);
 router.delete("/users/:id", allowAccess("users.delete", "users"), userController.remove);
+// FEATURE 2: Client Admin (or SA-as-CA) → User impersonation.
+router.post("/users/impersonate/:userId", allowAccess("users.view", "users"), impersonationController.impersonateUser);
 router.get("/trainees", allowAccess("trainees.view", "trainees"), userController.listTrainees);
 router.get("/trainees/:id/sessions", allowAccess("trainees.report", "trainees"), userController.getTraineeSessions);
 router.post("/trainees/:id/sessions/:trainingId/:sessionId/reopen", allowAccess("trainees.edit", "trainees"), userController.reopenTraineeSessionAttempt);

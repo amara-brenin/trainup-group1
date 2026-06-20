@@ -422,7 +422,10 @@ export const extractPdfPagesToImages = async (file: File) => {
     );
 
     const blob = await blobFromCanvas(canvas, "image/png");
-    const ocrTextLines = await extractOcrTextLines(blob).catch(() => []);
+    // Only fall back to (expensive) OCR when pdf.js produced no usable embedded
+    // text. Text-based PDFs skip OCR entirely; scanned/image PDFs still OCR.
+    const ocrTextLines =
+      pdfTextLines.length >= 3 ? [] : await extractOcrTextLines(blob).catch(() => []);
     const extractedText = mergeExtractedText(pdfTextLines, ocrTextLines);
     const interactiveHotspots = await extractPdfHotspots(page, viewport);
     const asset = isRemoteMediaEnabled
@@ -506,8 +509,10 @@ export const extractPptxSlidesToImages = async (file: File) => {
       points: points.length ? points : ["Preview generated from the uploaded PPTX slide."],
       footer: `${file.name} • Slide ${index + 1}`,
     });
-    const ocrTextLines = await extractOcrTextLines(previewBlob).catch(() => []);
-    const extractedText = mergeExtractedText(xmlExtractedText, ocrTextLines);
+    // PPTX slide text already comes straight from the parsed slide XML
+    // (xmlExtractedText above). Running OCR on a preview image generated from
+    // that same XML was pure redundant work, so it is removed.
+    const extractedText = xmlExtractedText;
 
     const asset = isRemoteMediaEnabled
       ? await uploadBlobToRemote({

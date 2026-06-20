@@ -267,6 +267,7 @@ const dashboard = async (req, res) => {
     ? { clientId, role: { $ne: "super_admin" } }
     : { role: { $ne: "super_admin" } };
   const trainingFilter = clientId ? { clientId } : {};
+  const startOfToday = new Date(new Date().setHours(0, 0, 0, 0));
 
   const [
     webhookConfig,
@@ -287,30 +288,46 @@ const dashboard = async (req, res) => {
     User.countDocuments(clientId ? { clientId, role: { $nin: ["super_admin", "trainee"] } } : { role: { $nin: ["super_admin", "trainee"] } }),
     User.countDocuments(clientId ? { clientId, role: "trainee" } : { role: "trainee" }),
     Training.countDocuments(trainingFilter),
+    // Optimized: count sessions per-document with $size/$filter instead of
+    // $unwind (which explodes one row per embedded session before regrouping).
+    // Output keys are identical: totalSessions, activeSessions, completionsToday.
     Training.aggregate([
       { $match: trainingFilter },
       { $project: { sessions: { $ifNull: ["$payload.sessions", []] } } },
-      { $unwind: { path: "$sessions", preserveNullAndEmptyArrays: false } },
+      {
+        $project: {
+          totalSessions: { $size: "$sessions" },
+          activeSessions: {
+            $size: {
+              $filter: {
+                input: "$sessions",
+                as: "s",
+                cond: { $eq: [{ $toLower: { $ifNull: ["$$s.status", ""] } }, "in-progress"] },
+              },
+            },
+          },
+          completionsToday: {
+            $size: {
+              $filter: {
+                input: "$sessions",
+                as: "s",
+                cond: {
+                  $and: [
+                    { $eq: [{ $toLower: { $ifNull: ["$$s.status", ""] } }, "completed"] },
+                    { $gte: [{ $toDate: { $ifNull: ["$$s.completedAt", "1970-01-01"] } }, startOfToday] },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
       {
         $group: {
           _id: null,
-          totalSessions: { $sum: 1 },
-          activeSessions: {
-            $sum: { $cond: [{ $eq: [{ $toLower: { $ifNull: ["$sessions.status", ""] } }, "in-progress"] }, 1, 0] },
-          },
-          completionsToday: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: [{ $toLower: { $ifNull: ["$sessions.status", ""] } }, "completed"] },
-                    { $gte: [{ $toDate: { $ifNull: ["$sessions.completedAt", "1970-01-01"] } }, new Date(new Date().setHours(0, 0, 0, 0))] },
-                  ],
-                },
-                1, 0,
-              ],
-            },
-          },
+          totalSessions: { $sum: "$totalSessions" },
+          activeSessions: { $sum: "$activeSessions" },
+          completionsToday: { $sum: "$completionsToday" },
         },
       },
     ]),

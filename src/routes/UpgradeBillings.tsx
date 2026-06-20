@@ -876,7 +876,7 @@ const UpgradeBillings = () => {
                   <div>
                     <h2 className="h5 fw-semibold mb-1">Need Help?</h2>
                     <p className="text-body-secondary mb-1">Contact our support team for any questions about your plan.</p>
-                    <a href="mailto:support@samsung.com">support@samsung.com</a>
+                    <a href="mailto:info@brenin.co">info@brenin.co</a>
                   </div>
                 </div>
                 <button type="button" className="btn btn-outline-primary" onClick={() => setSupportOpen(true)}>

@@ -14,6 +14,7 @@ import type { ClientFormValues, ClientRecord, PageParamState, PaginatedResponse 
 import { AllowedKeys, PermissionKeys } from "../../constant/permissions";
 import { getScopedAppPath } from "../../helper/appShell";
 import AxiosHelper from "../../helper/AxiosHelper";
+import { impersonateClientAdmin } from "../../helper/impersonationApi";
 import { useDebounce } from "../../hooks/useDebounce";
 import { useAppSelector } from "../../app/hooks";
 
@@ -149,6 +150,29 @@ const Clients = () => {
       await fetchRecords();
     } else {
       toast.error(response.data.message);
+    }
+  };
+
+  // FEATURE 1: Super Admin → Client Admin impersonation.
+  const handleImpersonateClient = async (client: ClientRecord) => {
+    const result = await Swal.fire({
+      title: "Login as Client Admin",
+      html: "You are about to access this client's admin panel. Your current Super Admin session will be preserved and can be restored at any time.",
+      icon: "info",
+      showCancelButton: true,
+      cancelButtonText: "Cancel",
+      confirmButtonText: "Continue",
+      confirmButtonColor: "#3e60d5",
+    });
+
+    if (!result.isConfirmed) {
+      return;
+    }
+
+    try {
+      await impersonateClientAdmin(client.id); // redirects into the client admin panel on success
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not start the session.");
     }
   };
 
@@ -700,6 +724,17 @@ const Clients = () => {
                                 >
                                   <i className="bi bi-eye" />
                                   <span>View details</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="dropdown-item"
+                                  onClick={() => {
+                                    close();
+                                    void handleImpersonateClient(client);
+                                  }}
+                                >
+                                  <i className="bi bi-box-arrow-in-right" />
+                                  <span>Login as Client Admin</span>
                                 </button>
                                 <PermissionBlock permissionKey={PermissionKeys.clientsDelete} allowedKey={AllowedKeys.clients}>
                                   <button

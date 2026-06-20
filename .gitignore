@@ -15,6 +15,7 @@ dist-ssr
 .vercel
 .env.local
 .env.production.local
+.env.*.local
 
 # Editor directories and files
 .vscode/*
@@ -35,3 +36,5 @@ dist-ssr
 dist-admin
 dist-superadmin
 dist-console
+
+marketing-assets

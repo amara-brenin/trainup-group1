@@ -2,6 +2,7 @@ const express = require("express");
 
 const authController = require("../controllers/authController");
 const commonController = require("../controllers/commonController");
+const impersonationController = require("../controllers/impersonationController");
 const launchController = require("../controllers/launchController");
 const narrationController = require("../controllers/narrationController");
 const questionGeneratorController = require("../controllers/questionGeneratorController");
@@ -22,6 +23,9 @@ router.get("/auth/password-token", authController.validateToken);
 router.post("/auth/set-password", authController.setPassword);
 router.post("/auth/forgot-password", authController.forgotPassword);
 router.post("/auth/reset-password", authController.resetPassword);
+// Cross-app handoff: exchange a single-use code for the impersonation token.
+// Public because the target app has no session yet when it lands.
+router.post("/auth/impersonation/exchange", impersonationController.exchangeHandoff);
 router.post("/tts", ttsController.generate);
 router.post("/narration", narrationController.generateNarration);
 router.post("/question-generator", questionGeneratorController.buildQuestions);

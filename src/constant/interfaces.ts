@@ -98,6 +98,15 @@ export interface AdminUser {
   totalCredits: number;
   planExpired?: boolean;
   isUnreadNotifications: boolean;
+  impersonation?: {
+    active: boolean;
+    level: number;
+    rootRole: string;
+    currentName: string;
+    currentRole: string;
+    returnToRole: string;
+    returnLabel: string;
+  } | null;
 }
 
 export interface AppSettings {

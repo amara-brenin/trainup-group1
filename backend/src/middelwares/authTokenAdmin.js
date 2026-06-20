@@ -38,6 +38,10 @@ const authTokenAdmin = async (req, res, next) => {
     }
 
     req.user = user;
+    // Additive: expose the impersonation claim (if any) without altering how
+    // identity/permissions are resolved — req.user remains the EFFECTIVE user.
+    req.tokenPayload = payload;
+    req.impersonation = payload.imp || null;
     if (user.role === "super_admin") {
       req.access = await resolveSuperAdminAccess(user);
       return next();

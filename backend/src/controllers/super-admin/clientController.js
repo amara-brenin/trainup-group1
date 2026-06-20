@@ -85,6 +85,9 @@ const LIST_PROJECTION = {
   logo: 1, logoColor: 1, logoBg: 1,
   firstUserName: 1, enterpriseRequests: 1, enterpriseMonthlyCredits: 1,
   enterpriseMonthlyPrice: 1, billingCycle: 1, createdAt: 1,
+  // Ship the (S3) logo URL so the list renders the client's brand image. Logos
+  // are stored as small S3 URLs (see create's resolveImageField), so this stays
+  // light; the colored initials remain the fallback when no logo is set.
   thumbnailUrl: { $ifNull: ["$logoUrl", "$darkLogoUrl"] },
 };
 
