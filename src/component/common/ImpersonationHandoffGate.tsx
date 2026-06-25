@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Loader } from "./Loader";
-import { setAuthToken } from "../../helper/authSession";
+import { setAuthToken, setLastAppRoute } from "../../helper/authSession";
 import { exchangeImpersonationCode } from "../../helper/impersonationApi";
 
 // When the browser lands with `?imp=<code>` (an impersonation/restore handoff),
@@ -43,6 +43,11 @@ const ImpersonationHandoffGate = ({ children }: { children: ReactNode }) => {
         token = await exchangeImpersonationCode(code);
         if (token) {
           setAuthToken(token);
+          // Same-origin apps share sessionStorage, so the previous identity's
+          // last route (e.g. a Super Admin's "/clients") would otherwise be
+          // restored for the new identity and trip the "Permission required"
+          // guard. Clear it so the new identity lands on its own role home.
+          setLastAppRoute("");
         }
       } catch {
         // Invalid/expired code — fall through; the app will route to login.
