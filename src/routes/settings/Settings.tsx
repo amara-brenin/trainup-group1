@@ -70,7 +70,7 @@ const Settings = () => {
   const [activeTab, setActiveTab] = useState<SettingsTab>("company");
   const [settings, setSettings] = useState<TenantSettingsPayload | null>(null);
   const [savingTab, setSavingTab] = useState<TenantSettingsTab | "">("");
-  const [actionLoading, setActionLoading] = useState<"" | "domain" | "webhook" | "smtp">("");
+  const [actionLoading, setActionLoading] = useState<"" | "domain" | "webhook" | "smtp" | "xapi">("");
   const [selectedMethod, setSelectedMethod] = useState<string>("all");
   const [webhookLogs, setWebhookLogs] = useState<WebhookDeliveryLog[]>([]);
 
@@ -121,7 +121,7 @@ const Settings = () => {
     setSavingTab("");
   };
 
-  const runAction = async (action: "domain" | "webhook" | "smtp", request: Promise<{ data: { status: boolean; message: string; data: ActionResponse & { configuration?: TenantSettingsPayload["integrations"] } } }>) => {
+  const runAction = async (action: "domain" | "webhook" | "smtp" | "xapi", request: Promise<{ data: { status: boolean; message: string; data: ActionResponse & { configuration?: TenantSettingsPayload["integrations"] } } }>) => {
     setActionLoading(action);
     const response = await request;
 
@@ -610,6 +610,20 @@ const Settings = () => {
                           <label htmlFor="settings-xapiClientSecret" className="form-label">LRS Auth Client Secret / Password</label>
                           <Field name="xapiClientSecret" id="settings-xapiClientSecret" className="form-control" type="password" />
                         </div>
+                      </div>
+                      <div className="mt-3">
+                        <button
+                          type="button"
+                          className="btn btn-outline-primary btn-sm"
+                          onClick={async () => {
+                            await runAction("xapi", AxiosHelper.postData<ActionResponse, Record<string, never>>("/xapi/test", {}));
+                            void fetchWebhookLogs();
+                          }}
+                          disabled={actionLoading === "xapi" || !settings.integrations.xapiLrsEndpoint}
+                        >
+                          {actionLoading === "xapi" ? "Sending..." : "Send xAPI test"}
+                        </button>
+                        <div className="form-text">Save the LRS settings first, then send a test statement to verify the connection.</div>
                       </div>
                     </div>
                   </div>

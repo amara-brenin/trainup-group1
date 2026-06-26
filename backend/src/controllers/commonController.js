@@ -13,6 +13,7 @@ const {
   sendSmtpTestEmail,
 } = require("../helpers/clientDelivery");
 const { sanitizeUserForClient } = require("../helpers/auth");
+const { buildXapiStatement, sendXapiStatement } = require("../helpers/xapi");
 const crypto = require("crypto");
 const {
   CREDIT_COSTS,
@@ -502,6 +503,42 @@ const testWebhooks = async (req, res) => {
     ...result,
     configuration: nextConfig,
   });
+};
+
+const testXapi = async (req, res) => {
+  const clientId = getTenantClientId(req.user);
+  if (!clientId) {
+    return fail(res, 403, "xAPI testing is available only for tenant admins.");
+  }
+  const client = await Client.findOne({ appId: clientId });
+  if (!client) {
+    return fail(res, 404, "Client configuration not found.");
+  }
+  const endpoint = String(client.xapiLrsEndpoint || "").trim();
+  if (!endpoint) {
+    return fail(res, 400, "Configure the LRS endpoint URL before testing.");
+  }
+
+  const statement = buildXapiStatement({
+    baseUrl: client.domain ? `https://${client.domain}` : "https://trainup.ai",
+    clientName: client.name,
+    training: { id: "demo-training", title: "xAPI Test Training" },
+    learner: { id: "demo-learner", name: "Demo Learner", email: client.firstUserEmail || "demo@trainup.ai" },
+    session: { score: 90, timeSpentSeconds: 120 },
+  });
+
+  const result = await sendXapiStatement(
+    { endpoint, clientId: client.xapiClientId, clientSecret: client.xapiClientSecret },
+    statement,
+  );
+
+  const currentConfig = await getTenantSetting(clientId, "webhookConfig", {});
+  await setTenantSetting(clientId, "webhookConfig", {
+    ...currentConfig,
+    logs: appendWebhookLog(currentConfig, result.log),
+  });
+
+  return ok(res, result.message, result);
 };
 
 const getIframe = async (req, res) => {
@@ -1128,6 +1165,7 @@ module.exports = {
   getWebhooks,
   updateWebhooks,
   testWebhooks,
+  testXapi,
   getIframe,
   updateIframe,
   health,

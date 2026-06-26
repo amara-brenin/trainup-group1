@@ -68,6 +68,8 @@ router.put("/webhooks", allowAccess("webhooks.edit", "webhooks"), commonControll
 // Webhook config now lives under the Integrations (settings) tab, so align the
 // test action with settings edit — whoever can save the webhook URL can test it.
 router.post("/webhooks/test", allowAccess("settings.edit", "settings"), commonController.testWebhooks);
+// LMS_INTEGRATION_RESEARCH.md (Method D): send a test xAPI statement to the LRS.
+router.post("/xapi/test", allowAccess("settings.edit", "settings"), commonController.testXapi);
 router.post("/domains/verify", allowAccess("settings.edit", "settings"), commonController.verifyDomain);
 router.post("/smtp/test", allowAccess("settings.edit", "settings"), commonController.testSmtp);
 router.get("/iframe", allowAccess("iframe.view", "iframe"), commonController.getIframe);

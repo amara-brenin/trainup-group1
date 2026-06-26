@@ -18,6 +18,7 @@ const { getBearerToken, verifyAuthToken } = require("../helpers/auth");
 const { createGroqReply } = require("../helpers/groq");
 const { signLaunchToken, verifyLaunchToken } = require("../helpers/launchToken");
 const { deliverCompletionWebhook } = require("../helpers/clientDelivery");
+const { deliverXapiStatement } = require("../helpers/xapi");
 const { buildScormPackage } = require("../helpers/scorm");
 const { buildPublicUrl } = require("../helpers/publicUrl");
 const { getTenantClientId } = require("../helpers/tenant");
@@ -1217,6 +1218,21 @@ const upsertLaunchSession = async (req, res) => {
         attemptNo: nextSessionRecord.attemptNo ?? 1,
       },
     });
+
+    // xAPI (Method D): emit a learning statement to the tenant's LRS (if enabled).
+    void deliverXapiStatement({
+      clientId: training.clientId,
+      training: { id: training.appId, title: trainingTitle },
+      learner: {
+        id: viewerIdentity.ssoId || viewerIdentity.learnerEmail || "",
+        name: viewerIdentity.learnerName || "",
+        email: viewerIdentity.learnerEmail || "",
+      },
+      session: {
+        score: nextSessionRecord.score ?? nextSessionRecord.latestScore ?? null,
+        timeSpentSeconds: nextSessionRecord.timeSpent ?? null,
+      },
+    });
   }
   return ok(res, "Training session updated successfully.", {
     sessionId,
@@ -1792,10 +1808,11 @@ const upsertDemoSession = async (req, res) => {
   // webhook ONLY for real LMS-launch learners — not free public marketing demos
   // (a random demo guest's result should not land in the customer's system).
   if (action === "complete" && isLmsLaunch) {
+    const trainingTitle = normalizeValue(training.payload?.title) || "Training";
     void deliverCompletionWebhook({
       clientId: training.clientId,
       event: "training.completed",
-      training: { id: training.appId, title: normalizeValue(training.payload?.title) || "Training" },
+      training: { id: training.appId, title: trainingTitle },
       learner: { id: guestEmail || guestName, name: guestName, email: guestEmail },
       session: {
         sessionId,
@@ -1804,6 +1821,16 @@ const upsertDemoSession = async (req, res) => {
         progressPercent,
         timeSpentSeconds: sessionRecord.timeSpent ?? null,
         attemptNo: sessionRecord.attemptNo ?? 1,
+      },
+    });
+    // xAPI (Method D): emit a learning statement to the tenant's LRS (if enabled).
+    void deliverXapiStatement({
+      clientId: training.clientId,
+      training: { id: training.appId, title: trainingTitle },
+      learner: { id: guestEmail || guestName, name: guestName, email: guestEmail },
+      session: {
+        score: sessionRecord.score ?? sessionRecord.latestScore ?? null,
+        timeSpentSeconds: sessionRecord.timeSpent ?? null,
       },
     });
   }
