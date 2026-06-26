@@ -1193,27 +1193,29 @@ const upsertLaunchSession = async (req, res) => {
           link: "/dashboard",
         },
       }),
-      // Auto Result Sync (Method E): push completion + score to the customer's
-      // own system/LMS via their configured webhook. Best-effort, never blocks.
-      deliverCompletionWebhook({
-        clientId: training.clientId,
-        event: "training.completed",
-        training: { id: training.appId, title: trainingTitle },
-        learner: {
-          id: viewerIdentity.ssoId || viewerIdentity.learnerEmail || "",
-          name: viewerIdentity.learnerName || "",
-          email: viewerIdentity.learnerEmail || "",
-        },
-        session: {
-          sessionId,
-          score: nextSessionRecord.score ?? nextSessionRecord.latestScore ?? null,
-          status: "completed",
-          progressPercent: nextSessionRecord.progressPercent ?? null,
-          timeSpentSeconds: nextSessionRecord.timeSpent ?? null,
-          attemptNo: nextSessionRecord.attemptNo ?? 1,
-        },
-      }),
     ]);
+
+    // Auto Result Sync (Method E): push completion + score to the customer's
+    // own system/LMS via their configured webhook. Fire-and-forget (NOT awaited)
+    // so a slow/down customer endpoint never delays the learner's response.
+    void deliverCompletionWebhook({
+      clientId: training.clientId,
+      event: "training.completed",
+      training: { id: training.appId, title: trainingTitle },
+      learner: {
+        id: viewerIdentity.ssoId || viewerIdentity.learnerEmail || "",
+        name: viewerIdentity.learnerName || "",
+        email: viewerIdentity.learnerEmail || "",
+      },
+      session: {
+        sessionId,
+        score: nextSessionRecord.score ?? nextSessionRecord.latestScore ?? null,
+        status: "completed",
+        progressPercent: nextSessionRecord.progressPercent ?? null,
+        timeSpentSeconds: nextSessionRecord.timeSpent ?? null,
+        attemptNo: nextSessionRecord.attemptNo ?? 1,
+      },
+    });
   }
   return ok(res, "Training session updated successfully.", {
     sessionId,
@@ -1650,6 +1652,51 @@ const upsertDemoSession = async (req, res) => {
   const existingIndex = sessions.findIndex((s) => normalizeValue(s.id) === sessionId);
   const existingSession = existingIndex >= 0 ? sessions[existingIndex] : null;
 
+  // A signed launch token means this came from an external LMS link (a real,
+  // billable learner) — not a free public marketing demo. We treat the two
+  // differently for billing (below) and result webhooks (further down).
+  const isLmsLaunch = Boolean(verifyLaunchToken(req.params.demoToken));
+  const isNewCompletedSession =
+    action === "complete" &&
+    normalizeValue(existingSession?.status).toLowerCase() !== "completed";
+
+  // LMS launch completions consume credits + lifetime session quota, exactly like
+  // authenticated launches, so external-LMS usage is never a free bypass. Public
+  // demos remain free. Gate BEFORE persisting so an unpayable session isn't saved.
+  if (isLmsLaunch && isNewCompletedSession) {
+    const client = await Client.findOne({ appId: training.clientId });
+
+    const expiredError = assertSubscriptionActive(client);
+    if (expiredError) return fail(res, 402, expiredError);
+
+    if (client && !client.quotaInitialized) {
+      const publishedCount = await Training.countDocuments({
+        clientId: training.clientId,
+        "payload.status": "approved",
+      });
+      await ensureClientEntitlement(client, {
+        training: publishedCount,
+        session: Number(client.sessions || 0),
+        user: Number(client.activeUsers || 0),
+      });
+    }
+
+    const usageError = client ? assertLifetimeQuota(client, "session", 1) : null;
+    if (usageError) return fail(res, 403, usageError);
+
+    const creditResult = await consumeClientCredits({
+      clientId: training.clientId,
+      credits: CREDIT_COSTS.session,
+      reason: `LMS launch session completed by ${guestEmail || guestName || "learner"}`,
+    });
+    if (!creditResult.ok) return fail(res, 400, creditResult.message);
+
+    if (client) {
+      client.sessionUsedLifetime = Number(client.sessionUsedLifetime || 0) + 1;
+      await client.save();
+    }
+  }
+
   const now = formatDateTime();
   const sessionRecord = {
     ...(existingSession || {}),
@@ -1674,6 +1721,7 @@ const upsertDemoSession = async (req, res) => {
     totalQuestions,
     progressPercent,
     mode: "demo",
+    viaLmsLaunch: isLmsLaunch,
     role: "guest",
     attemptNo: existingSession?.attemptNo || 1,
     askHistory: existingSession?.askHistory || [],
@@ -1694,9 +1742,10 @@ const upsertDemoSession = async (req, res) => {
     { $set: { "payload.sessions": sessions, "payload.lastActivity": "Today" } },
   );
 
-  // Auto Result Sync (Method E): when a learner completes via a demo or signed
-  // LMS launch link, push completion + score to the customer's webhook.
-  if (action === "complete") {
+  // Auto Result Sync (Method E): push completion + score to the customer's
+  // webhook ONLY for real LMS-launch learners — not free public marketing demos
+  // (a random demo guest's result should not land in the customer's system).
+  if (action === "complete" && isLmsLaunch) {
     void deliverCompletionWebhook({
       clientId: training.clientId,
       event: "training.completed",
@@ -1711,6 +1760,11 @@ const upsertDemoSession = async (req, res) => {
         attemptNo: sessionRecord.attemptNo ?? 1,
       },
     });
+  }
+
+  // Keep tenant metrics (session counts) in sync for billable LMS completions.
+  if (isLmsLaunch && isNewCompletedSession) {
+    await syncClientMetrics(training.clientId);
   }
 
   return ok(res, `Demo session ${action === "complete" ? "completed" : "updated"} successfully.`, {
