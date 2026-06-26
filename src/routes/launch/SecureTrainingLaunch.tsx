@@ -69,6 +69,15 @@ const SecureTrainingLaunch = () => {
         start(data, data.learnerName, data.learnerEmail);
         return;
       }
+      // SCORM/embed: identity passed via query (?ln=&le=) by the LMS wrapper →
+      // auto-start without a form.
+      const params = new URLSearchParams(window.location.search);
+      const qName = (params.get("ln") || "").trim();
+      const qEmail = (params.get("le") || "").trim();
+      if (qName && qEmail) {
+        start(data, qName, qEmail);
+        return;
+      }
     } catch (err: unknown) {
       setErrorMessage(err instanceof Error ? err.message : "Unable to load training.");
     } finally {

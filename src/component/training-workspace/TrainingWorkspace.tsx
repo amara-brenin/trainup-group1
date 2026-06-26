@@ -92,7 +92,7 @@ import { isValidUrl } from "../../helper/validation";
 
 type WorkspaceRole = "trainer" | "reviewer";
 type WorkspaceView = "dashboard" | "trainings" | "builder" | "detail" | "profile";
-type DetailTab = "sessions" | "review" | "report";
+type DetailTab = "sessions" | "review" | "report" | "delivery";
 type BuilderMode = "upload" | "create";
 type UploadRecordKind = "images" | "pdf" | "ppt";
 // type AvatarOption = {
@@ -1061,7 +1061,7 @@ const builderValidationSchema = Yup.object({
     otherwise: (schema) => schema.notRequired(),
   }),
   durationMins: Yup.number().min(5, "Minimum 5 minutes.").required("Duration is required."),
-  maxAttempts: Yup.number().min(0, "Use 0 for unlimited or at least 1 attempt.").required("Max attempts is required."),
+  maxAttempts: Yup.number().min(1, "At least 1 attempt is required.").required("Max attempts is required."),
   questionButtonLabel: Yup.string().max(15, "Keep the label under 15 characters.").required("Button label is required."),
   askSystemPrompt: Yup.string().max(5000, "Keep the prompt under 5000 characters.").required("Ask assistant prompt is required."),
   theme: Yup.object({
@@ -1172,7 +1172,7 @@ const buildDefaultSetupValues = (
   idleRefreshMins: training?.idleRefreshMins ? String(training.idleRefreshMins) : "",
   allowSkipAhead: training?.options.allowSkipAhead ?? true,
   allowMultipleAttempts: training?.options.allowMultipleAttempts ?? true,
-  maxAttempts: training?.options.maxAttempts ?? 0,
+  maxAttempts: Math.max(1, Number(training?.options.maxAttempts) || 1),
   showProgressBar: training?.options.showProgressBar ?? true,
   showSubtitles: training?.options.showSubtitles ?? false,
   disablePreviousButton: training?.options.disablePreviousButton ?? false,
@@ -4335,8 +4335,9 @@ const TrainingBuilder = ({
         idleRefreshMins: values.idleRefreshMins ? Number(values.idleRefreshMins) : null,
         options: {
           allowSkipAhead: values.allowSkipAhead,
-          allowMultipleAttempts: values.allowMultipleAttempts,
-          maxAttempts: values.allowMultipleAttempts ? Number(values.maxAttempts || 0) : 1,
+          // Cost-per-attempt: always a finite limit, minimum 1 (no unlimited).
+          allowMultipleAttempts: true,
+          maxAttempts: Math.max(1, Number(values.maxAttempts) || 1),
           showProgressBar: values.showProgressBar,
           showSubtitles: values.showSubtitles,
           disablePreviousButton: values.disablePreviousButton,
@@ -5033,109 +5034,23 @@ const TrainingBuilder = ({
 
                           <div className="training-builder-subcaption mt-4">Attempt Access</div>
                           <div className="training-setting-group">
-                            <label className="form-label d-block mb-2">Allow Multiple Attempts</label>
-                            <div className="row g-3">
-                              {[
-                                {
-                                  value: true,
-                                  title: "Allowed",
-                                },
-                                {
-                                  value: false,
-                                  title: "One-Time Only",
-                                },
-                              ].map((option) => (
-                                <div key={String(option.value)} className="col-12 col-lg-6">
-                                  <button
-                                    type="button"
-                                    className={`btn w-100 text-start p-3 ${values.allowMultipleAttempts === option.value ? "btn-primary" : "btn-light border"}`}
-                                    onClick={() => setFieldValue("allowMultipleAttempts", option.value)}
-                                  >
-                                    <div className="d-flex align-items-start justify-content-between gap-3">
-                                      <strong className="d-block">{option.title}</strong>
-                                      <i className={`bi ${values.allowMultipleAttempts === option.value ? "bi-check-circle-fill" : "bi-circle"}`} />
-                                    </div>
-                                  </button>
-                                </div>
-                              ))}
+                            <label htmlFor="maxAttempts" className="form-label d-block mb-2">Max Attempts per learner</label>
+                            <Field
+                              id="maxAttempts"
+                              name="maxAttempts"
+                              type="number"
+                              min="1"
+                              step="1"
+                              className="form-control"
+                              style={{ maxWidth: 200 }}
+                            />
+                            <ErrorMessage name="maxAttempts" component="small" className="text-danger d-block mt-1" />
+                            <div className="form-text mt-1">
+                              Default is <strong>1</strong>. Each attempt has a cost, so increase this only if learners
+                              should be allowed retakes. Minimum 1 — there is no unlimited option.
                             </div>
-                            <div className="form-text mt-2">
-                              Use this when compliance or certification trainings should be completed only once per learner.
-                            </div>
-                            {values.allowMultipleAttempts ? (
-                              <div className="mt-3">
-                                <label htmlFor="maxAttempts" className="form-label">
-                                  Max Attempts
-                                </label>
-                                <Field id="maxAttempts" name="maxAttempts" type="number" min="0" className="form-control" />
-                                <div className="form-text">Use 0 for unlimited retakes.</div>
-                                <ErrorMessage name="maxAttempts" component="small" className="text-danger" />
-                              </div>
-                            ) : null}
                           </div>
 
-                          <div className="training-builder-subcaption mt-4">Public Demo Access</div>
-                          <div className="training-setting-group">
-                            <label className="form-label d-block mb-2">Allow Public Demo Access</label>
-                            <div className="row g-3">
-                              {[
-                                { value: true, title: "Enabled" },
-                                { value: false, title: "Disabled" },
-                              ].map((option) => (
-                                <div key={String(option.value)} className="col-12 col-lg-6">
-                                  <button
-                                    type="button"
-                                    className={`btn w-100 text-start p-3 ${values.allowPublicDemoAccess === option.value ? "btn-primary" : "btn-light border"}`}
-                                    onClick={() => {
-                                      setFieldValue("allowPublicDemoAccess", option.value);
-                                      if (option.value && !values.demoToken) {
-                                        setFieldValue("demoToken", crypto.randomUUID());
-                                      }
-                                    }}
-                                  >
-                                    <div className="d-flex align-items-start justify-content-between gap-3">
-                                      <strong className="d-block">{option.title}</strong>
-                                      <i className={`bi ${values.allowPublicDemoAccess === option.value ? "bi-check-circle-fill" : "bi-circle"}`} />
-                                    </div>
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                            <div className="form-text mt-2">
-                              When enabled, anyone with the demo link can experience this training without logging in. They will be asked for their name and email before starting.
-                            </div>
-                            {values.allowPublicDemoAccess && values.demoToken ? (
-                              <div className="mt-3">
-                                <label className="form-label">Demo URL</label>
-                                <div className="input-group">
-                                  <input
-                                    type="text"
-                                    className="form-control form-control-sm bg-light"
-                                    readOnly
-                                    value={withOrigin(`/demo-training/${values.demoToken}`)}
-                                  />
-                                  <button
-                                    type="button"
-                                    className="btn btn-outline-secondary btn-sm"
-                                    onClick={() => {
-                                      void navigator.clipboard.writeText(withOrigin(`/demo-training/${values.demoToken}`));
-                                    }}
-                                  >
-                                    Copy
-                                  </button>
-                                </div>
-                                <div className="form-text">Share this link for public demo access. No login required.</div>
-                                <button
-                                  type="button"
-                                  className="btn btn-outline-warning btn-sm mt-2"
-                                  onClick={() => setFieldValue("demoToken", crypto.randomUUID())}
-                                >
-                                  Regenerate Token
-                                </button>
-                              </div>
-                            ) : null}
-                            <LmsLaunchLinkGenerator trainingId={initialTraining?.id ?? ""} />
-                          </div>
                         </div>
                       </div>
 
@@ -5442,86 +5357,6 @@ const TrainingBuilder = ({
                             Theme, logo, favicon, support email, and loader copy are saved with the training for white-label reuse.
                           </div> */}
 
-                          {initialTraining ? (
-                            initialTraining.trainingType === "group" ? (
-                              // Group Training: there is no per-learner slideshow iframe. The
-                              // trainee link routes into the group join → lobby → live hall.
-                              <>
-                                <div className="training-builder-subcaption mt-4">Group Training Links</div>
-                                <div className="training-theme-upload-placeholder flex-column align-items-start gap-2">
-                                  <div className="fw-semibold">
-                                    Trainees open this link (also sent by email) to join the hall session:
-                                  </div>
-                                  <code className="training-embed-code">
-                                    {withOrigin(`/group/${initialTraining.id}`)}
-                                  </code>
-                                  <div className="d-flex gap-2 flex-wrap">
-                                    <button
-                                      type="button"
-                                      className="btn btn-primary btn-sm"
-                                      onClick={() => {
-                                        void navigator.clipboard.writeText(withOrigin(`/group/${initialTraining.id}`));
-                                        toast.success("Trainee join link copied.");
-                                      }}
-                                    >
-                                      Copy Join Link
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="btn btn-light btn-sm"
-                                      onClick={() => window.open(withBase(`/group/${initialTraining.id}`), "_blank", "noopener,noreferrer")}
-                                    >
-                                      Open Trainee View
-                                    </button>
-                                  </div>
-                                  <div className="text-muted small mt-1">
-                                    To open the AI Hall Screen, use <strong>Launch Hall</strong> on the training card.
-                                  </div>
-                                </div>
-                              </>
-                            ) : (
-                              <>
-                                <div className="training-builder-subcaption mt-4">Embed</div>
-                                <div className="training-theme-upload-placeholder flex-column align-items-start gap-2">
-                                  <div className="fw-semibold">
-                                    {initialTraining.status === "approved"
-                                      ? "Use this code to embed the slideshow in your website"
-                                      : "Private preview link and embed stay visible to internal users until the training is approved."}
-                                  </div>
-                                  <code className="training-embed-code">
-                                    {`<iframe src="${buildTrainingLaunchUrl(initialTraining.id, initialTraining.status !== "approved")}" title="${initialTraining.title}" width="100%" height="720" style="border:0;border-radius:16px;overflow:hidden;" allow="autoplay; fullscreen"></iframe>`}
-                                  </code>
-                                  <div className="d-flex gap-2 flex-wrap">
-                                    <button
-                                      type="button"
-                                      className="btn btn-primary btn-sm"
-                                      onClick={() => {
-                                        void navigator.clipboard.writeText(
-                                          `<iframe src="${buildTrainingLaunchUrl(initialTraining.id, initialTraining.status !== "approved")}" title="${initialTraining.title}" width="100%" height="720" style="border:0;border-radius:16px;overflow:hidden;" allow="autoplay; fullscreen"></iframe>`,
-                                        );
-                                        toast.success("Embed code copied.");
-                                      }}
-                                    >
-                                      Copy Embed Code
-                                    </button>
-                                    <button
-                                      type="button"
-                                      className="btn btn-light btn-sm"
-                                      onClick={() =>
-                                        window.open(
-                                          buildTrainingLaunchPath(initialTraining.id, true),
-                                          "_blank",
-                                          "noopener,noreferrer",
-                                        )
-                                      }
-                                    >
-                                      Open Launch UI
-                                    </button>
-                                  </div>
-                                </div>
-                              </>
-                            )
-                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -8040,19 +7875,28 @@ const TrainingDetail = ({
         <div className="d-flex gap-2 flex-wrap mb-3">
           <button
             type="button"
-            className={`btn btn-sm ${detailTab === "sessions" ? "btn-primary" : "btn-light"}`}
-            onClick={() => onChangeTab("sessions")}
-          >
-            <i className="bi bi-list-check me-1" /> Sessions
-          </button>
-          <button
-            type="button"
             className={`btn btn-sm ${detailTab === "review" ? "btn-primary" : "btn-light"}`}
             onClick={() => onChangeTab("review")}
           >
             <i className="bi bi-chat-left-dots me-1" /> Review Thread
             {reviewerPendingCount ? <span className="badge text-bg-danger ms-2">{reviewerPendingCount}</span> : null}
           </button>
+          <button
+            type="button"
+            className={`btn btn-sm ${detailTab === "sessions" ? "btn-primary" : "btn-light"}`}
+            onClick={() => onChangeTab("sessions")}
+          >
+            <i className="bi bi-list-check me-1" /> Sessions
+          </button>
+          {hasPublicLaunchLink ? (
+            <button
+              type="button"
+              className={`btn btn-sm ${detailTab === "delivery" ? "btn-primary" : "btn-light"}`}
+              onClick={() => onChangeTab("delivery")}
+            >
+              <i className="bi bi-share me-1" /> Share & Embed
+            </button>
+          ) : null}
           {activeSessionReport ? (
             <button
               type="button"
@@ -8062,6 +7906,67 @@ const TrainingDetail = ({
               <i className="bi bi-file-earmark-bar-graph me-1" /> Report
             </button>
           ) : null}
+        </div>
+      ) : null}
+
+      {detailTab === "delivery" && hasPublicLaunchLink ? (
+        <div className="card">
+          <div className="card-body">
+            {training.trainingType === "group" ? (
+              <>
+                <div className="fw-semibold mb-2"><i className="ri-links-line me-1" />Group trainee join link</div>
+                <code className="training-embed-code">{withOrigin(`/group/${training.id}`)}</code>
+                <div className="d-flex gap-2 flex-wrap mt-2">
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(withOrigin(`/group/${training.id}`));
+                      toast.success("Trainee join link copied.");
+                    }}
+                  >
+                    Copy Join Link
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-light btn-sm"
+                    onClick={() => window.open(withBase(`/group/${training.id}`), "_blank", "noopener,noreferrer")}
+                  >
+                    Open Trainee View
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="fw-semibold mb-2"><i className="ri-code-line me-1" />Website embed code</div>
+                <code className="training-embed-code">
+                  {`<iframe src="${buildTrainingLaunchUrl(training.id)}" title="${training.title}" width="100%" height="720" style="border:0;border-radius:16px;overflow:hidden;" allow="autoplay; fullscreen"></iframe>`}
+                </code>
+                <div className="d-flex gap-2 flex-wrap mt-2">
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(
+                        `<iframe src="${buildTrainingLaunchUrl(training.id)}" title="${training.title}" width="100%" height="720" style="border:0;border-radius:16px;overflow:hidden;" allow="autoplay; fullscreen"></iframe>`,
+                      );
+                      toast.success("Embed code copied.");
+                    }}
+                  >
+                    Copy Embed Code
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-light btn-sm"
+                    onClick={() => window.open(buildTrainingLaunchPath(training.id, true), "_blank", "noopener,noreferrer")}
+                  >
+                    Open Launch UI
+                  </button>
+                </div>
+                <LmsLaunchLinkGenerator trainingId={training.id} />
+              </>
+            )}
+          </div>
         </div>
       ) : null}
 

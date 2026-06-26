@@ -18,6 +18,7 @@ const { getBearerToken, verifyAuthToken } = require("../helpers/auth");
 const { createGroqReply } = require("../helpers/groq");
 const { signLaunchToken, verifyLaunchToken } = require("../helpers/launchToken");
 const { deliverCompletionWebhook } = require("../helpers/clientDelivery");
+const { buildScormPackage } = require("../helpers/scorm");
 const { buildPublicUrl } = require("../helpers/publicUrl");
 const { getTenantClientId } = require("../helpers/tenant");
 const config = require("../config");
@@ -1555,6 +1556,51 @@ const createSecureLaunchUrl = async (req, res) => {
   });
 };
 
+// Admin-authenticated: download a SCORM 1.2 dispatch package (Method C). The zip
+// wraps the live player via a long-lived signed launch URL; the customer uploads
+// it to their LMS, which then plays it and records completion/score.
+const downloadScormPackage = async (req, res) => {
+  const clientId = getTenantClientId(req.user);
+  const trainingId = normalizeValue(req.params.id);
+
+  const training = await Training.findOne({ appId: trainingId, clientId }).lean();
+  if (!training) {
+    return fail(res, 404, "Training not found for this tenant.");
+  }
+  if (normalizeValue(training.payload?.status) !== "approved") {
+    return fail(res, 400, "Only approved trainings can be exported to SCORM.");
+  }
+
+  const client = await Client.findOne({ appId: clientId }).lean();
+  if (client && client.scormEnabled === false) {
+    return fail(res, 403, "SCORM delivery is disabled for this tenant.");
+  }
+
+  // One package serves many learners over a long period → anonymous token with a
+  // long (1 year, the max) lifetime; the SCORM wrapper supplies each learner's
+  // identity from the LMS at play time.
+  const token = signLaunchToken({
+    trainingId: training.appId,
+    clientId,
+    expiresInMinutes: 60 * 24 * 365,
+  });
+
+  const referer = normalizeValue(req.headers.referer);
+  const origin = normalizeValue(req.headers.origin) || (referer ? new URL(referer).origin : "");
+  const resolvedOrigin =
+    origin || (client?.domain ? `https://${client.domain}` : `https://${client?.subdomain || "app"}.trainup.ai`);
+  const launchUrl = buildPublicUrl(resolvedOrigin, `/secure-launch/${token}`, req.headers["x-app-base-path"]);
+
+  const title = normalizeValue(training.payload?.title) || "Training";
+  const zipBuffer = buildScormPackage({ id: training.appId, title }, launchUrl);
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "training";
+
+  res.setHeader("Content-Type", "application/zip");
+  res.setHeader("Content-Disposition", `attachment; filename="scorm-${slug}.zip"`);
+  res.setHeader("Content-Length", zipBuffer.length);
+  return res.status(200).send(zipBuffer);
+};
+
 // Public: validate a signed launch token and return what the landing page needs
 // to auto-start the player (no login form) — mirrors resolveDemoTraining.
 const resolveSecureLaunch = async (req, res) => {
@@ -1858,4 +1904,5 @@ module.exports = {
   askDemoQuestion,
   createSecureLaunchUrl,
   resolveSecureLaunch,
+  downloadScormPackage,
 };

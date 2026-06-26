@@ -88,6 +88,8 @@ router.post("/training-workspace/:id/assign", allowAccess("training.assign", "tr
 // caller's client AND be approved. This avoids 403s from tenant-customized
 // module permissions (e.g. reviewer roles) while staying tenant-safe.
 router.post("/training-workspace/:id/launch-url", launchController.createSecureLaunchUrl);
+// LMS_INTEGRATION_RESEARCH.md (Method C): download a SCORM 1.2 dispatch package.
+router.get("/training-workspace/:id/scorm-package", launchController.downloadScormPackage);
 router.put("/training-workspace/sync", allowAccess(undefined, "trainingWorkspace"), workspaceController.sync);
 
 // Group Training Hall — session management.
