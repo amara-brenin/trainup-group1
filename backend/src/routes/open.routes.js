@@ -41,6 +41,11 @@ router.get("/demo/:demoToken", resolveLimiter, launchController.getDemoTraining)
 router.post("/demo/:demoToken/session", askLimiter, launchController.upsertDemoSession);
 router.post("/demo/:demoToken/ask", askLimiter, launchController.askDemoQuestion);
 
+// Signed external launch (LMS_INTEGRATION_RESEARCH.md — Method A/E). The token
+// itself authorizes access; the player is served by the existing /demo/:token
+// endpoints (findTrainingByDemoToken accepts signed tokens).
+router.get("/launch/secure/:token/resolve", resolveLimiter, launchController.resolveSecureLaunch);
+
 // Group Training Hall — public surfaces (token-scoped, no admin auth).
 router.get("/group/:joinToken/resolve", resolveLimiter, groupSessionController.resolveJoin);
 router.post("/group/:gsId/ask", askLimiter, groupSessionController.askGroupQuestion);

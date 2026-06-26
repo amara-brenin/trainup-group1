@@ -16,6 +16,10 @@ const { getTenantSetting, buildDefaultTenantAppSettings, syncClientMetrics } = r
 const { ok, fail } = require("../helpers/response");
 const { getBearerToken, verifyAuthToken } = require("../helpers/auth");
 const { createGroqReply } = require("../helpers/groq");
+const { signLaunchToken, verifyLaunchToken } = require("../helpers/launchToken");
+const { deliverCompletionWebhook } = require("../helpers/clientDelivery");
+const { buildPublicUrl } = require("../helpers/publicUrl");
+const { getTenantClientId } = require("../helpers/tenant");
 const config = require("../config");
 
 const normalizeValue = (value) => String(value || "").trim();
@@ -1189,6 +1193,26 @@ const upsertLaunchSession = async (req, res) => {
           link: "/dashboard",
         },
       }),
+      // Auto Result Sync (Method E): push completion + score to the customer's
+      // own system/LMS via their configured webhook. Best-effort, never blocks.
+      deliverCompletionWebhook({
+        clientId: training.clientId,
+        event: "training.completed",
+        training: { id: training.appId, title: trainingTitle },
+        learner: {
+          id: viewerIdentity.ssoId || viewerIdentity.learnerEmail || "",
+          name: viewerIdentity.learnerName || "",
+          email: viewerIdentity.learnerEmail || "",
+        },
+        session: {
+          sessionId,
+          score: nextSessionRecord.score ?? nextSessionRecord.latestScore ?? null,
+          status: "completed",
+          progressPercent: nextSessionRecord.progressPercent ?? null,
+          timeSpentSeconds: nextSessionRecord.timeSpent ?? null,
+          attemptNo: nextSessionRecord.attemptNo ?? 1,
+        },
+      }),
     ]);
   }
   return ok(res, "Training session updated successfully.", {
@@ -1448,10 +1472,23 @@ const handleTrulienceEvent = async (req, res) => {
 const findTrainingByDemoToken = async (demoToken) => {
   const token = normalizeValue(demoToken);
   if (!token) return null;
-  return Training.findOne({
+
+  const demoTraining = await Training.findOne({
     "payload.options.allowPublicDemoAccess": true,
     "payload.options.demoToken": token,
   }).lean();
+  if (demoTraining) return demoTraining;
+
+  // LMS_INTEGRATION_RESEARCH.md (Method A/E): a signed external launch token is
+  // self-authorizing — when it verifies, load that training directly. This lets
+  // every existing demo endpoint (resolve/load/session/ask) serve secure links
+  // without duplicating the player surface.
+  const verified = verifyLaunchToken(token);
+  if (verified) {
+    return findTrainingById(verified.trainingId);
+  }
+
+  return null;
 };
 
 const resolveDemoTraining = async (req, res) => {
@@ -1464,6 +1501,81 @@ const resolveDemoTraining = async (req, res) => {
   return ok(res, "Demo training resolved.", {
     trainingId: training.appId,
     title: normalizeValue(training.payload?.title),
+    ...brandingPayload,
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Signed external launch (LMS_INTEGRATION_RESEARCH.md — Method A / E)
+// ---------------------------------------------------------------------------
+
+// Admin-authenticated: mint a signed, expiring launch URL for a training owned
+// by the caller's tenant. The link embeds in any LMS as a web link / iframe.
+const createSecureLaunchUrl = async (req, res) => {
+  const clientId = getTenantClientId(req.user);
+  const trainingId = normalizeValue(req.params.id);
+
+  const training = await Training.findOne({ appId: trainingId, clientId }).lean();
+  if (!training) {
+    return fail(res, 404, "Training not found for this tenant.");
+  }
+  if (normalizeValue(training.payload?.status) !== "approved") {
+    return fail(res, 400, "Only approved trainings can be shared to an external LMS.");
+  }
+
+  const rawTtl = Number(req.body?.expiresInMinutes);
+  // Clamp the lifetime to a sane window: 5 minutes … 365 days.
+  const expiresInMinutes = Number.isFinite(rawTtl) && rawTtl > 0
+    ? Math.min(Math.max(Math.round(rawTtl), 5), 60 * 24 * 365)
+    : 60 * 24 * 7;
+
+  const token = signLaunchToken({
+    trainingId: training.appId,
+    clientId,
+    learnerId: normalizeValue(req.body?.learnerId),
+    learnerName: normalizeValue(req.body?.learnerName),
+    learnerEmail: normalizeValue(req.body?.learnerEmail),
+    expiresInMinutes,
+  });
+
+  const referer = normalizeValue(req.headers.referer);
+  const origin = normalizeValue(req.headers.origin) || (referer ? new URL(referer).origin : "");
+  const client = await Client.findOne({ appId: clientId }).lean();
+  const resolvedOrigin =
+    origin || (client?.domain ? `https://${client.domain}` : `https://${client?.subdomain || "app"}.trainup.ai`);
+  const launchUrl = buildPublicUrl(resolvedOrigin, `/secure-launch/${token}`, req.headers["x-app-base-path"]);
+
+  return ok(res, "Secure launch link generated.", {
+    trainingId: training.appId,
+    token,
+    launchUrl,
+    expiresInMinutes,
+  });
+};
+
+// Public: validate a signed launch token and return what the landing page needs
+// to auto-start the player (no login form) — mirrors resolveDemoTraining.
+const resolveSecureLaunch = async (req, res) => {
+  const verified = verifyLaunchToken(req.params.token);
+  if (!verified) {
+    return fail(res, 404, "This launch link is invalid or has expired.");
+  }
+
+  const training = await findTrainingById(verified.trainingId);
+  if (!training) {
+    return fail(res, 404, "Training launch was not found.");
+  }
+  if (normalizeValue(training.payload?.status) !== "approved") {
+    return fail(res, 404, "This training is not currently available.");
+  }
+
+  const brandingPayload = await buildLaunchBrandingPayload(training);
+  return ok(res, "Secure launch resolved.", {
+    trainingId: training.appId,
+    title: normalizeValue(training.payload?.title),
+    learnerName: verified.learnerName,
+    learnerEmail: verified.learnerEmail,
+    expiresAt: verified.expiresAt,
     ...brandingPayload,
   });
 };
@@ -1582,6 +1694,25 @@ const upsertDemoSession = async (req, res) => {
     { $set: { "payload.sessions": sessions, "payload.lastActivity": "Today" } },
   );
 
+  // Auto Result Sync (Method E): when a learner completes via a demo or signed
+  // LMS launch link, push completion + score to the customer's webhook.
+  if (action === "complete") {
+    void deliverCompletionWebhook({
+      clientId: training.clientId,
+      event: "training.completed",
+      training: { id: training.appId, title: normalizeValue(training.payload?.title) || "Training" },
+      learner: { id: guestEmail || guestName, name: guestName, email: guestEmail },
+      session: {
+        sessionId,
+        score: sessionRecord.score ?? sessionRecord.latestScore ?? null,
+        status: "completed",
+        progressPercent,
+        timeSpentSeconds: sessionRecord.timeSpent ?? null,
+        attemptNo: sessionRecord.attemptNo ?? 1,
+      },
+    });
+  }
+
   return ok(res, `Demo session ${action === "complete" ? "completed" : "updated"} successfully.`, {
     sessionId,
     status: sessionRecord.status,
@@ -1671,4 +1802,6 @@ module.exports = {
   getDemoTraining,
   upsertDemoSession,
   askDemoQuestion,
+  createSecureLaunchUrl,
+  resolveSecureLaunch,
 };

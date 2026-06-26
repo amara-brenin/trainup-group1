@@ -12,6 +12,7 @@ const mediaController = require("../controllers/mediaController");
 const settingsController = require("../controllers/settingsController");
 const emailCenterController = require("../controllers/emailCenterController");
 const groupSessionController = require("../controllers/groupSessionController");
+const launchController = require("../controllers/launchController");
 const { joinLimiter } = require("../middelwares/rateLimit");
 const { authTokenAdmin, allowAccess, allowRoles } = require("../middelwares");
 
@@ -61,9 +62,12 @@ router.delete("/api-keys/:id", allowAccess("api.revoke", "api"), apiKeyControlle
 
 router.get("/api-config", allowAccess("api.view", "api"), commonController.getApiConfig);
 router.put("/api-config", allowAccess("api.config.edit", "api"), commonController.updateApiConfig);
-router.get("/webhooks", allowAccess("webhooks.view", "webhooks"), commonController.getWebhooks);
+// Webhook config + delivery logs live under the Integrations (settings) tab.
+router.get("/webhooks", allowAccess("settings.view", "settings"), commonController.getWebhooks);
 router.put("/webhooks", allowAccess("webhooks.edit", "webhooks"), commonController.updateWebhooks);
-router.post("/webhooks/test", allowAccess("webhooks.replay", "webhooks"), commonController.testWebhooks);
+// Webhook config now lives under the Integrations (settings) tab, so align the
+// test action with settings edit — whoever can save the webhook URL can test it.
+router.post("/webhooks/test", allowAccess("settings.edit", "settings"), commonController.testWebhooks);
 router.post("/domains/verify", allowAccess("settings.edit", "settings"), commonController.verifyDomain);
 router.post("/smtp/test", allowAccess("settings.edit", "settings"), commonController.testSmtp);
 router.get("/iframe", allowAccess("iframe.view", "iframe"), commonController.getIframe);
@@ -78,6 +82,12 @@ router.get("/training-workspace/capacity", allowAccess("training.create", "train
 router.get("/training-workspace/trainees", allowAccess("training.assign", "trainingWorkspace"), workspaceController.listAssignableTrainees);
 router.get("/training-workspace/:id", allowAccess(undefined, "trainingWorkspace"), workspaceController.getOne);
 router.post("/training-workspace/:id/assign", allowAccess("training.assign", "trainingWorkspace"), workspaceController.assignTraining);
+// LMS_INTEGRATION_RESEARCH.md (Method A/E): mint a signed external launch link.
+// Open to any authenticated tenant user (authTokenAdmin already applied above);
+// real authorization is in the controller — the training must belong to the
+// caller's client AND be approved. This avoids 403s from tenant-customized
+// module permissions (e.g. reviewer roles) while staying tenant-safe.
+router.post("/training-workspace/:id/launch-url", launchController.createSecureLaunchUrl);
 router.put("/training-workspace/sync", allowAccess(undefined, "trainingWorkspace"), workspaceController.sync);
 
 // Group Training Hall — session management.

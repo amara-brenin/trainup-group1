@@ -188,12 +188,23 @@ export interface ClientRecord {
     thumbnailUrl?: string;
   allowedOrigins: string[];
   webhookUrl: string;
+  webhookSigningSecret?: string;
   lastWebhookTestAt?: string;
   lastWebhookTestStatus?: DeliveryTestStatus;
   lastWebhookTestMessage?: string;
   apiScope: string;
   iframeBaseUrl?: string;
   iframeAllowedParentDomains?: string[];
+  ltiClientId?: string;
+  ltiDeploymentId?: string;
+  ltiPlatformKeysetUrl?: string;
+  ltiAccessTokenUrl?: string;
+  ltiOidcAuthUrl?: string;
+  scormEnabled?: boolean;
+  xapiEnabled?: boolean;
+  xapiLrsEndpoint?: string;
+  xapiClientId?: string;
+  xapiClientSecret?: string;
   emailDeliveryEnabled?: boolean;
   smtpHost?: string;
   smtpPort?: number;
@@ -1034,6 +1045,7 @@ export interface ClientFormValues {
     darkLogoUrl?: string;
   faviconUrl?: string;
   webhookUrl?: string;
+  webhookSigningSecret?: string;
   apiScope?: string;
   allowedOrigins?: string;
   iframeEnabled?: boolean;
@@ -1138,6 +1150,7 @@ export interface TenantSettingsPayload {
     ssoAllowedDomains: string[];
     ssoAutoProvisionUsers: boolean;
     webhookUrl: string;
+    webhookSigningSecret: string;
     lastWebhookTestAt: string;
     lastWebhookTestStatus: DeliveryTestStatus;
     lastWebhookTestMessage: string;
@@ -1154,6 +1167,17 @@ export interface TenantSettingsPayload {
     domainLastCheckedAt: string;
     domainLastCheckedResult: string;
     domainVerifiedAt: string;
+    // LMS Integration (LMS_INTEGRATION_RESEARCH.md)
+    ltiClientId: string;
+    ltiDeploymentId: string;
+    ltiPlatformKeysetUrl: string;
+    ltiAccessTokenUrl: string;
+    ltiOidcAuthUrl: string;
+    scormEnabled: boolean;
+    xapiEnabled: boolean;
+    xapiLrsEndpoint: string;
+    xapiClientId: string;
+    xapiClientSecret: string;
   };
   smtp: {
     emailDeliveryEnabled: boolean;

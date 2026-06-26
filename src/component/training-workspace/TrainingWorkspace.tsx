@@ -78,6 +78,7 @@ import AxiosHelper, { isServerApiEnabled } from "../../helper/AxiosHelper";
 import { createGroupSession, getTrainingAnalytics, type TrainingAnalytics } from "../../helper/groupSessionApi";
 import { withBase, withOrigin } from "../../helper/basePath";
 import { buildScriptAudioKey, generateScriptAudioDataUri } from "../../helper/scriptAudio";
+import LmsLaunchLinkGenerator from "./LmsLaunchLinkGenerator";
 import { extractKnowledgeDocument } from "../../helper/trainingKnowledge";
 import { buildSlidePointsFromSource } from "../../helper/trainingNarration";
 import { generatePromptDrivenNarration, translateSlideNarration } from "../../helper/trainingNarrationApi";
@@ -5133,6 +5134,7 @@ const TrainingBuilder = ({
                                 </button>
                               </div>
                             ) : null}
+                            <LmsLaunchLinkGenerator trainingId={initialTraining?.id ?? ""} />
                           </div>
                         </div>
                       </div>

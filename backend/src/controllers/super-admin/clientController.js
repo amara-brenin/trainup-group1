@@ -255,12 +255,24 @@ const toClientRecord = async (client) => {
     faviconUrl: client.faviconUrl || "",
     allowedOrigins: client.allowedOrigins || [],
     webhookUrl: client.webhookUrl,
+    webhookSigningSecret: client.webhookSigningSecret || "",
     lastWebhookTestAt: client.lastWebhookTestAt || "",
     lastWebhookTestStatus: client.lastWebhookTestStatus || "not_tested",
     lastWebhookTestMessage: client.lastWebhookTestMessage || "",
     apiScope: client.apiScope,
     iframeBaseUrl: client.iframeBaseUrl || "",
     iframeAllowedParentDomains: client.iframeAllowedParentDomains || [],
+    // LMS Integration (LMS_INTEGRATION_RESEARCH.md)
+    ltiClientId: client.ltiClientId || "",
+    ltiDeploymentId: client.ltiDeploymentId || "",
+    ltiPlatformKeysetUrl: client.ltiPlatformKeysetUrl || "",
+    ltiAccessTokenUrl: client.ltiAccessTokenUrl || "",
+    ltiOidcAuthUrl: client.ltiOidcAuthUrl || "",
+    scormEnabled: client.scormEnabled !== false,
+    xapiEnabled: Boolean(client.xapiEnabled),
+    xapiLrsEndpoint: client.xapiLrsEndpoint || "",
+    xapiClientId: client.xapiClientId || "",
+    xapiClientSecret: client.xapiClientSecret || "",
     emailDeliveryEnabled: Boolean(client.emailDeliveryEnabled),
     smtpHost: client.smtpHost || "",
     smtpPort: Number(client.smtpPort || 587),
@@ -791,10 +803,22 @@ const updateSettings = async (req, res) => {
     client.ssoAutoProvisionUsers = Boolean(values.ssoAutoProvisionUsers ?? true);
     client.allowedOrigins = parseList(values.allowedOrigins);
     client.webhookUrl = String(values.webhookUrl || "").trim();
+    client.webhookSigningSecret = String(values.webhookSigningSecret || "").trim();
     client.apiScope = String(values.apiScope || "").trim();
     client.iframeEnabled = Boolean(values.iframeEnabled ?? client.iframeEnabled);
     client.iframeBaseUrl = String(values.iframeBaseUrl || "").trim();
     client.iframeAllowedParentDomains = parseList(values.iframeAllowedParentDomains);
+    // LMS Integration (LMS_INTEGRATION_RESEARCH.md)
+    client.ltiClientId = String(values.ltiClientId || "").trim();
+    client.ltiDeploymentId = String(values.ltiDeploymentId || "").trim();
+    client.ltiPlatformKeysetUrl = String(values.ltiPlatformKeysetUrl || "").trim();
+    client.ltiAccessTokenUrl = String(values.ltiAccessTokenUrl || "").trim();
+    client.ltiOidcAuthUrl = String(values.ltiOidcAuthUrl || "").trim();
+    client.scormEnabled = Boolean(values.scormEnabled ?? true);
+    client.xapiEnabled = Boolean(values.xapiEnabled ?? false);
+    client.xapiLrsEndpoint = String(values.xapiLrsEndpoint || "").trim();
+    client.xapiClientId = String(values.xapiClientId || "").trim();
+    client.xapiClientSecret = String(values.xapiClientSecret || "").trim();
   } else if (section === "smtp") {
     if (values.smtpFromEmail && !isValidEmail(values.smtpFromEmail)) {
       return fail(res, 400, "Please correct the highlighted fields.", {
