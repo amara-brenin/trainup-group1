@@ -46,6 +46,16 @@ router.post("/demo/:demoToken/ask", askLimiter, launchController.askDemoQuestion
 // endpoints (findTrainingByDemoToken accepts signed tokens).
 router.get("/launch/secure/:token/resolve", resolveLimiter, launchController.resolveSecureLaunch);
 
+// LTI 1.3 Tool endpoints (LMS_INTEGRATION_RESEARCH.md — Method B). Public: the
+// platform (LMS) calls these; auth is via signed JWTs, not admin sessions.
+const ltiController = require("../controllers/ltiController");
+router.get("/lti/jwks", ltiController.jwks);
+router.get("/lti/login", ltiController.login);
+router.post("/lti/login", ltiController.login);
+router.post("/lti/launch", ltiController.launch);
+router.get("/lti/deep-link/select", ltiController.selectContent);
+router.post("/lti/deep-link/return", ltiController.returnContent);
+
 // Group Training Hall — public surfaces (token-scoped, no admin auth).
 router.get("/group/:joinToken/resolve", resolveLimiter, groupSessionController.resolveJoin);
 router.post("/group/:gsId/ask", askLimiter, groupSessionController.askGroupQuestion);

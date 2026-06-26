@@ -19,6 +19,7 @@ const { createGroqReply } = require("../helpers/groq");
 const { signLaunchToken, verifyLaunchToken } = require("../helpers/launchToken");
 const { deliverCompletionWebhook } = require("../helpers/clientDelivery");
 const { deliverXapiStatement } = require("../helpers/xapi");
+const { deliverLtiGrade } = require("../helpers/lti");
 const { buildScormPackage } = require("../helpers/scorm");
 const { buildPublicUrl } = require("../helpers/publicUrl");
 const { getTenantClientId } = require("../helpers/tenant");
@@ -1717,7 +1718,8 @@ const upsertDemoSession = async (req, res) => {
   // A signed launch token means this came from an external LMS link (a real,
   // billable learner) — not a free public marketing demo. We treat the two
   // differently for billing (below) and result webhooks (further down).
-  const isLmsLaunch = Boolean(verifyLaunchToken(req.params.demoToken));
+  const ltiLaunch = verifyLaunchToken(req.params.demoToken);
+  const isLmsLaunch = Boolean(ltiLaunch);
   const isNewCompletedSession =
     action === "complete" &&
     normalizeValue(existingSession?.status).toLowerCase() !== "completed";
@@ -1833,6 +1835,15 @@ const upsertDemoSession = async (req, res) => {
         timeSpentSeconds: sessionRecord.timeSpent ?? null,
       },
     });
+    // LTI 1.3 (Method B): push the score to the LMS gradebook (AGS) if this
+    // launch came from an LTI link carrying grade-service context.
+    if (ltiLaunch?.ags) {
+      void deliverLtiGrade({
+        clientId: training.clientId,
+        ags: ltiLaunch.ags,
+        score: sessionRecord.score ?? sessionRecord.latestScore ?? null,
+      });
+    }
   }
 
   // Keep tenant metrics (session counts) in sync for billable LMS completions.

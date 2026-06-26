@@ -35,6 +35,7 @@ const signLaunchToken = ({
   learnerName = "",
   learnerEmail = "",
   expiresInMinutes = 60 * 24 * 7,
+  ags = null,
 }) => {
   const normalizedTrainingId = String(trainingId || "").trim();
   if (!normalizedTrainingId) {
@@ -53,6 +54,11 @@ const signLaunchToken = ({
     exp: issuedAt + Math.max(1, Math.round(Number(expiresInMinutes) || 0)) * 60,
     n: crypto.randomBytes(8).toString("hex"),
   };
+  // LTI 1.3 (Method B): carry the AGS grade-passback context so the score can be
+  // pushed to the LMS gradebook when this launch's session completes.
+  if (ags && ags.lineitem) {
+    payload.a = ags;
+  }
 
   const encodedPayload = base64url(JSON.stringify(payload));
   return `${encodedPayload}.${sign(encodedPayload)}`;
@@ -102,6 +108,7 @@ const verifyLaunchToken = (token) => {
     learnerEmail: String(payload.le || ""),
     issuedAt: payload.iat || null,
     expiresAt: payload.exp || null,
+    ags: payload.a || null,
   };
 };
 
