@@ -20,7 +20,7 @@ const run = promisify(execFile);
 // the caller can fall back gracefully.
 
 const TOOLS_MISSING = "TOOLS_MISSING";
-const CONVERT_TIMEOUT_MS = 120000;
+const CONVERT_TIMEOUT_MS = 300000;
 
 // Try `libreoffice` then `soffice` (both ship with the suite).
 const runLibreOffice = async (args, cwd) => {
@@ -79,8 +79,11 @@ const convertPptxToSlideImages = async (pptxBuffer, originalName = "deck.pptx") 
     const pdfPath = path.join(workDir, "input.pdf");
     await fs.access(pdfPath); // throws if conversion produced nothing
 
-    // 2) PDF → one PNG per page (150 DPI is crisp but reasonable in size)
-    await runPoppler("pdftoppm", ["-png", "-r", "150", pdfPath, path.join(workDir, "slide")]);
+    // 2) PDF → one PNG per page. Lower DPI for large files to avoid OOM.
+    const pdfStat = await fs.stat(pdfPath);
+    const pdfSizeMb = pdfStat.size / (1024 * 1024);
+    const dpi = pdfSizeMb > 50 ? "72" : pdfSizeMb > 20 ? "100" : "150";
+    await runPoppler("pdftoppm", ["-png", "-r", dpi, pdfPath, path.join(workDir, "slide")]);
 
     // 3) PDF → per-page text (form-feed \f separates pages)
     let pageTexts = [];
