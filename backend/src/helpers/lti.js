@@ -134,7 +134,20 @@ const postAgsScore = async (client, ags, { userId, score }) => {
     : [AGS_SCORE_SCOPE];
 
   const token = await getAgsAccessToken(client, scopes);
-  const numericScore = typeof score === "number" && !Number.isNaN(score) ? score : 0;
+  const hasScore = typeof score === "number" && !Number.isNaN(score);
+
+  // For trainings without a quiz (no score), record completion only — do NOT
+  // send scoreGiven, otherwise the gradebook shows a misleading 0/100.
+  const scoreBody = {
+    userId,
+    activityProgress: "Completed",
+    gradingProgress: hasScore ? "FullyGraded" : "NotNeeded",
+    timestamp: new Date().toISOString(),
+  };
+  if (hasScore) {
+    scoreBody.scoreGiven = score;
+    scoreBody.scoreMaximum = 100;
+  }
 
   const res = await fetch(buildScoresUrl(ags.lineitem), {
     method: "POST",
@@ -142,14 +155,7 @@ const postAgsScore = async (client, ags, { userId, score }) => {
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/vnd.ims.lis.v1.score+json",
     },
-    body: JSON.stringify({
-      userId,
-      scoreGiven: numericScore,
-      scoreMaximum: 100,
-      activityProgress: "Completed",
-      gradingProgress: "FullyGraded",
-      timestamp: new Date().toISOString(),
-    }),
+    body: JSON.stringify(scoreBody),
   });
 
   return {

@@ -255,6 +255,22 @@ const resolveMaxAttempts = (training) => {
     : 0;
 };
 
+// Count a learner's already-completed LMS-launch attempts for a training
+// (matched by their identity key = email or name). Used to enforce maxAttempts
+// on external launches, where learners are guests (no logged-in attempt history).
+const countCompletedLmsAttempts = (training, identityKey, excludeSessionId = "") => {
+  const key = normalizeValue(identityKey).toLowerCase();
+  if (!key) return 0;
+  const sessions = Array.isArray(training?.payload?.sessions) ? training.payload.sessions : [];
+  return sessions.filter(
+    (s) =>
+      s?.viaLmsLaunch === true &&
+      normalizeValue(s?.id) !== normalizeValue(excludeSessionId) &&
+      normalizeValue(s?.status).toLowerCase() === "completed" &&
+      normalizeValue(s?.ssoId).toLowerCase() === key,
+  ).length;
+};
+
 const hasViewerCompletedTraining = (training, viewer) => {
   if (!training || !viewer) {
     return false;
@@ -1634,6 +1650,19 @@ const resolveSecureLaunch = async (req, res) => {
     return fail(res, 404, "This training is not currently available.");
   }
 
+  // If the token carries learner identity (LTI/SCORM/per-learner link), tell them
+  // up front when they've already used all their attempts — better than letting
+  // them go through the whole training only to be blocked at completion.
+  const identity = verified.learnerEmail || verified.learnerName;
+  const maxAttempts = resolveMaxAttempts(training);
+  if (identity && maxAttempts > 0 && countCompletedLmsAttempts(training, identity) >= maxAttempts) {
+    return fail(
+      res,
+      403,
+      `You have already completed this training the maximum of ${maxAttempts} time${maxAttempts === 1 ? "" : "s"}.`,
+    );
+  }
+
   const brandingPayload = await buildLaunchBrandingPayload(training);
   return ok(res, "Secure launch resolved.", {
     trainingId: training.appId,
@@ -1724,6 +1753,23 @@ const upsertDemoSession = async (req, res) => {
     action === "complete" &&
     normalizeValue(existingSession?.status).toLowerCase() !== "completed";
 
+  // Enforce per-learner attempt limit on LMS launches (raw link / SCORM / LTI).
+  // Guests are matched by identity (email/name); block BEFORE billing so a
+  // disallowed retake is neither charged nor recorded.
+  if (isLmsLaunch && isNewCompletedSession) {
+    const maxAttempts = resolveMaxAttempts(training);
+    if (maxAttempts > 0) {
+      const priorAttempts = countCompletedLmsAttempts(training, guestEmail || guestName, sessionId);
+      if (priorAttempts >= maxAttempts) {
+        return fail(
+          res,
+          403,
+          `You have already used all ${maxAttempts} attempt${maxAttempts === 1 ? "" : "s"} for this training.`,
+        );
+      }
+    }
+  }
+
   // LMS launch completions consume credits + lifetime session quota, exactly like
   // authenticated launches, so external-LMS usage is never a free bypass. Public
   // demos remain free. Gate BEFORE persisting so an unpayable session isn't saved.
@@ -1809,7 +1855,9 @@ const upsertDemoSession = async (req, res) => {
   // Auto Result Sync (Method E): push completion + score to the customer's
   // webhook ONLY for real LMS-launch learners — not free public marketing demos
   // (a random demo guest's result should not land in the customer's system).
-  if (action === "complete" && isLmsLaunch) {
+  // Gate on isNewCompletedSession (not just action) so a re-synced/duplicate
+  // "complete" of an already-finished session does not re-fire deliveries.
+  if (isNewCompletedSession && isLmsLaunch) {
     const trainingTitle = normalizeValue(training.payload?.title) || "Training";
     void deliverCompletionWebhook({
       clientId: training.clientId,
