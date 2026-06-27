@@ -467,7 +467,9 @@ const extractSlideTextFromXml = (xml: string) => {
   return normalizeTextLines(matches.map((match) => decodeXmlValue(match[1] ?? "")));
 };
 
-export const extractPptxSlidesToImages = async (file: File) => {
+// Fallback: in-browser TEXT extraction (no faithful visuals). Used only when the
+// server can't render the PPTX (LibreOffice/poppler not installed).
+const extractPptxTextSlides = async (file: File): Promise<SlideMediaImportRecord[]> => {
   if (isRemoteMediaEnabled) {
     await uploadBlobToRemote({
       blob: file,
@@ -538,6 +540,47 @@ export const extractPptxSlidesToImages = async (file: File) => {
   }
 
   return assets;
+};
+
+// Thrown when the server lacks the PPTX→image conversion tools, so the caller
+// can fall back to text extraction.
+class PptxConversionUnavailableError extends Error {}
+
+const importPptxViaServer = async (file: File): Promise<SlideMediaImportRecord[]> => {
+  const response = await fetch(getRequestUrl("/media/pptx-import"), {
+    method: "POST",
+    headers: {
+      "Content-Type": file.type || "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "X-File-Name": encodeURIComponent(file.name),
+      ...getAuthHeaders(),
+    },
+    body: file,
+  });
+  if (response.status === 501) {
+    throw new PptxConversionUnavailableError("Server PPTX conversion is unavailable.");
+  }
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, "Unable to import the PPTX deck."));
+  }
+  const payload = (await response.json()) as { status: boolean; data?: { slides?: SlideMediaImportRecord[] } };
+  return payload.data?.slides ?? [];
+};
+
+// Convert a PPTX into slide media. Prefers SERVER-SIDE rendering (LibreOffice →
+// PDF → PNG) for faithful slide visuals; falls back to in-browser text
+// extraction only if the server doesn't have the conversion tools installed.
+export const extractPptxSlidesToImages = async (file: File): Promise<SlideMediaImportRecord[]> => {
+  if (isRemoteMediaEnabled) {
+    try {
+      return await importPptxViaServer(file);
+    } catch (error) {
+      if (!(error instanceof PptxConversionUnavailableError)) {
+        throw error;
+      }
+      // Tools missing on the server → fall back to text extraction below.
+    }
+  }
+  return extractPptxTextSlides(file);
 };
 
 export const resolveSlideMediaAsset = async (assetId: string) => {

@@ -1,4 +1,5 @@
 const express = require("express");
+const config = require("../config");
 
 const authController = require("../controllers/authController");
 const commonController = require("../controllers/commonController");
@@ -110,8 +111,18 @@ router.post("/media/upload-url", allowAccess(undefined, "trainingWorkspace"), me
 router.post(
   "/media/:id/upload",
   allowAccess(undefined, "trainingWorkspace"),
-  express.raw({ type: "*/*", limit: "20mb" }),
+  // Match the allowed upload size (config.limits.maxUploadSizeMb, 50MB) plus a
+  // small margin so raw .pptx/.pdf files aren't rejected by the body parser
+  // before the controller's friendly size check runs. (Was 20mb → broke PPTX.)
+  express.raw({ type: "*/*", limit: `${config.limits.maxUploadSizeMb + 5}mb` }),
   mediaController.uploadBinary,
+);
+// Server-side PPTX → slide images (LibreOffice + poppler). Raw .pptx body.
+router.post(
+  "/media/pptx-import",
+  allowAccess(undefined, "trainingWorkspace"),
+  express.raw({ type: "*/*", limit: `${config.limits.maxUploadSizeMb + 5}mb` }),
+  mediaController.importPptx,
 );
 router.get("/media/:id/resolve", allowAccess(undefined, "trainingWorkspace"), mediaController.resolve);
 router.delete("/media/:id", allowAccess(undefined, "trainingWorkspace"), mediaController.remove);
