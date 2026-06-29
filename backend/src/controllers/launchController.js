@@ -4,12 +4,25 @@ const MediaAsset = require("../models/MediaAsset");
 const Client = require("../models/Client");
 const User = require("../models/User");
 const { createReadUrl, isStorageConfigured } = require("../helpers/storage");
-const { CREDIT_COSTS, assertUsageWithinPlan, consumeClientCredits } = require("../helpers/credits");
+const {
+  CREDIT_COSTS,
+  consumeClientCredits,
+  ensureClientEntitlement,
+  assertLifetimeQuota,
+  assertSubscriptionActive,
+} = require("../helpers/credits");
 const { notifyRolesInClient, notifyTrainingOwner } = require("../helpers/notifications");
 const { getTenantSetting, buildDefaultTenantAppSettings, syncClientMetrics } = require("../helpers/tenant");
 const { ok, fail } = require("../helpers/response");
 const { getBearerToken, verifyAuthToken } = require("../helpers/auth");
 const { createGroqReply } = require("../helpers/groq");
+const { signLaunchToken, verifyLaunchToken } = require("../helpers/launchToken");
+const { deliverCompletionWebhook } = require("../helpers/clientDelivery");
+const { deliverXapiStatement } = require("../helpers/xapi");
+const { deliverLtiGrade } = require("../helpers/lti");
+const { buildScormPackage } = require("../helpers/scorm");
+const { buildPublicUrl } = require("../helpers/publicUrl");
+const { getTenantClientId } = require("../helpers/tenant");
 const config = require("../config");
 
 const normalizeValue = (value) => String(value || "").trim();
@@ -240,6 +253,22 @@ const resolveMaxAttempts = (training) => {
   return Number.isFinite(configuredMaxAttempts) && configuredMaxAttempts > 0
     ? Math.floor(configuredMaxAttempts)
     : 0;
+};
+
+// Count a learner's already-completed LMS-launch attempts for a training
+// (matched by their identity key = email or name). Used to enforce maxAttempts
+// on external launches, where learners are guests (no logged-in attempt history).
+const countCompletedLmsAttempts = (training, identityKey, excludeSessionId = "") => {
+  const key = normalizeValue(identityKey).toLowerCase();
+  if (!key) return 0;
+  const sessions = Array.isArray(training?.payload?.sessions) ? training.payload.sessions : [];
+  return sessions.filter(
+    (s) =>
+      s?.viaLmsLaunch === true &&
+      normalizeValue(s?.id) !== normalizeValue(excludeSessionId) &&
+      normalizeValue(s?.status).toLowerCase() === "completed" &&
+      normalizeValue(s?.ssoId).toLowerCase() === key,
+  ).length;
 };
 
 const hasViewerCompletedTraining = (training, viewer) => {
@@ -1093,14 +1122,30 @@ const upsertLaunchSession = async (req, res) => {
 
   if (isNewCompletedSession) {
     const client = await Client.findOne({ appId: training.clientId });
-    const usageError = assertUsageWithinPlan({
-      client,
-      resource: "sessions",
-      nextCount: Number(client?.sessions || 0) + 1,
-    });
+
+    // Issue 1: expired subscriptions cannot consume a new session.
+    const expiredError = assertSubscriptionActive(client);
+    if (expiredError) {
+      return fail(res, 402, expiredError);
+    }
+
+    // Issue 2: session limit is LIFETIME (total ever created), not current count
+    // — deleting/resetting sessions never reclaims quota. Mirrors group sessions.
+    if (client && !client.quotaInitialized) {
+      const publishedCount = await Training.countDocuments({
+        clientId: training.clientId,
+        "payload.status": "approved",
+      });
+      await ensureClientEntitlement(client, {
+        training: publishedCount,
+        session: Number(client.sessions || 0),
+        user: Number(client.activeUsers || 0),
+      });
+    }
+    const usageError = client ? assertLifetimeQuota(client, "session", 1) : null;
 
     if (usageError) {
-      return fail(res, 400, usageError);
+      return fail(res, 403, usageError);
     }
 
     const creditResult = await consumeClientCredits({
@@ -1111,6 +1156,12 @@ const upsertLaunchSession = async (req, res) => {
 
     if (!creditResult.ok) {
       return fail(res, 400, creditResult.message);
+    }
+
+    // Permanently record lifetime session usage (never decremented on delete).
+    if (client) {
+      client.sessionUsedLifetime = Number(client.sessionUsedLifetime || 0) + 1;
+      await client.save();
     }
   }
 
@@ -1162,6 +1213,43 @@ const upsertLaunchSession = async (req, res) => {
         },
       }),
     ]);
+
+    // Auto Result Sync (Method E): push completion + score to the customer's
+    // own system/LMS via their configured webhook. Fire-and-forget (NOT awaited)
+    // so a slow/down customer endpoint never delays the learner's response.
+    void deliverCompletionWebhook({
+      clientId: training.clientId,
+      event: "training.completed",
+      training: { id: training.appId, title: trainingTitle },
+      learner: {
+        id: viewerIdentity.ssoId || viewerIdentity.learnerEmail || "",
+        name: viewerIdentity.learnerName || "",
+        email: viewerIdentity.learnerEmail || "",
+      },
+      session: {
+        sessionId,
+        score: nextSessionRecord.score ?? nextSessionRecord.latestScore ?? null,
+        status: "completed",
+        progressPercent: nextSessionRecord.progressPercent ?? null,
+        timeSpentSeconds: nextSessionRecord.timeSpent ?? null,
+        attemptNo: nextSessionRecord.attemptNo ?? 1,
+      },
+    });
+
+    // xAPI (Method D): emit a learning statement to the tenant's LRS (if enabled).
+    void deliverXapiStatement({
+      clientId: training.clientId,
+      training: { id: training.appId, title: trainingTitle },
+      learner: {
+        id: viewerIdentity.ssoId || viewerIdentity.learnerEmail || "",
+        name: viewerIdentity.learnerName || "",
+        email: viewerIdentity.learnerEmail || "",
+      },
+      session: {
+        score: nextSessionRecord.score ?? nextSessionRecord.latestScore ?? null,
+        timeSpentSeconds: nextSessionRecord.timeSpent ?? null,
+      },
+    });
   }
   return ok(res, "Training session updated successfully.", {
     sessionId,
@@ -1420,10 +1508,23 @@ const handleTrulienceEvent = async (req, res) => {
 const findTrainingByDemoToken = async (demoToken) => {
   const token = normalizeValue(demoToken);
   if (!token) return null;
-  return Training.findOne({
+
+  const demoTraining = await Training.findOne({
     "payload.options.allowPublicDemoAccess": true,
     "payload.options.demoToken": token,
   }).lean();
+  if (demoTraining) return demoTraining;
+
+  // LMS_INTEGRATION_RESEARCH.md (Method A/E): a signed external launch token is
+  // self-authorizing — when it verifies, load that training directly. This lets
+  // every existing demo endpoint (resolve/load/session/ask) serve secure links
+  // without duplicating the player surface.
+  const verified = verifyLaunchToken(token);
+  if (verified) {
+    return findTrainingById(verified.trainingId);
+  }
+
+  return null;
 };
 
 const resolveDemoTraining = async (req, res) => {
@@ -1436,6 +1537,139 @@ const resolveDemoTraining = async (req, res) => {
   return ok(res, "Demo training resolved.", {
     trainingId: training.appId,
     title: normalizeValue(training.payload?.title),
+    ...brandingPayload,
+  });
+};
+
+// ---------------------------------------------------------------------------
+// Signed external launch (LMS_INTEGRATION_RESEARCH.md — Method A / E)
+// ---------------------------------------------------------------------------
+
+// Admin-authenticated: mint a signed, expiring launch URL for a training owned
+// by the caller's tenant. The link embeds in any LMS as a web link / iframe.
+const createSecureLaunchUrl = async (req, res) => {
+  const clientId = getTenantClientId(req.user);
+  const trainingId = normalizeValue(req.params.id);
+
+  const training = await Training.findOne({ appId: trainingId, clientId }).lean();
+  if (!training) {
+    return fail(res, 404, "Training not found for this tenant.");
+  }
+  if (normalizeValue(training.payload?.status) !== "approved") {
+    return fail(res, 400, "Only approved trainings can be shared to an external LMS.");
+  }
+
+  const rawTtl = Number(req.body?.expiresInMinutes);
+  // Clamp the lifetime to a sane window: 5 minutes … 365 days.
+  const expiresInMinutes = Number.isFinite(rawTtl) && rawTtl > 0
+    ? Math.min(Math.max(Math.round(rawTtl), 5), 60 * 24 * 365)
+    : 60 * 24 * 7;
+
+  const token = signLaunchToken({
+    trainingId: training.appId,
+    clientId,
+    learnerId: normalizeValue(req.body?.learnerId),
+    learnerName: normalizeValue(req.body?.learnerName),
+    learnerEmail: normalizeValue(req.body?.learnerEmail),
+    expiresInMinutes,
+  });
+
+  const referer = normalizeValue(req.headers.referer);
+  const origin = normalizeValue(req.headers.origin) || (referer ? new URL(referer).origin : "");
+  const client = await Client.findOne({ appId: clientId }).lean();
+  const resolvedOrigin =
+    origin || (client?.domain ? `https://${client.domain}` : `https://${client?.subdomain || "app"}.trainup.ai`);
+  const launchUrl = buildPublicUrl(resolvedOrigin, `/secure-launch/${token}`, req.headers["x-app-base-path"]);
+
+  return ok(res, "Secure launch link generated.", {
+    trainingId: training.appId,
+    token,
+    launchUrl,
+    expiresInMinutes,
+  });
+};
+
+// Admin-authenticated: download a SCORM 1.2 dispatch package (Method C). The zip
+// wraps the live player via a long-lived signed launch URL; the customer uploads
+// it to their LMS, which then plays it and records completion/score.
+const downloadScormPackage = async (req, res) => {
+  const clientId = getTenantClientId(req.user);
+  const trainingId = normalizeValue(req.params.id);
+
+  const training = await Training.findOne({ appId: trainingId, clientId }).lean();
+  if (!training) {
+    return fail(res, 404, "Training not found for this tenant.");
+  }
+  if (normalizeValue(training.payload?.status) !== "approved") {
+    return fail(res, 400, "Only approved trainings can be exported to SCORM.");
+  }
+
+  const client = await Client.findOne({ appId: clientId }).lean();
+  if (client && client.scormEnabled === false) {
+    return fail(res, 403, "SCORM delivery is disabled for this tenant.");
+  }
+
+  // One package serves many learners over a long period → anonymous token with a
+  // long (1 year, the max) lifetime; the SCORM wrapper supplies each learner's
+  // identity from the LMS at play time.
+  const token = signLaunchToken({
+    trainingId: training.appId,
+    clientId,
+    expiresInMinutes: 60 * 24 * 365,
+  });
+
+  const referer = normalizeValue(req.headers.referer);
+  const origin = normalizeValue(req.headers.origin) || (referer ? new URL(referer).origin : "");
+  const resolvedOrigin =
+    origin || (client?.domain ? `https://${client.domain}` : `https://${client?.subdomain || "app"}.trainup.ai`);
+  const launchUrl = buildPublicUrl(resolvedOrigin, `/secure-launch/${token}`, req.headers["x-app-base-path"]);
+
+  const title = normalizeValue(training.payload?.title) || "Training";
+  const zipBuffer = buildScormPackage({ id: training.appId, title }, launchUrl);
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "training";
+
+  res.setHeader("Content-Type", "application/zip");
+  res.setHeader("Content-Disposition", `attachment; filename="scorm-${slug}.zip"`);
+  res.setHeader("Content-Length", zipBuffer.length);
+  return res.status(200).send(zipBuffer);
+};
+
+// Public: validate a signed launch token and return what the landing page needs
+// to auto-start the player (no login form) — mirrors resolveDemoTraining.
+const resolveSecureLaunch = async (req, res) => {
+  const verified = verifyLaunchToken(req.params.token);
+  if (!verified) {
+    return fail(res, 404, "This launch link is invalid or has expired.");
+  }
+
+  const training = await findTrainingById(verified.trainingId);
+  if (!training) {
+    return fail(res, 404, "Training launch was not found.");
+  }
+  if (normalizeValue(training.payload?.status) !== "approved") {
+    return fail(res, 404, "This training is not currently available.");
+  }
+
+  // If the token carries learner identity (LTI/SCORM/per-learner link), tell them
+  // up front when they've already used all their attempts — better than letting
+  // them go through the whole training only to be blocked at completion.
+  const identity = verified.learnerEmail || verified.learnerName;
+  const maxAttempts = resolveMaxAttempts(training);
+  if (identity && maxAttempts > 0 && countCompletedLmsAttempts(training, identity) >= maxAttempts) {
+    return fail(
+      res,
+      403,
+      `You have already completed this training the maximum of ${maxAttempts} time${maxAttempts === 1 ? "" : "s"}.`,
+    );
+  }
+
+  const brandingPayload = await buildLaunchBrandingPayload(training);
+  return ok(res, "Secure launch resolved.", {
+    trainingId: training.appId,
+    title: normalizeValue(training.payload?.title),
+    learnerName: verified.learnerName,
+    learnerEmail: verified.learnerEmail,
+    expiresAt: verified.expiresAt,
     ...brandingPayload,
   });
 };
@@ -1510,6 +1744,69 @@ const upsertDemoSession = async (req, res) => {
   const existingIndex = sessions.findIndex((s) => normalizeValue(s.id) === sessionId);
   const existingSession = existingIndex >= 0 ? sessions[existingIndex] : null;
 
+  // A signed launch token means this came from an external LMS link (a real,
+  // billable learner) — not a free public marketing demo. We treat the two
+  // differently for billing (below) and result webhooks (further down).
+  const ltiLaunch = verifyLaunchToken(req.params.demoToken);
+  const isLmsLaunch = Boolean(ltiLaunch);
+  const isNewCompletedSession =
+    action === "complete" &&
+    normalizeValue(existingSession?.status).toLowerCase() !== "completed";
+
+  // Enforce per-learner attempt limit on LMS launches (raw link / SCORM / LTI).
+  // Guests are matched by identity (email/name); block BEFORE billing so a
+  // disallowed retake is neither charged nor recorded.
+  if (isLmsLaunch && isNewCompletedSession) {
+    const maxAttempts = resolveMaxAttempts(training);
+    if (maxAttempts > 0) {
+      const priorAttempts = countCompletedLmsAttempts(training, guestEmail || guestName, sessionId);
+      if (priorAttempts >= maxAttempts) {
+        return fail(
+          res,
+          403,
+          `You have already used all ${maxAttempts} attempt${maxAttempts === 1 ? "" : "s"} for this training.`,
+        );
+      }
+    }
+  }
+
+  // LMS launch completions consume credits + lifetime session quota, exactly like
+  // authenticated launches, so external-LMS usage is never a free bypass. Public
+  // demos remain free. Gate BEFORE persisting so an unpayable session isn't saved.
+  if (isLmsLaunch && isNewCompletedSession) {
+    const client = await Client.findOne({ appId: training.clientId });
+
+    const expiredError = assertSubscriptionActive(client);
+    if (expiredError) return fail(res, 402, expiredError);
+
+    if (client && !client.quotaInitialized) {
+      const publishedCount = await Training.countDocuments({
+        clientId: training.clientId,
+        "payload.status": "approved",
+      });
+      await ensureClientEntitlement(client, {
+        training: publishedCount,
+        session: Number(client.sessions || 0),
+        user: Number(client.activeUsers || 0),
+      });
+    }
+
+    const usageError = client ? assertLifetimeQuota(client, "session", 1) : null;
+    if (usageError) return fail(res, 403, usageError);
+
+    const creditResult = await consumeClientCredits({
+      clientId: training.clientId,
+      credits: CREDIT_COSTS.session,
+      reason: `LMS launch session completed by ${guestEmail || guestName || "learner"}`,
+    });
+    if (!creditResult.ok) return fail(res, 400, creditResult.message);
+
+    if (client) {
+      client.sessionUsedLifetime = Number(client.sessionUsedLifetime || 0) + 1;
+      await client.save();
+    }
+  }
+
   const now = formatDateTime();
   const sessionRecord = {
     ...(existingSession || {}),
@@ -1534,6 +1831,7 @@ const upsertDemoSession = async (req, res) => {
     totalQuestions,
     progressPercent,
     mode: "demo",
+    viaLmsLaunch: isLmsLaunch,
     role: "guest",
     attemptNo: existingSession?.attemptNo || 1,
     askHistory: existingSession?.askHistory || [],
@@ -1553,6 +1851,53 @@ const upsertDemoSession = async (req, res) => {
     { appId: training.appId, clientId: training.clientId },
     { $set: { "payload.sessions": sessions, "payload.lastActivity": "Today" } },
   );
+
+  // Auto Result Sync (Method E): push completion + score to the customer's
+  // webhook ONLY for real LMS-launch learners — not free public marketing demos
+  // (a random demo guest's result should not land in the customer's system).
+  // Gate on isNewCompletedSession (not just action) so a re-synced/duplicate
+  // "complete" of an already-finished session does not re-fire deliveries.
+  if (isNewCompletedSession && isLmsLaunch) {
+    const trainingTitle = normalizeValue(training.payload?.title) || "Training";
+    void deliverCompletionWebhook({
+      clientId: training.clientId,
+      event: "training.completed",
+      training: { id: training.appId, title: trainingTitle },
+      learner: { id: guestEmail || guestName, name: guestName, email: guestEmail },
+      session: {
+        sessionId,
+        score: sessionRecord.score ?? sessionRecord.latestScore ?? null,
+        status: "completed",
+        progressPercent,
+        timeSpentSeconds: sessionRecord.timeSpent ?? null,
+        attemptNo: sessionRecord.attemptNo ?? 1,
+      },
+    });
+    // xAPI (Method D): emit a learning statement to the tenant's LRS (if enabled).
+    void deliverXapiStatement({
+      clientId: training.clientId,
+      training: { id: training.appId, title: trainingTitle },
+      learner: { id: guestEmail || guestName, name: guestName, email: guestEmail },
+      session: {
+        score: sessionRecord.score ?? sessionRecord.latestScore ?? null,
+        timeSpentSeconds: sessionRecord.timeSpent ?? null,
+      },
+    });
+    // LTI 1.3 (Method B): push the score to the LMS gradebook (AGS) if this
+    // launch came from an LTI link carrying grade-service context.
+    if (ltiLaunch?.ags) {
+      void deliverLtiGrade({
+        clientId: training.clientId,
+        ags: ltiLaunch.ags,
+        score: sessionRecord.score ?? sessionRecord.latestScore ?? null,
+      });
+    }
+  }
+
+  // Keep tenant metrics (session counts) in sync for billable LMS completions.
+  if (isLmsLaunch && isNewCompletedSession) {
+    await syncClientMetrics(training.clientId);
+  }
 
   return ok(res, `Demo session ${action === "complete" ? "completed" : "updated"} successfully.`, {
     sessionId,
@@ -1643,4 +1988,7 @@ module.exports = {
   getDemoTraining,
   upsertDemoSession,
   askDemoQuestion,
+  createSecureLaunchUrl,
+  resolveSecureLaunch,
+  downloadScormPackage,
 };

@@ -11,7 +11,9 @@ const createDomainVerificationToken = () => crypto.randomBytes(12).toString("hex
 const buildWebhookConfigPayload = (client, current = {}) => ({
   ...current,
   url: client?.webhookUrl || current?.url || "",
-  signingSecret: current?.signingSecret || "",
+  // Prefer the per-client signing secret set in Integration settings so the
+  // receiver can verify the HMAC signature; fall back to any stored value.
+  signingSecret: client?.webhookSigningSecret || current?.signingSecret || "",
   retryAttempts: Number(current?.retryAttempts || 3),
   timeoutSeconds: Number(current?.timeoutSeconds || 10),
   events: Array.isArray(current?.events) ? current.events : [],
@@ -22,6 +24,12 @@ const appendWebhookLog = (config, entry) => {
   const logs = Array.isArray(config?.logs) ? config.logs : [];
   return [entry, ...logs].slice(0, 20);
 };
+
+// Proper HMAC-SHA256 signature over the exact request body so the receiver can
+// verify the event genuinely came from TrainUp and was not tampered with.
+// Header convention: `x-trainup-signature: sha256=<hex>` + `x-trainup-timestamp`.
+const signWebhookBody = (rawBody, secret) =>
+  `sha256=${crypto.createHmac("sha256", String(secret || "")).update(String(rawBody)).digest("hex")}`;
 
 const runWithTimeout = async (promiseFactory, timeoutMs = DELIVERY_TIMEOUT_MS) => {
   const controller = new AbortController();
@@ -58,16 +66,19 @@ const sendWebhookTest = async (config, client) => {
 
   try {
     const startedAt = Date.now();
+    const rawBody = JSON.stringify(payload);
+    const timestamp = String(Math.floor(Date.now() / 1000));
     const response = await runWithTimeout(
       (signal) =>
         fetch(String(config.url), {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "x-trainup-signature": String(config.signingSecret || ""),
+            "x-trainup-signature": signWebhookBody(`${timestamp}.${rawBody}`, config.signingSecret),
+            "x-trainup-timestamp": timestamp,
             "x-trainup-event": payload.event,
           },
-          body: JSON.stringify(payload),
+          body: rawBody,
           signal,
         }),
       Math.max(1000, Number(config.timeoutSeconds || 10) * 1000),
@@ -106,6 +117,121 @@ const sendWebhookTest = async (config, client) => {
         latencyMs: null,
       },
     };
+  }
+};
+
+// Deliver a real completion/score event to the customer's configured webhook
+// (LMS_INTEGRATION_RESEARCH.md — Method E). Signed with HMAC so the receiver can
+// verify authenticity. Returns a log entry mirroring sendWebhookTest.
+const sendCompletionWebhook = async (config, client, { event, training, learner, session }) => {
+  const occurredAt = new Date().toISOString();
+  const payload = {
+    event,
+    source: "trainup",
+    occurredAt,
+    clientId: client.appId,
+    clientName: client.name,
+    domain: client.domain || `${client.subdomain || "app"}.trainup.ai`,
+    training: { id: training.id, title: training.title },
+    learner: { id: learner.id, name: learner.name, email: learner.email },
+    score: session.score ?? null,
+    status: session.status || "completed",
+    progressPercent: session.progressPercent ?? null,
+    timeSpentSeconds: session.timeSpentSeconds ?? null,
+    attemptNo: session.attemptNo ?? 1,
+    sessionId: session.sessionId || "",
+  };
+
+  const rawBody = JSON.stringify(payload);
+  const timestamp = String(Math.floor(Date.now() / 1000));
+
+  try {
+    const startedAt = Date.now();
+    const response = await runWithTimeout(
+      (signal) =>
+        fetch(String(config.url), {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-trainup-signature": signWebhookBody(`${timestamp}.${rawBody}`, config.signingSecret),
+            "x-trainup-timestamp": timestamp,
+            "x-trainup-event": payload.event,
+          },
+          body: rawBody,
+          signal,
+        }),
+      Math.max(1000, Number(config.timeoutSeconds || 10) * 1000),
+    );
+    const latencyMs = Date.now() - startedAt;
+    return {
+      success: response.ok,
+      status: response.ok ? "success" : "failed",
+      message: response.ok
+        ? `Result delivered to ${config.url}.`
+        : `Webhook endpoint responded with HTTP ${response.status}.`,
+      checkedAt: occurredAt,
+      log: {
+        id: `webhook-${Date.now()}`,
+        timestamp: occurredAt,
+        event: payload.event,
+        ssoId: payload.learner.id,
+        status: response.status,
+        latencyMs,
+      },
+    };
+  } catch (error) {
+    return {
+      success: false,
+      status: "failed",
+      message: error instanceof Error ? error.message : "Result delivery failed.",
+      checkedAt: occurredAt,
+      log: {
+        id: `webhook-${Date.now()}`,
+        timestamp: occurredAt,
+        event: payload.event,
+        ssoId: payload.learner.id,
+        status: 503,
+        latencyMs: null,
+      },
+    };
+  }
+};
+
+// Fire-and-forget dispatcher used at training-completion points. Loads the
+// tenant's webhook config, delivers the event, and records a delivery log.
+// Never throws — a webhook problem must not break the learner's completion.
+const deliverCompletionWebhook = async ({ clientId, training, learner, session, event = "training.completed" }) => {
+  try {
+    // Lazy requires avoid a circular dependency (tenant/Client ↔ clientDelivery).
+    const Client = require("../models/Client");
+    const { getTenantSetting, setTenantSetting } = require("./tenant");
+
+    const client = await Client.findOne({ appId: clientId });
+    if (!client) return;
+
+    const stored = await getTenantSetting(clientId, "webhookConfig", {});
+    const config = buildWebhookConfigPayload(client, stored);
+
+    if (!config.url) return; // No endpoint configured → nothing to deliver.
+
+    // If the tenant has explicitly chosen an event list, respect it; an empty
+    // list means "deliver all" (sensible default so it works out of the box).
+    if (Array.isArray(config.events) && config.events.length && !config.events.includes(event)) {
+      return;
+    }
+
+    const result = await sendCompletionWebhook(config, client, { event, training, learner, session });
+
+    client.lastWebhookTestAt = result.checkedAt;
+    client.lastWebhookTestStatus = result.status;
+    client.lastWebhookTestMessage = result.message;
+    await client.save();
+    await setTenantSetting(clientId, "webhookConfig", {
+      ...config,
+      logs: appendWebhookLog(config, result.log),
+    });
+  } catch {
+    // Swallow — delivery is best-effort and must not affect the response.
   }
 };
 
@@ -484,6 +610,9 @@ module.exports = {
   buildWebhookConfigPayload,
   appendWebhookLog,
   sendWebhookTest,
+  signWebhookBody,
+  sendCompletionWebhook,
+  deliverCompletionWebhook,
   verifyDomainRecord,
   sendSmtpTestEmail,
   sendTrainingAssignmentEmails,

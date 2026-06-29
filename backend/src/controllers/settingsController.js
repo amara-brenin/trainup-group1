@@ -151,6 +151,7 @@ const updateIntegrationSettings = async (client, values) => {
   client.ssoAllowedDomains = parseList(values.ssoAllowedDomains);
   client.ssoAutoProvisionUsers = Boolean(values.ssoAutoProvisionUsers ?? true);
   client.webhookUrl = webhookUrl;
+  client.webhookSigningSecret = String(values.webhookSigningSecret || "").trim();
   client.apiScope = String(values.apiScope || "").trim();
   client.allowedOrigins = parseList(values.allowedOrigins);
   client.iframeEnabled = Boolean(values.iframeEnabled);
@@ -159,6 +160,18 @@ const updateIntegrationSettings = async (client, values) => {
   client.lastWebhookTestStatus = client.lastWebhookTestStatus || "not_tested";
   client.subdomain = String(values.subdomain || client.subdomain || "").trim();
   applyDomainConfiguration(client, domain);
+
+  // LMS Integration (LMS_INTEGRATION_RESEARCH.md)
+  client.ltiClientId = String(values.ltiClientId || "").trim();
+  client.ltiDeploymentId = String(values.ltiDeploymentId || "").trim();
+  client.ltiPlatformKeysetUrl = String(values.ltiPlatformKeysetUrl || "").trim();
+  client.ltiAccessTokenUrl = String(values.ltiAccessTokenUrl || "").trim();
+  client.ltiOidcAuthUrl = String(values.ltiOidcAuthUrl || "").trim();
+  client.scormEnabled = Boolean(values.scormEnabled ?? true);
+  client.xapiEnabled = Boolean(values.xapiEnabled ?? false);
+  client.xapiLrsEndpoint = String(values.xapiLrsEndpoint || "").trim();
+  client.xapiClientId = String(values.xapiClientId || "").trim();
+  client.xapiClientSecret = String(values.xapiClientSecret || "").trim();
 
   return { errors: null };
 };

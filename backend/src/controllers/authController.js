@@ -410,7 +410,11 @@ const profile = async (req, res) => {
       ? await SuperAdmin.findOne({ appId: req.user.appId }, { image: 1 }).lean()
       : await User.findOne({ appId: req.user.appId }, { image: 1 }).lean();
   const userWithImage = { ...req.user, image: imageRecord?.image };
-  return ok(res, "Profile loaded.", sanitizeUserForClient(userWithImage, roleDefinitions, client));
+  const payload = sanitizeUserForClient(userWithImage, roleDefinitions, client);
+  // Additive: surface impersonation context so the banner persists across reloads.
+  const { buildImpersonationContext } = require("../helpers/impersonation");
+  payload.impersonation = buildImpersonationContext(req.impersonation, req.user);
+  return ok(res, "Profile loaded.", payload);
 };
 
 const updateProfile = async (req, res) => {

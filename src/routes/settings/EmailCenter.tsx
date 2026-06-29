@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ErrorMessage, Field, Form, Formik } from "formik";
 import { toast } from "react-toastify";
 import * as Yup from "yup";
@@ -46,6 +46,44 @@ const templateMeta: Record<TemplateKey, { title: string; description: string; su
     subjectKey: "resetPasswordSubject",
     templateKey: "resetPasswordTemplate",
   },
+};
+
+// Email templates are full-width (~600px) HTML; the preview cards are narrower,
+// so render the email at its design width and scale it down to fit the card
+// (clipped, no horizontal overflow). Height tracks the scaled content.
+const EMAIL_DESIGN_WIDTH = 600;
+
+const EmailPreview = ({ html, className = "" }: { html: string; className?: string }) => {
+  const outerRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
+  const [scale, setScale] = useState(1);
+  const [boxHeight, setBoxHeight] = useState<number | undefined>(undefined);
+
+  useLayoutEffect(() => {
+    const outer = outerRef.current;
+    const inner = innerRef.current;
+    if (!outer || !inner) return undefined;
+    const measure = () => {
+      const width = outer.clientWidth || EMAIL_DESIGN_WIDTH;
+      const nextScale = Math.min(1, width / EMAIL_DESIGN_WIDTH);
+      setScale(nextScale);
+      setBoxHeight(inner.scrollHeight * nextScale);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(outer);
+    return () => ro.disconnect();
+  }, [html]);
+
+  return (
+    <div ref={outerRef} className={className} style={{ overflow: "hidden", height: boxHeight }}>
+      <div
+        ref={innerRef}
+        style={{ width: EMAIL_DESIGN_WIDTH, transform: `scale(${scale})`, transformOrigin: "top left" }}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
+    </div>
+  );
 };
 
 export const EmailCenterPanel = () => {
@@ -121,7 +159,7 @@ export const EmailCenterPanel = () => {
                 <div className="small text-body-secondary mb-1">Subject</div>
                 <div className="fw-semibold mb-3">{template.subject}</div>
                 <div className="small text-body-secondary mb-1">Preview</div>
-                <div className="border rounded p-3 bg-light-subtle" style={{ minHeight: 120 }} dangerouslySetInnerHTML={{ __html: template.body }} />
+                <EmailPreview html={template.body} className="border rounded bg-light-subtle" />
                 <div className="d-flex justify-content-end pt-3">
                   <button type="button" className="btn btn-outline-primary" onClick={() => setActiveTemplate(template.key)}>
                     View / Edit
@@ -241,7 +279,7 @@ export const EmailCenterPanel = () => {
                   <ErrorMessage name="template" component="small" className="text-danger" />
                 </div>
                 <div className="small text-body-secondary mb-2">Live preview</div>
-                <div className="border rounded p-3 bg-light-subtle mb-3" dangerouslySetInnerHTML={{ __html: values.template }} />
+                <EmailPreview html={values.template} className="border rounded bg-light-subtle mb-3" />
                 <div className="d-flex justify-content-end gap-2">
                   <button type="button" className="btn btn-outline-secondary" onClick={() => setActiveTemplate(null)}>
                     Cancel

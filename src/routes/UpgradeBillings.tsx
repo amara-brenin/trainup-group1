@@ -805,7 +805,9 @@ const UpgradeBillings = () => {
               ) : null;
             })() : null}
 
-            {/* Phase E / Task 1: Current Subscription */}
+            {/* Phase E / Task 1: Current Subscription — hidden once the plan
+                has expired (the expired plan header + renew CTA stay above). */}
+            {!isExpired ? (
             <div className="card mb-3">
               <div className="card-body">
                 <h2 className="h4 fw-semibold mb-3">Current Subscription</h2>
@@ -844,6 +846,7 @@ const UpgradeBillings = () => {
                 ) : null}
               </div>
             </div>
+            ) : null}
 
             {/* Phase E / Task 2: Purchased Capacity (add-ons only) */}
             {addonUsage && (addonUsage.training.purchased > 0 || addonUsage.session.purchased > 0 || addonUsage.user.purchased > 0) ? (
@@ -873,7 +876,7 @@ const UpgradeBillings = () => {
                   <div>
                     <h2 className="h5 fw-semibold mb-1">Need Help?</h2>
                     <p className="text-body-secondary mb-1">Contact our support team for any questions about your plan.</p>
-                    <a href="mailto:support@samsung.com">support@samsung.com</a>
+                    <a href="mailto:info@brenin.co">info@brenin.co</a>
                   </div>
                 </div>
                 <button type="button" className="btn btn-outline-primary" onClick={() => setSupportOpen(true)}>

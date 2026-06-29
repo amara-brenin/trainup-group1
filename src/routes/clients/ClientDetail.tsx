@@ -38,6 +38,7 @@ const ClientDetail = () => {
   const [activeTab, setActiveTab] = useState<(typeof tabOptions)[number]["id"]>("overview");
   const [savingSection, setSavingSection] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<"" | "domain" | "webhook" | "smtp" | "clientAdminEmail">("");
+  const [selectedMethod, setSelectedMethod] = useState<string>("all");
 
   const fetchClient = useCallback(async () => {
     const { data } = await AxiosHelper.getData<ClientRecord>(`/clients/${clientId}`);
@@ -58,13 +59,17 @@ const ClientDetail = () => {
     }
 
     return [
-      { label: "Plan", value: planLabels[client.plan] ?? client.plan, icon: "bi bi-stars" },
+      {
+        label: "Plan",
+        value: client.planExpired ? `${planLabels[client.plan] ?? client.plan} (Expired)` : planLabels[client.plan] ?? client.plan,
+        icon: "bi bi-stars",
+      },
       { label: "Active users", value: client.activeUsers, icon: "bi bi-people" },
       { label: "Trainings", value: client.trainings, icon: "bi bi-journal-richtext" },
       { label: "Sessions", value: client.sessions, icon: "bi bi-play-circle" },
       {
         label: "Credits left",
-        value: Math.max(Number(client.totalCredits ?? 0) - Number(client.usedCredits ?? 0), 0),
+        value: client.planExpired ? 0 : Math.max(Number(client.totalCredits ?? 0) - Number(client.usedCredits ?? 0), 0),
         icon: "bi bi-coin",
       },
       { label: "SSO", value: client.ssoStatus, icon: "bi bi-shield-check" },
@@ -595,106 +600,277 @@ const ClientDetail = () => {
                 ssoAllowedDomains: (client.ssoAllowedDomains || []).join("\n"),
                 ssoAutoProvisionUsers: client.ssoAutoProvisionUsers ?? true,
                 webhookUrl: client.webhookUrl,
+                webhookSigningSecret: client.webhookSigningSecret || "",
                 apiScope: client.apiScope,
                 allowedOrigins: (client.allowedOrigins || []).join("\n"),
                 iframeEnabled: client.iframeEnabled,
                 iframeBaseUrl: client.iframeBaseUrl || "",
                 iframeAllowedParentDomains: (client.iframeAllowedParentDomains || []).join("\n"),
+                ltiClientId: client.ltiClientId || "",
+                ltiDeploymentId: client.ltiDeploymentId || "",
+                ltiPlatformKeysetUrl: client.ltiPlatformKeysetUrl || "",
+                ltiAccessTokenUrl: client.ltiAccessTokenUrl || "",
+                ltiOidcAuthUrl: client.ltiOidcAuthUrl || "",
+                scormEnabled: client.scormEnabled !== false,
+                xapiEnabled: client.xapiEnabled ?? false,
+                xapiLrsEndpoint: client.xapiLrsEndpoint || "",
+                xapiClientId: client.xapiClientId || "",
+                xapiClientSecret: client.xapiClientSecret || "",
               }}
               enableReinitialize
               onSubmit={async (values, { setErrors }) => saveSection("integrations", values, setErrors)}
             >
-              <Form>
-                <div className="admin-form-grid">
-                  <div>
-                    <label htmlFor="detail-ssoType" className="form-label">SSO type</label>
-                    <Field as="select" name="ssoType" id="detail-ssoType" className="form-select">
-                      <option value="Trainup IAM">Trainup IAM</option>
-                      <option value="Azure AD">Azure AD</option>
-                      <option value="Google Workspace">Google Workspace</option>
-                      <option value="Okta">Okta</option>
-                      <option value="None">None</option>
-                    </Field>
+               <Form>
+                  {/* Method selector dropdown */}
+                  <div className="mb-4">
+                    <label htmlFor="selectedMethod" className="form-label fw-semibold text-primary">
+                      <i className="ri-list-settings-line me-1"></i>Please select integration method:
+                    </label>
+                    <select
+                      id="selectedMethod"
+                      className="form-select border-primary"
+                      style={{ maxWidth: "400px" }}
+                      value={selectedMethod}
+                      onChange={(e) => setSelectedMethod(e.target.value)}
+                    >
+                      <option value="all">Show All Methods</option>
+                      <option value="method_a">Method A: Embed / iFrame Settings</option>
+                      <option value="method_b">Method B: LTI 1.3 Tool Configuration</option>
+                      <option value="method_c">Method C: SCORM Delivery Settings</option>
+                      <option value="method_d">Method D: xAPI (Tin Can) / LRS Delivery</option>
+                      <option value="method_e">Method E: REST API, Webhooks & SSO</option>
+                    </select>
                   </div>
-                  <div>
-                    <label htmlFor="detail-ssoProviderType" className="form-label">SSO provider type</label>
-                    <Field as="select" name="ssoProviderType" id="detail-ssoProviderType" className="form-select">
-                      <option value="none">None</option>
-                      <option value="oidc">OIDC / OAuth</option>
-                      <option value="saml">SAML</option>
-                    </Field>
-                  </div>
-                  <div>
-                    <label htmlFor="detail-webhookUrl" className="form-label">Webhook URL</label>
-                    <Field name="webhookUrl" id="detail-webhookUrl" className="form-control" />
-                    <ErrorMessage name="webhookUrl" component="small" className="text-danger" />
-                  </div>
-                  <div>
-                    <label htmlFor="detail-apiScope" className="form-label">API scope</label>
-                    <Field name="apiScope" id="detail-apiScope" className="form-control" />
-                  </div>
-                  <div>
-                    <label htmlFor="detail-iframeBaseUrl" className="form-label">iFrame base URL</label>
-                    <Field name="iframeBaseUrl" id="detail-iframeBaseUrl" className="form-control" />
-                    <ErrorMessage name="iframeBaseUrl" component="small" className="text-danger" />
-                  </div>
-                  <div>
-                    <label htmlFor="detail-allowedOrigins" className="form-label">Allowed origins</label>
-                    <Field as="textarea" rows={4} name="allowedOrigins" id="detail-allowedOrigins" className="form-control" />
-                  </div>
-                  <div>
-                    <label htmlFor="detail-ssoClientId" className="form-label">SSO client ID</label>
-                    <Field name="ssoClientId" id="detail-ssoClientId" className="form-control" />
-                  </div>
-                  <div>
-                    <label htmlFor="detail-ssoClientSecret" className="form-label">SSO client secret</label>
-                    <Field name="ssoClientSecret" id="detail-ssoClientSecret" className="form-control" />
-                  </div>
-                  <div>
-                    <label htmlFor="detail-ssoTenantId" className="form-label">SSO tenant / directory ID</label>
-                    <Field name="ssoTenantId" id="detail-ssoTenantId" className="form-control" />
-                  </div>
-                  <div>
-                    <label htmlFor="detail-ssoIssuerUrl" className="form-label">Issuer URL</label>
-                    <Field name="ssoIssuerUrl" id="detail-ssoIssuerUrl" className="form-control" />
-                  </div>
-                  <div>
-                    <label htmlFor="detail-ssoEntryPoint" className="form-label">Entry point / login URL</label>
-                    <Field name="ssoEntryPoint" id="detail-ssoEntryPoint" className="form-control" />
-                  </div>
-                  <div>
-                    <label htmlFor="detail-ssoAudience" className="form-label">Audience / entity ID</label>
-                    <Field name="ssoAudience" id="detail-ssoAudience" className="form-control" />
-                  </div>
-                  <div>
-                    <label htmlFor="detail-ssoRedirectUri" className="form-label">Redirect URI</label>
-                    <Field name="ssoRedirectUri" id="detail-ssoRedirectUri" className="form-control" />
-                  </div>
-                  <div>
-                    <label htmlFor="detail-ssoButtonLabel" className="form-label">SSO button label</label>
-                    <Field name="ssoButtonLabel" id="detail-ssoButtonLabel" className="form-control" />
-                  </div>
-                  <div>
-                    <label htmlFor="detail-ssoAllowedDomains" className="form-label">Allowed SSO email domains</label>
-                    <Field as="textarea" rows={4} name="ssoAllowedDomains" id="detail-ssoAllowedDomains" className="form-control" />
-                  </div>
-                  <div>
-                    <label htmlFor="detail-iframeAllowedParentDomains" className="form-label">Allowed parent domains</label>
-                    <Field as="textarea" rows={4} name="iframeAllowedParentDomains" id="detail-iframeAllowedParentDomains" className="form-control" />
-                  </div>
-                </div>
-                <div className="form-check mt-3">
-                  <Field type="checkbox" name="iframeEnabled" id="detail-iframeEnabled" className="form-check-input" />
-                  <label htmlFor="detail-iframeEnabled" className="form-check-label">
-                    Enable iframe delivery
-                  </label>
-                </div>
-                <div className="form-check mt-2">
-                  <Field type="checkbox" name="ssoAutoProvisionUsers" id="detail-ssoAutoProvisionUsers" className="form-check-input" />
-                  <label htmlFor="detail-ssoAutoProvisionUsers" className="form-check-label">
-                    Auto-create learner accounts after successful SSO
-                  </label>
-                </div>
+
+                  {/* Method A: Embed / iFrame Settings */}
+                  {(selectedMethod === "all" || selectedMethod === "method_a") && (
+                    <div className="card mb-4 border-light-subtle">
+                      <div className="card-header bg-light-subtle py-2">
+                        <h3 className="h6 mb-0 fw-semibold text-primary">
+                          <i className="ri-window-line me-2"></i>Method A: Embed / iFrame Settings
+                        </h3>
+                      </div>
+                      <div className="card-body p-3">
+                        <p className="small text-body-secondary mb-3">
+                          Configure who can securely frame your TrainUp tenant and which domains are allowed origins.
+                        </p>
+                        <div className="form-check form-switch mb-3">
+                          <Field type="checkbox" name="iframeEnabled" id="detail-iframeEnabled" className="form-check-input" />
+                          <label htmlFor="detail-iframeEnabled" className="form-check-label fw-medium">
+                            Enable iframe delivery
+                          </label>
+                        </div>
+                        <div className="admin-form-grid">
+                          <div>
+                            <label htmlFor="detail-iframeBaseUrl" className="form-label">iFrame base URL</label>
+                            <Field name="iframeBaseUrl" id="detail-iframeBaseUrl" className="form-control" placeholder="https://..." />
+                            <ErrorMessage name="iframeBaseUrl" component="small" className="text-danger" />
+                          </div>
+                          <div>
+                            <label htmlFor="detail-iframeAllowedParentDomains" className="form-label">Allowed parent domains (one per line)</label>
+                            <Field as="textarea" rows={3} name="iframeAllowedParentDomains" id="detail-iframeAllowedParentDomains" className="form-control" placeholder="example.com&#10;another.com" />
+                          </div>
+                          <div className="admin-form-grid-full">
+                            <label htmlFor="detail-allowedOrigins" className="form-label">Allowed origins (CORS, one per line)</label>
+                            <Field as="textarea" rows={2} name="allowedOrigins" id="detail-allowedOrigins" className="form-control" placeholder="https://example.com" />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Method B: LTI 1.3 Tool Registration */}
+                  {(selectedMethod === "all" || selectedMethod === "method_b") && (
+                    <div className="card mb-4 border-light-subtle">
+                      <div className="card-header bg-light-subtle py-2">
+                        <h3 className="h6 mb-0 fw-semibold text-primary">
+                          <i className="ri-shield-user-line me-2"></i>Method B: LTI 1.3 Tool Configuration
+                        </h3>
+                      </div>
+                      <div className="card-body p-3">
+                        <p className="small text-body-secondary mb-3">
+                          Register TrainUp as an LTI 1.3 Tool inside Canvas, Moodle, Blackboard, etc.
+                        </p>
+                        <div className="admin-form-grid">
+                          <div>
+                            <label htmlFor="detail-ltiClientId" className="form-label">LTI Client ID</label>
+                            <Field name="ltiClientId" id="detail-ltiClientId" className="form-control" />
+                          </div>
+                          <div>
+                            <label htmlFor="detail-ltiDeploymentId" className="form-label">LTI Deployment ID</label>
+                            <Field name="ltiDeploymentId" id="detail-ltiDeploymentId" className="form-control" />
+                          </div>
+                          <div className="admin-form-grid-full">
+                            <label htmlFor="detail-ltiPlatformKeysetUrl" className="form-label">Platform Keyset URL</label>
+                            <Field name="ltiPlatformKeysetUrl" id="detail-ltiPlatformKeysetUrl" className="form-control" placeholder="https://..." />
+                          </div>
+                          <div>
+                            <label htmlFor="detail-ltiOidcAuthUrl" className="form-label">OIDC Auth URL</label>
+                            <Field name="ltiOidcAuthUrl" id="detail-ltiOidcAuthUrl" className="form-control" placeholder="https://..." />
+                          </div>
+                          <div>
+                            <label htmlFor="detail-ltiAccessTokenUrl" className="form-label">Access Token URL</label>
+                            <Field name="ltiAccessTokenUrl" id="detail-ltiAccessTokenUrl" className="form-control" placeholder="https://..." />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Method C: SCORM Settings */}
+                  {(selectedMethod === "all" || selectedMethod === "method_c") && (
+                    <div className="card mb-4 border-light-subtle">
+                      <div className="card-header bg-light-subtle py-2">
+                        <h3 className="h6 mb-0 fw-semibold text-primary">
+                          <i className="ri-archive-line me-2"></i>Method C: SCORM Delivery Settings
+                        </h3>
+                      </div>
+                      <div className="card-body p-3">
+                        <p className="small text-body-secondary mb-3">
+                          Allow downloading light SCORM wrappers that run TrainUp inside the LMS while streaming analytics back.
+                        </p>
+                        <div className="form-check form-switch">
+                          <Field type="checkbox" name="scormEnabled" id="detail-scormEnabled" className="form-check-input" />
+                          <label htmlFor="detail-scormEnabled" className="form-check-label fw-medium">
+                            Enable SCORM wrapper generation and packaging
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Method D: xAPI / LRS Analytics */}
+                  {(selectedMethod === "all" || selectedMethod === "method_d") && (
+                    <div className="card mb-4 border-light-subtle">
+                      <div className="card-header bg-light-subtle py-2">
+                        <h3 className="h6 mb-0 fw-semibold text-primary">
+                          <i className="ri-bubble-chart-line me-2"></i>Method D: xAPI (Tin Can) / LRS Delivery
+                        </h3>
+                      </div>
+                      <div className="card-body p-3">
+                        <p className="small text-body-secondary mb-3">
+                          Push detailed proctoring, AI Ask interactions, and completion statements to an external Learning Record Store (LRS).
+                        </p>
+                        <div className="form-check form-switch mb-3">
+                          <Field type="checkbox" name="xapiEnabled" id="detail-xapiEnabled" className="form-check-input" />
+                          <label htmlFor="detail-xapiEnabled" className="form-check-label fw-medium">
+                            Enable xAPI statement delivery
+                          </label>
+                        </div>
+                        <div className="admin-form-grid">
+                          <div className="admin-form-grid-full">
+                            <label htmlFor="detail-xapiLrsEndpoint" className="form-label">LRS Endpoint URL</label>
+                            <Field name="xapiLrsEndpoint" id="detail-xapiLrsEndpoint" className="form-control" placeholder="https://..." />
+                          </div>
+                          <div>
+                            <label htmlFor="detail-xapiClientId" className="form-label">LRS Auth Client ID / Username</label>
+                            <Field name="xapiClientId" id="detail-xapiClientId" className="form-control" />
+                          </div>
+                          <div>
+                            <label htmlFor="detail-xapiClientSecret" className="form-label">LRS Auth Client Secret / Password</label>
+                            <Field name="xapiClientSecret" id="detail-xapiClientSecret" className="form-control" type="password" />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Method E: REST API, Webhooks & Identity */}
+                  {(selectedMethod === "all" || selectedMethod === "method_e") && (
+                    <div className="card mb-4 border-light-subtle">
+                      <div className="card-header bg-light-subtle py-2">
+                        <h3 className="h6 mb-0 fw-semibold text-primary">
+                          <i className="ri-plug-line me-2"></i>Method E: REST API, Webhooks & SSO
+                        </h3>
+                      </div>
+                      <div className="card-body p-3">
+                        <p className="small text-body-secondary mb-3">
+                          Bespoke integration for custom/personal LMS portals using standard developer keys, webhooks, and federated SSO.
+                        </p>
+                        <h4 className="h6 text-primary fw-semibold border-bottom pb-1 mb-3">API & Webhooks</h4>
+                        <div className="admin-form-grid mb-4">
+                          <div>
+                            <label htmlFor="detail-webhookUrl" className="form-label">Webhook URL</label>
+                            <Field name="webhookUrl" id="detail-webhookUrl" className="form-control" placeholder="https://..." />
+                            <ErrorMessage name="webhookUrl" component="small" className="text-danger" />
+                          </div>
+                          <div>
+                            <label htmlFor="detail-apiScope" className="form-label">API Scope</label>
+                            <Field name="apiScope" id="detail-apiScope" className="form-control" />
+                          </div>
+                          <div className="admin-form-grid-full">
+                            <label htmlFor="detail-webhookSigningSecret" className="form-label">Signing secret</label>
+                            <Field name="webhookSigningSecret" id="detail-webhookSigningSecret" className="form-control" placeholder="whsec_..." />
+                            <small className="text-body-secondary">Used to HMAC-sign result webhooks (x-trainup-signature) so the receiver can verify them.</small>
+                          </div>
+                        </div>
+
+                        <h4 className="h6 text-primary fw-semibold border-bottom pb-1 mb-3">SSO Identity Configuration</h4>
+                        <div className="admin-form-grid">
+                          <div>
+                            <label htmlFor="detail-ssoType" className="form-label">SSO type</label>
+                            <Field as="select" name="ssoType" id="detail-ssoType" className="form-select">
+                              <option value="Trainup IAM">Trainup IAM</option>
+                              <option value="Azure AD">Azure AD</option>
+                              <option value="Google Workspace">Google Workspace</option>
+                              <option value="Okta">Okta</option>
+                              <option value="None">None</option>
+                            </Field>
+                          </div>
+                          <div>
+                            <label htmlFor="detail-ssoProviderType" className="form-label">SSO provider type</label>
+                            <Field as="select" name="ssoProviderType" id="detail-ssoProviderType" className="form-select">
+                              <option value="none">None</option>
+                              <option value="oidc">OIDC / OAuth</option>
+                              <option value="saml">SAML</option>
+                            </Field>
+                          </div>
+                          <div>
+                            <label htmlFor="detail-ssoClientId" className="form-label">SSO client ID</label>
+                            <Field name="ssoClientId" id="detail-ssoClientId" className="form-control" />
+                          </div>
+                          <div>
+                            <label htmlFor="detail-ssoClientSecret" className="form-label">SSO client secret</label>
+                            <Field name="ssoClientSecret" id="detail-ssoClientSecret" className="form-control" />
+                          </div>
+                          <div>
+                            <label htmlFor="detail-ssoTenantId" className="form-label">SSO tenant / directory ID</label>
+                            <Field name="ssoTenantId" id="detail-ssoTenantId" className="form-control" />
+                          </div>
+                          <div>
+                            <label htmlFor="detail-ssoIssuerUrl" className="form-label">Issuer URL</label>
+                            <Field name="ssoIssuerUrl" id="detail-ssoIssuerUrl" className="form-control" />
+                          </div>
+                          <div>
+                            <label htmlFor="detail-ssoEntryPoint" className="form-label">Entry point / login URL</label>
+                            <Field name="ssoEntryPoint" id="detail-ssoEntryPoint" className="form-control" />
+                          </div>
+                          <div>
+                            <label htmlFor="detail-ssoAudience" className="form-label">Audience / entity ID</label>
+                            <Field name="ssoAudience" id="detail-ssoAudience" className="form-control" />
+                          </div>
+                          <div>
+                            <label htmlFor="detail-ssoRedirectUri" className="form-label">Redirect URI</label>
+                            <Field name="ssoRedirectUri" id="detail-ssoRedirectUri" className="form-control" />
+                          </div>
+                          <div>
+                            <label htmlFor="detail-ssoButtonLabel" className="form-label">SSO button label</label>
+                            <Field name="ssoButtonLabel" id="detail-ssoButtonLabel" className="form-control" />
+                          </div>
+                          <div className="admin-form-grid-full">
+                            <label htmlFor="detail-ssoAllowedDomains" className="form-label">Allowed SSO email domains (one per line)</label>
+                            <Field as="textarea" rows={2} name="ssoAllowedDomains" id="detail-ssoAllowedDomains" className="form-control" />
+                          </div>
+                        </div>
+                        <div className="form-check mt-3">
+                          <Field type="checkbox" name="ssoAutoProvisionUsers" id="detail-ssoAutoProvisionUsers" className="form-check-input" />
+                          <label htmlFor="detail-ssoAutoProvisionUsers" className="form-check-label fw-medium">
+                            Auto-create learner accounts after successful SSO
+                          </label>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 <div className="small text-body-secondary mt-3">{client.lastWebhookTestMessage || "No webhook test has been run yet."}</div>
                 <div className="d-flex justify-content-between gap-2 pt-3 flex-wrap">
                   <button
@@ -810,6 +986,82 @@ const ClientDetail = () => {
                 </p>
               </div>
               <div className="card-body">
+                {client.billing ? (
+                  <div className="mb-4">
+                    <h3 className="h6 fw-semibold mb-2">
+                      Subscription overview <span className="small text-body-secondary fw-normal">(client&apos;s live billing view)</span>
+                    </h3>
+                    <div className="row g-2 mb-3">
+                      <div className="col-6 col-md-3">
+                        <div className="border rounded p-2 h-100">
+                          <div className="small text-body-secondary">Current plan</div>
+                          <div className="fw-semibold">
+                            {planLabels[client.billing.currentPlan] ?? client.billing.currentPlan}
+                            {client.billing.planExpired ? (
+                              <span className="badge text-bg-danger ms-2">Expired</span>
+                            ) : (
+                              <span className="badge text-bg-success ms-2">Active</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="col-6 col-md-3">
+                        <div className="border rounded p-2 h-100">
+                          <div className="small text-body-secondary">Purchase / start date</div>
+                          <div className="fw-semibold">{client.billing.startedOn ? new Date(client.billing.startedOn).toLocaleDateString() : "—"}</div>
+                        </div>
+                      </div>
+                      <div className="col-6 col-md-3">
+                        <div className="border rounded p-2 h-100">
+                          <div className="small text-body-secondary">Expiry date</div>
+                          <div className={`fw-semibold ${client.billing.planExpired ? "text-danger" : ""}`}>
+                            {client.billing.expiresOn ? new Date(client.billing.expiresOn).toLocaleDateString() : "—"}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="col-6 col-md-3">
+                        <div className="border rounded p-2 h-100">
+                          <div className="small text-body-secondary">Available / total credits</div>
+                          <div className={`fw-semibold ${client.billing.planExpired ? "text-danger" : ""}`}>
+                            {Number(client.billing.availableCredits ?? 0).toLocaleString()} / {Number(client.billing.totalCredits ?? 0).toLocaleString()}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="small fw-semibold text-body-secondary mb-1">Purchase history</div>
+                    {client.billing.recentTransactions?.length ? (
+                      <div className="table-responsive">
+                        <table className="table table-sm align-middle mb-0">
+                          <thead>
+                            <tr>
+                              <th>Date</th>
+                              <th>Type</th>
+                              <th>Plan</th>
+                              <th className="text-end">Credits</th>
+                              <th className="text-end">Amount</th>
+                              <th>Status</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {client.billing.recentTransactions.map((t, i) => (
+                              <tr key={t.id ?? t.invoiceId ?? i}>
+                                <td>{t.createdAt ? new Date(t.createdAt).toLocaleDateString() : "—"}</td>
+                                <td className="text-capitalize">{(t.type ?? "").replace(/_/g, " ") || "—"}</td>
+                                <td>{t.planCode ?? "—"}</td>
+                                <td className="text-end">{t.credits != null ? Number(t.credits).toLocaleString() : "—"}</td>
+                                <td className="text-end">{t.amount != null ? `${client.billing?.billingCurrency ?? "INR"} ${Number(t.amount).toLocaleString()}` : "—"}</td>
+                                <td><span className="badge text-bg-light border text-capitalize">{t.status ?? "—"}</span></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ) : (
+                      <p className="small text-body-secondary mb-0">No purchase history yet.</p>
+                    )}
+                    <hr className="my-4" />
+                  </div>
+                ) : null}
                 <Formik
                   initialValues={{
                     plan: client.plan,
@@ -850,12 +1102,23 @@ const ClientDetail = () => {
                     <div className="admin-billing-summary-grid">
                       <div className="admin-billing-summary-card">
                         <span>Current plan</span>
-                        <strong>{planLabels[client.plan] ?? client.plan}</strong>
-                        <small>Monthly billing</small>
+                        <strong>
+                          {planLabels[client.plan] ?? client.plan}
+                          {client.planExpired ? <span className="badge text-bg-danger ms-2">Expired</span> : null}
+                        </strong>
+                        <small>
+                          {client.planExpired
+                            ? "Subscription expired — renew to restore credits"
+                            : client.expiresOn
+                              ? `Renews ${new Date(client.expiresOn).toLocaleDateString()}`
+                              : "Monthly billing"}
+                        </small>
                       </div>
                       <div className="admin-billing-summary-card">
                         <span>Available credits</span>
-                        <strong>{Math.max(Number(client.totalCredits ?? 0) - Number(client.usedCredits ?? 0), 0)}</strong>
+                        <strong className={client.planExpired ? "text-danger" : undefined}>
+                          {client.planExpired ? 0 : Math.max(Number(client.totalCredits ?? 0) - Number(client.usedCredits ?? 0), 0)}
+                        </strong>
                         <small>Ready for training usage</small>
                       </div>
                       <div className="admin-billing-summary-card">

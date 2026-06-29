@@ -40,6 +40,11 @@ const clientSchema = new Schema(
     subscribedPlan: { type: String, default: "" },
     creditBaseLimit: { type: Number, default: null },
     entitlementSnapshotAt: { type: Date, default: null },
+    // Issue 1: subscription expiry. Stamped on plan assign/purchase/renewal.
+    // Once `now` passes this date the subscription is expired regardless of
+    // remaining credits. null on legacy clients → expiry is computed from the
+    // plan start (see getSubscriptionExpiry) for backward compatibility.
+    planExpiryDate: { type: Date, default: null },
     joined: { type: String, default: "" },
     csm: { type: String, required: true, trim: true },
     logo: { type: String, default: "" },
@@ -59,6 +64,7 @@ const clientSchema = new Schema(
     faviconUrl: { type: String, default: "" },
     allowedOrigins: { type: [String], default: [] },
     webhookUrl: { type: String, default: "" },
+    webhookSigningSecret: { type: String, default: "" },
     lastWebhookTestAt: { type: String, default: "" },
     lastWebhookTestStatus: { type: String, default: "not_tested" },
     lastWebhookTestMessage: { type: String, default: "" },
@@ -113,6 +119,17 @@ const clientSchema = new Schema(
     clientAdminUserId: { type: String, default: "" },
     firstUserName: { type: String, default: "" },
     firstUserEmail: { type: String, default: "" },
+    // LMS Integration (LMS_INTEGRATION_RESEARCH.md)
+    ltiClientId: { type: String, default: "" },
+    ltiDeploymentId: { type: String, default: "" },
+    ltiPlatformKeysetUrl: { type: String, default: "" },
+    ltiAccessTokenUrl: { type: String, default: "" },
+    ltiOidcAuthUrl: { type: String, default: "" },
+    scormEnabled: { type: Boolean, default: true },
+    xapiEnabled: { type: Boolean, default: false },
+    xapiLrsEndpoint: { type: String, default: "" },
+    xapiClientId: { type: String, default: "" },
+    xapiClientSecret: { type: String, default: "" },
   },
   {
     timestamps: true,

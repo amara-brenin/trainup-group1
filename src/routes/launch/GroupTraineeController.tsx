@@ -634,31 +634,41 @@ const GroupTraineeController = () => {
   // ---- LOGIN (authentication FIRST; auto-continues to the same session) ----
   if (phase === "login") {
     return (
-      <div className="d-flex vh-100 align-items-center justify-content-center p-4">
-        <form onSubmit={handleLogin} className="card shadow-sm" style={{ maxWidth: 380, width: "100%" }}>
-          <div className="card-body">
-            <h5 className="mb-1">Sign in to join</h5>
-            {session?.trainingTitle ? <div className="text-muted small mb-3">{session.trainingTitle}</div> : null}
-            {loginError ? <div className="alert alert-danger py-2">{loginError}</div> : null}
-            <div className="mb-2">
-              <label className="form-label small">Email</label>
-              <input type="email" className="form-control" value={loginEmail} required autoFocus
-                onChange={(e) => setLoginEmail(e.target.value)} />
+      <main className="auth-shell-centered" style={{ minHeight: "100vh" }}>
+        <div className="auth-card auth-card-focused">
+          <div className="auth-card-body">
+            <div className="text-center mb-4">
+              <h2>Sign in to join</h2>
+              <p className="mb-0">
+                {session?.trainingTitle || "Use your workspace email and password to continue."}
+              </p>
             </div>
-            <div className="mb-3">
-              <label className="form-label small">Password</label>
-              <input type="password" className="form-control" value={loginPassword} required
-                onChange={(e) => setLoginPassword(e.target.value)} />
-            </div>
-            <button type="submit" className="btn btn-primary w-100" disabled={loginBusy}>
-              {loginBusy ? "Signing in…" : "Sign in & continue"}
-            </button>
-            <div className="text-muted small mt-3 text-center">
-              You'll be taken straight to the training after signing in.
-            </div>
+            <form onSubmit={handleLogin}>
+              {loginError ? <div className="alert alert-danger py-2">{loginError}</div> : null}
+              <div className="mb-3">
+                <label htmlFor="groupLoginEmail" className="form-label">Email address</label>
+                <input id="groupLoginEmail" type="email" className="form-control" value={loginEmail} required autoFocus
+                  placeholder="name@company.com"
+                  onChange={(e) => setLoginEmail(e.target.value)} />
+              </div>
+              <div className="mb-3">
+                <label htmlFor="groupLoginPassword" className="form-label">Password</label>
+                <input id="groupLoginPassword" type="password" className="form-control" value={loginPassword} required
+                  placeholder="Enter your password"
+                  onChange={(e) => setLoginPassword(e.target.value)} />
+              </div>
+              <div className="d-grid">
+                <button type="submit" className="btn btn-primary" disabled={loginBusy}>
+                  {loginBusy ? "Signing in…" : "Sign in & continue"}
+                </button>
+              </div>
+              <div className="text-muted small mt-3 text-center">
+                You'll be taken straight to the training after signing in.
+              </div>
+            </form>
           </div>
-        </form>
-      </div>
+        </div>
+      </main>
     );
   }
 

@@ -1620,8 +1620,22 @@ const updateClientSection = (
     client.ssoType = String(values.ssoType ?? client.ssoType);
     client.ssoStatus = values.ssoType ? "connected" : "not_configured";
     client.webhookUrl = String(values.webhookUrl ?? client.webhookUrl);
+    client.webhookSigningSecret = String(values.webhookSigningSecret ?? client.webhookSigningSecret ?? "");
     client.apiScope = String(values.apiScope ?? client.apiScope);
     client.allowedOrigins = ensureArray(values.allowedOrigins as string);
+    client.iframeEnabled = Boolean(values.iframeEnabled);
+    client.iframeBaseUrl = String(values.iframeBaseUrl ?? "");
+    client.iframeAllowedParentDomains = ensureArray(values.iframeAllowedParentDomains as string);
+    client.ltiClientId = String(values.ltiClientId ?? "");
+    client.ltiDeploymentId = String(values.ltiDeploymentId ?? "");
+    client.ltiPlatformKeysetUrl = String(values.ltiPlatformKeysetUrl ?? "");
+    client.ltiAccessTokenUrl = String(values.ltiAccessTokenUrl ?? "");
+    client.ltiOidcAuthUrl = String(values.ltiOidcAuthUrl ?? "");
+    client.scormEnabled = Boolean(values.scormEnabled ?? true);
+    client.xapiEnabled = Boolean(values.xapiEnabled ?? false);
+    client.xapiLrsEndpoint = String(values.xapiLrsEndpoint ?? "");
+    client.xapiClientId = String(values.xapiClientId ?? "");
+    client.xapiClientSecret = String(values.xapiClientSecret ?? "");
   }
 };
 
@@ -1647,6 +1661,7 @@ const buildTenantSettingsPayload = (client: ClientRecord) => ({
     ssoType: client.ssoType,
     ssoStatus: client.ssoStatus,
     webhookUrl: client.webhookUrl,
+    webhookSigningSecret: client.webhookSigningSecret ?? "",
     apiScope: client.apiScope,
     allowedOrigins: client.allowedOrigins,
     iframeEnabled: client.iframeEnabled,
@@ -1654,6 +1669,17 @@ const buildTenantSettingsPayload = (client: ClientRecord) => ({
     iframeAllowedParentDomains: client.iframeAllowedParentDomains ?? [],
     domain: client.domain,
     subdomain: client.subdomain,
+    // LMS Integration (LMS_INTEGRATION_RESEARCH.md)
+    ltiClientId: client.ltiClientId ?? "",
+    ltiDeploymentId: client.ltiDeploymentId ?? "",
+    ltiPlatformKeysetUrl: client.ltiPlatformKeysetUrl ?? "",
+    ltiAccessTokenUrl: client.ltiAccessTokenUrl ?? "",
+    ltiOidcAuthUrl: client.ltiOidcAuthUrl ?? "",
+    scormEnabled: client.scormEnabled !== false,
+    xapiEnabled: client.xapiEnabled ?? false,
+    xapiLrsEndpoint: client.xapiLrsEndpoint ?? "",
+    xapiClientId: client.xapiClientId ?? "",
+    xapiClientSecret: client.xapiClientSecret ?? "",
   },
   smtp: {
     emailDeliveryEnabled: client.emailDeliveryEnabled ?? false,

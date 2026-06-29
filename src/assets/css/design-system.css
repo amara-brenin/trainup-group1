@@ -1578,6 +1578,152 @@ html[data-sidenav-size="condensed"]:not([data-layout="topnav"]) .app-sidebar-lin
   .navbar-custom .topbar {
     padding-inline: 0.85rem;
   }
+
+  /* Mobile topbar: show the hamburger and the full brand logo (not just the
+     favicon) so the brand is always visible next to the menu button. */
+  .navbar-custom .logo-topbar {
+    display: inline-flex !important;
+    align-items: center;
+    padding: 0 0.25rem;
+    line-height: normal;
+  }
+
+  .navbar-custom .logo-topbar span.logo-lg {
+    display: inline-block;
+  }
+
+  .navbar-custom .logo-topbar span.logo-sm {
+    display: none;
+  }
+
+  .navbar-custom .logo-topbar img {
+    max-height: 30px;
+    max-width: 130px;
+    width: auto;
+    object-fit: contain;
+  }
+}
+
+/* Hamburger toggle is only rendered (and only needed) below the lg breakpoint,
+   where the sidebar is off-canvas/condensed. Keep it tidy and aligned. */
+.navbar-custom .button-toggle-menu {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* During impersonation a fixed 44px banner sits above everything. Keep the
+   sticky topbar (and the off-canvas sidebar) below it so the hamburger and
+   logo are never hidden behind the banner while scrolling. */
+html.impersonation-active .navbar-custom {
+  top: 44px;
+}
+
+html.impersonation-active .leftside-menu.app-sidebar {
+  top: 44px;
+}
+
+/* ---- Impersonation banner ---- */
+.impersonation-spacer {
+  height: 44px;
+}
+
+.impersonation-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 44px;
+  z-index: 4000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 0 1rem;
+  background: linear-gradient(90deg, #b45309, #d97706);
+  color: #fff;
+  font-size: 0.84rem;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.impersonation-banner-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
+}
+
+.impersonation-banner-tag i {
+  font-size: 1rem;
+}
+
+.impersonation-banner-user {
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.impersonation-banner-return {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-shrink: 0;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-radius: 6px;
+  padding: 0.25rem 0.75rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.impersonation-banner-return:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.impersonation-banner-return:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+/* On phones keep it a single tidy line: drop the uppercase label and the
+   "Logged in as role:" prefix, truncate the name, and shrink the button. */
+@media (max-width: 767.98px) {
+  .impersonation-banner {
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0 0.65rem;
+    font-size: 0.8rem;
+  }
+
+  .impersonation-banner-tag-text {
+    display: none;
+  }
+
+  .impersonation-banner-tag i {
+    font-size: 1.15rem;
+  }
+
+  .impersonation-banner-user {
+    flex: 1 1 auto;
+  }
+
+  .impersonation-banner-user-label {
+    display: none;
+  }
+
+  .impersonation-banner-return {
+    padding: 0.25rem 0.55rem;
+    font-size: 0.74rem;
+  }
 }
 
 /* Sidebar navigation reference style */
@@ -2814,16 +2960,41 @@ html[data-bs-theme="dark"] .admin-reference-table tbody td {
   .admin-page-intro,
   .admin-reference-toolbar,
   .admin-filter-row,
-  .admin-filter-controls,
   .admin-page-actions,
   .app-pagination {
     align-items: stretch;
     flex-direction: column;
   }
 
+  .admin-reference-toolbar {
+    padding: 0.85rem;
+    gap: 0.75rem;
+  }
+
+  /* Compact filter layout: full-width search on its own row, the dropdowns
+     paired two-per-row, and the primary action full-width below — instead of
+     one tall single column. */
+  .admin-filter-controls {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: stretch;
+    gap: 0.6rem;
+  }
+
   .admin-filter-controls .form-control,
-  .admin-filter-controls .form-select,
-  .admin-filter-controls .position-relative,
+  .admin-filter-controls .position-relative {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .admin-filter-controls .form-select {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
   .admin-reference-toolbar .btn,
   .admin-page-actions .btn {
     width: 100%;

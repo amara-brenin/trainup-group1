@@ -175,6 +175,28 @@ html[data-bs-theme="dark"] form :where(.form-text, .field-hover-help) {
   border-color: var(--ds-color-primary-hover) !important;
 }
 
+/* White-label: Bootstrap primary utilities use --bs-primary-rgb (default blue)
+   and ignore the brand colour. Map them to the brand token so headings, links,
+   borders and badges follow the tenant's white-label colour (e.g. orange). */
+.text-primary,
+.link-primary {
+  color: var(--ds-color-primary) !important;
+}
+.border-primary {
+  border-color: var(--ds-color-primary) !important;
+}
+.bg-primary {
+  background-color: var(--ds-color-primary) !important;
+}
+.text-bg-primary {
+  background-color: var(--ds-color-primary) !important;
+  color: #fff !important;
+}
+.form-check-input:checked {
+  background-color: var(--ds-color-primary) !important;
+  border-color: var(--ds-color-primary) !important;
+}
+
 .client-logo-mark {
   border: 1px solid color-mix(in srgb, var(--ds-color-border, rgba(15, 23, 42, 0.1)) 75%, transparent);
   overflow: hidden;

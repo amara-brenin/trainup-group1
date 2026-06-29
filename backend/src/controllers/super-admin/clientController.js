@@ -15,7 +15,7 @@ const {
   verifyDomainRecord,
   sendSmtpTestEmail,
 } = require("../../helpers/clientDelivery");
-const { CREDIT_COSTS, buildClientCreditSnapshot, applyPlanToClient, applyPlanSnapshot, addClientCredits, normalizePlan } = require("../../helpers/credits");
+const { CREDIT_COSTS, buildClientCreditSnapshot, applyPlanToClient, applyPlanSnapshot, addClientCredits, normalizePlan, isSubscriptionExpired, getSubscriptionExpiry } = require("../../helpers/credits");
 const { resolveImageField } = require("../../helpers/imageStorage");
 const { notifyRolesInClient, notifySuperAdmins, notifyUserIds } = require("../../helpers/notifications");
 const { getEditableRoleDefaults, getRoleDefinitions, getRoleDefinitionById, filterPermissionArrayForRole, buildAllowedFromPermissions } = require("../../helpers/permissions");
@@ -77,11 +77,17 @@ const buildListSort = (queryParams) => {
 const LIST_PROJECTION = {
   appId: 1, name: 1, industry: 1, plan: 1, status: 1,
   monthlyCredits: 1, purchasedCredits: 1, usedCredits: 1, totalCredits: 1,
+  // planExpiryDate is required so the list's expiry badge reflects the stored
+  // (renewed) expiry instead of falling back to the createdAt+1mo computation.
+  planExpiryDate: 1, subscribedPlan: 1, entitlementSnapshotAt: 1,
   activeUsers: 1, trainings: 1, sessions: 1,
   domain: 1, domainStatus: 1, subdomain: 1, joined: 1, csm: 1,
   logo: 1, logoColor: 1, logoBg: 1,
   firstUserName: 1, enterpriseRequests: 1, enterpriseMonthlyCredits: 1,
   enterpriseMonthlyPrice: 1, billingCycle: 1, createdAt: 1,
+  // Ship the (S3) logo URL so the list renders the client's brand image. Logos
+  // are stored as small S3 URLs (see create's resolveImageField), so this stays
+  // light; the colored initials remain the fallback when no logo is set.
   thumbnailUrl: { $ifNull: ["$logoUrl", "$darkLogoUrl"] },
 };
 
@@ -95,6 +101,8 @@ const toClientListRecord = (client) => ({
   purchasedCredits: Math.max(0, Number(client.purchasedCredits || 0)),
   usedCredits: Math.max(0, Number(client.usedCredits || 0)),
   totalCredits: Number(client.totalCredits || 0),
+  planExpired: Boolean(isSubscriptionExpired(client)),
+  expiresOn: (() => { const d = getSubscriptionExpiry(client); return d ? d.toISOString() : null; })(),
   billingCycle: client.billingCycle || "monthly",
   activeUsers: client.activeUsers || 0,
   trainings: client.trainings || 0,
@@ -183,8 +191,15 @@ const getClientAdminRoleDefinition = async (clientId) => getRoleDefinitionById("
 const toClientRecord = async (client) => {
   const adminRole = await getClientAdminRoleDefinition(client.appId);
   const creditSnapshot = buildClientCreditSnapshot(client);
+  // Embed the exact billing view the client sees in their Upgrade & Billing
+  // page (expiry-aware credits, start/expiry dates, plan usage, purchase
+  // history) so the super-admin detail page renders identical dynamic data.
+  // Lazy require avoids a load-time circular dependency with commonController.
+  const { buildBillingSummaryResponse } = require("../commonController");
+  const billing = buildBillingSummaryResponse(client);
 
   return {
+    billing,
     id: client.appId,
     name: client.name,
     industry: client.industry,
@@ -240,12 +255,24 @@ const toClientRecord = async (client) => {
     faviconUrl: client.faviconUrl || "",
     allowedOrigins: client.allowedOrigins || [],
     webhookUrl: client.webhookUrl,
+    webhookSigningSecret: client.webhookSigningSecret || "",
     lastWebhookTestAt: client.lastWebhookTestAt || "",
     lastWebhookTestStatus: client.lastWebhookTestStatus || "not_tested",
     lastWebhookTestMessage: client.lastWebhookTestMessage || "",
     apiScope: client.apiScope,
     iframeBaseUrl: client.iframeBaseUrl || "",
     iframeAllowedParentDomains: client.iframeAllowedParentDomains || [],
+    // LMS Integration (LMS_INTEGRATION_RESEARCH.md)
+    ltiClientId: client.ltiClientId || "",
+    ltiDeploymentId: client.ltiDeploymentId || "",
+    ltiPlatformKeysetUrl: client.ltiPlatformKeysetUrl || "",
+    ltiAccessTokenUrl: client.ltiAccessTokenUrl || "",
+    ltiOidcAuthUrl: client.ltiOidcAuthUrl || "",
+    scormEnabled: client.scormEnabled !== false,
+    xapiEnabled: Boolean(client.xapiEnabled),
+    xapiLrsEndpoint: client.xapiLrsEndpoint || "",
+    xapiClientId: client.xapiClientId || "",
+    xapiClientSecret: client.xapiClientSecret || "",
     emailDeliveryEnabled: Boolean(client.emailDeliveryEnabled),
     smtpHost: client.smtpHost || "",
     smtpPort: Number(client.smtpPort || 587),
@@ -776,10 +803,22 @@ const updateSettings = async (req, res) => {
     client.ssoAutoProvisionUsers = Boolean(values.ssoAutoProvisionUsers ?? true);
     client.allowedOrigins = parseList(values.allowedOrigins);
     client.webhookUrl = String(values.webhookUrl || "").trim();
+    client.webhookSigningSecret = String(values.webhookSigningSecret || "").trim();
     client.apiScope = String(values.apiScope || "").trim();
     client.iframeEnabled = Boolean(values.iframeEnabled ?? client.iframeEnabled);
     client.iframeBaseUrl = String(values.iframeBaseUrl || "").trim();
     client.iframeAllowedParentDomains = parseList(values.iframeAllowedParentDomains);
+    // LMS Integration (LMS_INTEGRATION_RESEARCH.md)
+    client.ltiClientId = String(values.ltiClientId || "").trim();
+    client.ltiDeploymentId = String(values.ltiDeploymentId || "").trim();
+    client.ltiPlatformKeysetUrl = String(values.ltiPlatformKeysetUrl || "").trim();
+    client.ltiAccessTokenUrl = String(values.ltiAccessTokenUrl || "").trim();
+    client.ltiOidcAuthUrl = String(values.ltiOidcAuthUrl || "").trim();
+    client.scormEnabled = Boolean(values.scormEnabled ?? true);
+    client.xapiEnabled = Boolean(values.xapiEnabled ?? false);
+    client.xapiLrsEndpoint = String(values.xapiLrsEndpoint || "").trim();
+    client.xapiClientId = String(values.xapiClientId || "").trim();
+    client.xapiClientSecret = String(values.xapiClientSecret || "").trim();
   } else if (section === "smtp") {
     if (values.smtpFromEmail && !isValidEmail(values.smtpFromEmail)) {
       return fail(res, 400, "Please correct the highlighted fields.", {
@@ -858,7 +897,11 @@ const updateSettings = async (req, res) => {
         resetPurchasedCredits: false,
         carryAvailableCredits: nextPlan !== previousPlan && !shouldResetToPlanCredits,
       });
-      await applyPlanSnapshot(client, nextPlan); // Phase C: re-snapshot on billing plan change
+      // A same-plan "reset monthly credits" is a renewal/new billing cycle →
+      // reset lifetime counters (full quota again). A plan CHANGE (upgrade/
+      // downgrade) preserves usage so a downgrade can't grant new creates.
+      const isSamePlanRenewal = shouldResetToPlanCredits && nextPlan === previousPlan;
+      await applyPlanSnapshot(client, nextPlan, { resetLifetime: isSamePlanRenewal });
     }
 
     if (nextPlan === "ENTERPRISE" && Array.isArray(client.enterpriseRequests)) {

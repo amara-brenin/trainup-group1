@@ -45,6 +45,14 @@ export const publicRoutes: RouteObject[] = [
     },
   },
   {
+    // Signed external launch link for embedding inside an LMS (Method A/E).
+    path: "secure-launch/:launchToken",
+    lazy: async () => {
+      const module = await safeImport(() => import("../routes/launch/SecureTrainingLaunch"));
+      return { Component: module.default };
+    },
+  },
+  {
     path: "trainer",
     lazy: async () => {
       const module = await safeImport(() => import("../routes/trainer/TrainerWorkspacePanel"));

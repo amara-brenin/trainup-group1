@@ -63,6 +63,10 @@ const getRoleAccess = (role, storedDefinitions) => buildRoleAccess(role, storedD
 const sanitizeUserForClient = (user, storedDefinitions, client = null) => {
   const roleAccess = resolveUserAccess(user, storedDefinitions);
   const isSuperAdmin = user?.role === "super_admin";
+  // Lazy require avoids any module load-order coupling between auth and credits.
+  const { isSubscriptionExpired } = require("./credits");
+  // Issue 1: expose expiry so every credit widget (incl. topbar) can show 0.
+  const planExpired = isSuperAdmin ? false : Boolean(client && isSubscriptionExpired(client));
   const usedCredits = isSuperAdmin ? 0 : Number(client?.usedCredits ?? user.usedCredits ?? 0);
   const totalCredits = isSuperAdmin ? 0 : Number(client?.totalCredits ?? user.totalCredits ?? 0);
   const currentPlan = client?.plan || "FREE";
@@ -85,6 +89,7 @@ const sanitizeUserForClient = (user, storedDefinitions, client = null) => {
     image: user.image || "/branding/avatar.png",
     usedCredits,
     totalCredits,
+    planExpired,
     isUnreadNotifications: Boolean(user.isUnreadNotifications ?? false),
   };
 };

@@ -6,6 +6,7 @@ const { issuePasswordEmail } = require("../../services/authService");
 const { notifyUserIds, notifySuperAdmins } = require("../../helpers/notifications");
 const { ok, fail } = require("../../helpers/response");
 const { isValidEmail } = require("../../helpers/validation");
+const { resolveImageField } = require("../../helpers/imageStorage");
 
 const paginate = (records, query) => {
   const limit = Math.max(1, Number(query.limit || 10));
@@ -59,16 +60,24 @@ const validateSuperAdmin = (values, existingUsers, currentId) => {
 
 const list = async (req, res) => {
   const query = String(req.query.query || "").trim();
-  const dedicatedSuperAdmins = await SuperAdmin.find({}).sort({ createdAt: -1 }).lean();
-  const legacySuperAdmins = await User.find({ role: "super_admin" }).sort({ createdAt: -1 }).lean();
+  // Exclude only the sensitive passwordHash. The avatar `image` is kept so the
+  // Staff table can render it — avatars are stored as small S3 URLs (see
+  // create/update's resolveImageField), so this stays light.
+  const SAFE_PROJECTION = { passwordHash: 0 };
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const searchFilter = query
+    ? { $or: ["fullname", "name", "email", "phone", "status"].map((field) => ({ [field]: { $regex: escaped, $options: "i" } })) }
+    : {};
+
+  const [dedicatedSuperAdmins, legacySuperAdmins] = await Promise.all([
+    SuperAdmin.find(searchFilter, SAFE_PROJECTION).sort({ createdAt: -1 }).lean(),
+    User.find({ role: "super_admin", ...searchFilter }, SAFE_PROJECTION).sort({ createdAt: -1 }).lean(),
+  ]);
   const allSuperAdmins = [...dedicatedSuperAdmins, ...legacySuperAdmins]
     .filter((record, index, list) => list.findIndex((item) => item.appId === record.appId || item.email === record.email) === index)
     .map(sanitizeSuperAdmin);
-  const filtered = allSuperAdmins.filter((user) =>
-    [user.name, user.email, user.phone, user.status].some((value) => contains(value, query)),
-  );
 
-  return ok(res, "Super admins loaded.", paginate(filtered, req.query));
+  return ok(res, "Super admins loaded.", paginate(allSuperAdmins, req.query));
 };
 
 const create = async (req, res) => {
@@ -83,6 +92,9 @@ const create = async (req, res) => {
   }
 
   const appId = `user-super-${Date.now()}`;
+  // Storage migration: a base64 avatar upload is pushed to S3 and stored as a
+  // URL (light); an existing URL / static path is kept as-is.
+  const resolvedImage = (await resolveImageField(req.body.image, "super-admin-avatars")) || "/branding/avatar.png";
   const record = await SuperAdmin.create({
     appId,
     name: String(req.body.name || "").trim(),
@@ -96,7 +108,7 @@ const create = async (req, res) => {
     status: req.body.status === "inactive" ? "inactive" : "active",
     lastActive: "Just now",
     isUnreadNotifications: false,
-    image: String(req.body.image || "").trim() || "/branding/avatar.png",
+    image: resolvedImage,
     phone: String(req.body.phone || "").trim(),
     title: "Super Admin",
     department: "Platform",
@@ -161,7 +173,7 @@ const update = async (req, res) => {
   targetUser.email = String(req.body.email || "").trim().toLowerCase();
   targetUser.phone = String(req.body.phone || "").trim();
   targetUser.status = req.body.status === "inactive" ? "inactive" : "active";
-  targetUser.image = String(req.body.image || "").trim() || targetUser.image || "/branding/avatar.png";
+  targetUser.image = (await resolveImageField(req.body.image, "super-admin-avatars")) || targetUser.image || "/branding/avatar.png";
 
   await targetUser.save();
   return ok(res, "Super admin updated successfully.", sanitizeSuperAdmin(targetUser.toObject()));

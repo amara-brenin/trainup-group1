@@ -3,6 +3,7 @@ const express = require("express");
 const clientController = require("../controllers/super-admin/clientController");
 const superAdminController = require("../controllers/super-admin/superAdminController");
 const planController = require("../controllers/super-admin/planController");
+const impersonationController = require("../controllers/impersonationController");
 const { authTokenAdmin, allowRoles } = require("../middelwares");
 
 const router = express.Router();
@@ -33,5 +34,8 @@ router.post("/super-admins", superAdminController.create);
 router.put("/super-admins/:id", superAdminController.update);
 router.post("/super-admins/:id/password-email", superAdminController.sendPasswordReset);
 router.delete("/super-admins/:id", superAdminController.remove);
+
+// FEATURE 1: Super Admin → Client Admin impersonation.
+router.post("/impersonate/client/:clientId", impersonationController.impersonateClient);
 
 module.exports = router;

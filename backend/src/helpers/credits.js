@@ -121,7 +121,13 @@ const resolvePlan = async (plan) => {
 // Phase C: freeze the entitlement snapshot on the client from the (DB) plan at
 // purchase/upgrade time. Future plan edits NEVER touch these frozen base limits.
 // Does NOT reset lifetime usage (permanent per Task 2). Mutates client; caller saves.
-const applyPlanSnapshot = async (client, planCode) => {
+// `resetLifetime` controls whether lifetime usage counters are zeroed:
+//   • true  → a NEW billing cycle (renewal / fresh subscription): full quota again.
+//   • false → a plan CHANGE (upgrade/downgrade): only the base LIMIT changes;
+//             prior lifetime usage is preserved. This is what makes a downgrade
+//             safe — e.g. 40 used under a 50-plan, downgraded to a 10-plan, still
+//             counts 40 used (remaining 0) so no new creates until renewal/upgrade.
+const applyPlanSnapshot = async (client, planCode, { resetLifetime = false } = {}) => {
   const cfg = await resolvePlan(planCode);
   client.subscribedPlan = cfg.code;
   client.trainingBaseLimit = cfg.limits.trainings ?? null;
@@ -132,6 +138,21 @@ const applyPlanSnapshot = async (client, planCode) => {
   client.monthlyCredits = cfg.monthlyCredits;
   client.totalCredits = cfg.monthlyCredits + Math.max(0, Number(client.purchasedCredits || 0));
   client.entitlementSnapshotAt = new Date();
+  // Issue 1: stamp a fresh expiry on purchase/upgrade/renewal/downgrade.
+  stampPlanExpiry(client, cfg.validityDays);
+  if (resetLifetime) {
+    // Renewal/new cycle only — deletes never refund these (lifetime model).
+    client.trainingUsedLifetime = 0;
+    client.sessionUsedLifetime = 0;
+    client.userUsedLifetime = 0;
+    // A fresh plan purchase grants exactly the plan's credit allocation: any
+    // leftover purchased/credit-pack balance from the previous (possibly
+    // expired) cycle is NOT carried into the new plan as an add-on, and the
+    // consumed balance resets so the full allocation is available.
+    client.purchasedCredits = 0;
+    client.usedCredits = 0;
+    client.totalCredits = cfg.monthlyCredits;
+  }
   client.quotaInitialized = true; // snapshot is now the authoritative base
   return cfg;
 };
@@ -165,6 +186,76 @@ const getFreeTrialMeta = (client) => {
     startedAt: startedAt.toISOString(),
     endsAt: endsAt.toISOString(),
   };
+};
+
+// ---- Subscription expiry (Issue 1) ----------------------------------------
+// Canonical message surfaced to the client when a plan-resource action is
+// attempted after the subscription has lapsed.
+const SUBSCRIPTION_EXPIRED_MESSAGE =
+  "Your subscription has expired. Please renew your plan to continue using this feature.";
+
+// Resolve the subscription start: the most recent plan assignment/purchase,
+// else the entitlement snapshot, else the client creation date.
+const getSubscriptionStart = (client) => {
+  const txns = Array.isArray(client?.creditTransactions) ? client.creditTransactions : [];
+  const planTxn = txns.find(
+    (t) => t?.type === "plan_assignment" || t?.type === "plan_purchase",
+  );
+  const source =
+    planTxn?.createdAt ||
+    client?.entitlementSnapshotAt ||
+    client?.createdAt ||
+    client?.updatedAt ||
+    new Date().toISOString();
+  const parsed = new Date(source);
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+};
+
+// Effective expiry: the stored planExpiryDate when present (authoritative, set
+// at purchase/renewal), otherwise start + 1 month (matches the billing display).
+const getSubscriptionExpiry = (client) => {
+  if (client?.planExpiryDate) {
+    const stored = new Date(client.planExpiryDate);
+    if (!Number.isNaN(stored.getTime())) {
+      return stored;
+    }
+  }
+  const start = getSubscriptionStart(client);
+  const expiry = new Date(start);
+  expiry.setMonth(expiry.getMonth() + 1);
+  return expiry;
+};
+
+// Enterprise/contact-sales plans have no fixed monthly expiry unless one was
+// explicitly stamped. Everything else expires once the current date passes the
+// effective expiry — regardless of remaining credits.
+const isSubscriptionExpired = (client) => {
+  if (!client) {
+    return false;
+  }
+  const plan = normalizePlan(client.plan);
+  if (plan === "ENTERPRISE" && !client.planExpiryDate) {
+    return false;
+  }
+  return getSubscriptionExpiry(client).getTime() < Date.now();
+};
+
+// Returns the expiry error string if the subscription has lapsed, else null.
+const assertSubscriptionActive = (client) =>
+  isSubscriptionExpired(client) ? SUBSCRIPTION_EXPIRED_MESSAGE : null;
+
+// Compute and stamp planExpiryDate from `now` + validity (days). Mutates client.
+const stampPlanExpiry = (client, validityDays = 30) => {
+  const start = new Date();
+  const expiry = new Date(start);
+  const days = Number(validityDays);
+  if (Number.isFinite(days) && days > 0) {
+    expiry.setDate(expiry.getDate() + days);
+  } else {
+    expiry.setMonth(expiry.getMonth() + 1);
+  }
+  client.planExpiryDate = expiry;
+  return expiry;
 };
 
 const getEffectivePlanConfig = (client, plan) => {
@@ -219,6 +310,12 @@ const buildClientCreditSnapshot = (client) => {
       ? Number(client.totalCredits)
       : monthlyCredits + purchasedCredits;
 
+  // Issue 1: credits are computed WITH expiry validation, never trusted from
+  // stored values alone. An expired subscription has ZERO effective credits.
+  const planExpired = isSubscriptionExpired(client);
+  const rawAvailableCredits = Math.max(totalCredits - usedCredits, 0);
+  const availableCredits = planExpired ? 0 : rawAvailableCredits;
+
   return {
     plan: planConfig.code,
     planConfig,
@@ -226,7 +323,12 @@ const buildClientCreditSnapshot = (client) => {
     purchasedCredits,
     usedCredits,
     totalCredits,
-    availableCredits: Math.max(totalCredits - usedCredits, 0),
+    // Effective available credits: 0 when the plan has expired.
+    availableCredits,
+    // Raw (pre-expiry) balance, retained for display/reporting if needed.
+    rawAvailableCredits,
+    planExpired,
+    expiresOn: getSubscriptionExpiry(client).toISOString(),
     billingCycle: "monthly",
   };
 };
@@ -245,8 +347,11 @@ const applyPlanToClient = (client, plan, options = {}) => {
   const currentSnapshot = buildClientCreditSnapshot(client);
   const preservedPurchasedCredits = options.resetPurchasedCredits ? 0 : currentSnapshot.purchasedCredits;
   const preservedUsedCredits = options.resetUsage ? 0 : currentSnapshot.usedCredits;
+  // Use the RAW (pre-expiry) balance for carry-over so renewal credit-carry
+  // behavior is unchanged by the expiry-aware snapshot.
+  const carryBase = Math.max(0, Number(currentSnapshot.rawAvailableCredits ?? currentSnapshot.availableCredits));
   const carriedAvailableCredits = options.carryAvailableCredits
-    ? Math.max(0, currentSnapshot.availableCredits - preservedPurchasedCredits)
+    ? Math.max(0, carryBase - preservedPurchasedCredits)
     : 0;
 
   client.plan = normalizedPlan;
@@ -255,6 +360,8 @@ const applyPlanToClient = (client, plan, options = {}) => {
   client.usedCredits = preservedUsedCredits;
   client.totalCredits = planConfig.monthlyCredits + preservedPurchasedCredits + carriedAvailableCredits;
   client.billingCycle = "monthly";
+  // Issue 1: stamp a fresh expiry whenever a plan is (re)assigned.
+  stampPlanExpiry(client, planConfig.validityDays);
   client.creditTransactions = Array.isArray(client.creditTransactions) ? client.creditTransactions : [];
 
   client.creditTransactions.unshift(
@@ -367,6 +474,12 @@ const assertUsageWithinPlan = ({ client, resource, nextCount }) => {
 const assertCreditAvailability = (client, requiredCredits) => {
   const snapshot = buildClientCreditSnapshot(client);
 
+  // Issue 1: an expired subscription has zero effective credits — surface the
+  // expiry message (not a generic "not enough credits") even on contact-sales.
+  if (snapshot.planExpired) {
+    return SUBSCRIPTION_EXPIRED_MESSAGE;
+  }
+
   if (snapshot.planConfig.contactSales) {
     return null;
   }
@@ -474,6 +587,11 @@ module.exports = {
   applyPlanToClient,
   assertUsageWithinPlan,
   assertCreditAvailability,
+  assertSubscriptionActive,
+  isSubscriptionExpired,
+  getSubscriptionExpiry,
+  stampPlanExpiry,
+  SUBSCRIPTION_EXPIRED_MESSAGE,
   consumeClientCredits,
   addClientCredits,
   recordCreditAudit,

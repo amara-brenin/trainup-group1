@@ -96,7 +96,17 @@ export interface AdminUser {
   image: string;
   usedCredits: number;
   totalCredits: number;
+  planExpired?: boolean;
   isUnreadNotifications: boolean;
+  impersonation?: {
+    active: boolean;
+    level: number;
+    rootRole: string;
+    currentName: string;
+    currentRole: string;
+    returnToRole: string;
+    returnLabel: string;
+  } | null;
 }
 
 export interface AppSettings {
@@ -124,6 +134,11 @@ export interface ClientRecord {
   purchasedCredits?: number;
   usedCredits?: number;
   totalCredits?: number;
+  planExpired?: boolean;
+  expiresOn?: string | null;
+  // Mirror of the client's own Upgrade & Billing view (expiry-aware credits,
+  // start/expiry dates, plan usage, purchase history) for the super-admin detail page.
+  billing?: BillingSummary;
   billingCycle?: "monthly";
   trainingCreditCost?: number;
   userCreditCost?: number;
@@ -173,12 +188,23 @@ export interface ClientRecord {
     thumbnailUrl?: string;
   allowedOrigins: string[];
   webhookUrl: string;
+  webhookSigningSecret?: string;
   lastWebhookTestAt?: string;
   lastWebhookTestStatus?: DeliveryTestStatus;
   lastWebhookTestMessage?: string;
   apiScope: string;
   iframeBaseUrl?: string;
   iframeAllowedParentDomains?: string[];
+  ltiClientId?: string;
+  ltiDeploymentId?: string;
+  ltiPlatformKeysetUrl?: string;
+  ltiAccessTokenUrl?: string;
+  ltiOidcAuthUrl?: string;
+  scormEnabled?: boolean;
+  xapiEnabled?: boolean;
+  xapiLrsEndpoint?: string;
+  xapiClientId?: string;
+  xapiClientSecret?: string;
   emailDeliveryEnabled?: boolean;
   smtpHost?: string;
   smtpPort?: number;
@@ -353,6 +379,7 @@ export interface BillingSummary {
   currentPlan: PlanType;
   billingCycle: "monthly";
   planStatus?: "active" | "expired";
+  planExpired?: boolean;
   startedOn?: string | null;
   expiresOn?: string | null;
   planUsage?: {
@@ -1018,6 +1045,7 @@ export interface ClientFormValues {
     darkLogoUrl?: string;
   faviconUrl?: string;
   webhookUrl?: string;
+  webhookSigningSecret?: string;
   apiScope?: string;
   allowedOrigins?: string;
   iframeEnabled?: boolean;
@@ -1122,6 +1150,7 @@ export interface TenantSettingsPayload {
     ssoAllowedDomains: string[];
     ssoAutoProvisionUsers: boolean;
     webhookUrl: string;
+    webhookSigningSecret: string;
     lastWebhookTestAt: string;
     lastWebhookTestStatus: DeliveryTestStatus;
     lastWebhookTestMessage: string;
@@ -1138,6 +1167,17 @@ export interface TenantSettingsPayload {
     domainLastCheckedAt: string;
     domainLastCheckedResult: string;
     domainVerifiedAt: string;
+    // LMS Integration (LMS_INTEGRATION_RESEARCH.md)
+    ltiClientId: string;
+    ltiDeploymentId: string;
+    ltiPlatformKeysetUrl: string;
+    ltiAccessTokenUrl: string;
+    ltiOidcAuthUrl: string;
+    scormEnabled: boolean;
+    xapiEnabled: boolean;
+    xapiLrsEndpoint: string;
+    xapiClientId: string;
+    xapiClientSecret: string;
   };
   smtp: {
     emailDeliveryEnabled: boolean;
