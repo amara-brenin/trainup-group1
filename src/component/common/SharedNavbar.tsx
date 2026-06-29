@@ -1,6 +1,6 @@
 import { useCallback, useEffect, type ReactNode } from "react";
 import { useAppDispatch, useAppSelector } from "../../app/hooks";
-import { changeSidebarSize, toggleTheme } from "../../redux/themeSlice";
+import { changeSidebarSize, toggleSidebar, toggleTheme } from "../../redux/themeSlice";
 import NotificationMenu from "./NotificationMenu";
 
 type SharedNavbarProps = {
@@ -83,7 +83,17 @@ const SharedNavbar = ({ leftContent, usedCredits, totalCredits, planExpired = fa
   return (
     <div className="navbar-custom">
       <div className="topbar container-fluid">
-        <div className="d-flex align-items-center gap-lg-2 gap-1">{leftContent}</div>
+        <div className="d-flex align-items-center gap-lg-2 gap-1">
+          <button
+            type="button"
+            className="button-toggle-menu d-lg-none"
+            onClick={() => dispatch(toggleSidebar())}
+            aria-label="Toggle menu"
+          >
+            <i className="ri-menu-2-line" />
+          </button>
+          {leftContent}
+        </div>
 
         <ul className="topbar-menu d-flex align-items-center gap-1 gap-lg-2 mb-0">
           <NotificationMenu buttonClassName="app-topbar-icon-button dropdown-toggle arrow-none" />

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
-import { useAppSelector } from "../../app/hooks";
+import { useAppDispatch, useAppSelector } from "../../app/hooks";
 import { adminMenu } from "../../constant/adminMenu";
 import { superAdminMenu } from "../../constant/superAdminMenu";
 import { getAdminHomePath } from "../../helper/adminHome";
 import { getScopedAppPath, isSuperAdminRole } from "../../helper/appShell";
+import { closeSidebar } from "../../redux/themeSlice";
 import Image from "./Image";
 import { PermissionBlock } from "./PermissionBlock";
 import SharedSidebar from "./SharedSidebar";
@@ -113,10 +114,15 @@ const SingleMenu = ({
   permissionKey?: string;
   allowedKey?: string;
 }) => {
+  const dispatch = useAppDispatch();
   return (
     <PermissionBlock permissionKey={permissionKey} allowedKey={allowedKey}>
       <li className="side-nav-item">
-        <NavLink to={link} className={({ isActive }) => `side-nav-link app-sidebar-link ${isActive ? "active" : ""}`}>
+        <NavLink
+          to={link}
+          onClick={() => dispatch(closeSidebar())}
+          className={({ isActive }) => `side-nav-link app-sidebar-link ${isActive ? "active" : ""}`}
+        >
           <span className="app-sidebar-icon">
             <i className={icon} />
           </span>
@@ -137,6 +143,7 @@ const MultipleMenu = ({
   children: NonNullable<(typeof adminMenu)[number]["children"]>;
 }) => {
   const location = useLocation();
+  const dispatch = useAppDispatch();
   const admin = useAppSelector((state) => state.admin);
   const sidenavSize = useAppSelector((state) => state.theme.sidenavSize);
   const isCollapsedView = sidenavSize === "condensed";
@@ -191,7 +198,7 @@ const MultipleMenu = ({
           {scopedChildren.map((child) => (
             <PermissionBlock key={child.link} permissionKey={child.permission_key} allowedKey={child.allowed_key}>
               <li>
-                <NavLink to={child.link ?? "/dashboard"} className={({ isActive }) => `app-sidebar-submenu-link ${isActive ? "active" : ""}`}>
+                <NavLink to={child.link ?? "/dashboard"} onClick={() => dispatch(closeSidebar())} className={({ isActive }) => `app-sidebar-submenu-link ${isActive ? "active" : ""}`}>
                   <span className="app-sidebar-submenu-icon">
                     <i className={child.icon ?? "ri-arrow-right-s-line"} />
                   </span>

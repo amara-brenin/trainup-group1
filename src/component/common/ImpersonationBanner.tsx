@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import { useAppSelector } from "../../app/hooks";
 import { restoreImpersonationSession } from "../../helper/impersonationApi";
@@ -10,6 +10,17 @@ const ImpersonationBanner = () => {
   const name = useAppSelector((state) => state.admin.name);
   const role = useAppSelector((state) => state.admin.role);
   const [returning, setReturning] = useState(false);
+  const isActive = Boolean(impersonation?.active);
+
+  // The banner is fixed at the very top (z-index 4000). The app topbar is
+  // sticky at top:0 (z-index 1000), so while scrolling it would slide UNDER the
+  // banner and hide the hamburger/logo. Tag <html> so CSS can offset the
+  // sticky topbar below the banner for the whole impersonated session.
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle("impersonation-active", isActive);
+    return () => root.classList.remove("impersonation-active");
+  }, [isActive]);
 
   if (!impersonation?.active) {
     return null;
@@ -32,54 +43,26 @@ const ImpersonationBanner = () => {
   return (
     <>
       {/* Spacer keeps the fixed banner from covering the app's topbar. */}
-      <div style={{ height: 44 }} aria-hidden />
-      <div
-        role="status"
-        style={{
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          height: 44,
-          zIndex: 4000,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 16,
-          padding: "0 16px",
-          background: "linear-gradient(90deg, #b45309, #d97706)",
-          color: "#fff",
-          fontSize: 13.5,
-          fontWeight: 600,
-          boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
-        }}
-      >
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, textTransform: "uppercase", letterSpacing: 0.4 }}>
-          <i className="ri-spy-line" /> Impersonation Mode
+      <div className="impersonation-spacer" aria-hidden />
+      <div className="impersonation-banner" role="status">
+        <span className="impersonation-banner-tag">
+          <i className="ri-spy-line" />
+          <span className="impersonation-banner-tag-text">Impersonation Mode</span>
         </span>
-        <span style={{ fontWeight: 500, textTransform: "none", letterSpacing: 0 }}>
-          Logged in as {roleLabel}: <strong>{displayName}</strong>
+        <span className="impersonation-banner-user">
+          <span className="impersonation-banner-user-label">Logged in as {roleLabel}:</span>{" "}
+          <strong>{displayName}</strong>
         </span>
         <button
           type="button"
+          className="impersonation-banner-return"
           onClick={() => void handleReturn()}
           disabled={returning}
-          style={{
-            border: "1px solid rgba(255,255,255,0.7)",
-            background: "rgba(255,255,255,0.12)",
-            color: "#fff",
-            borderRadius: 6,
-            padding: "4px 12px",
-            fontSize: 12.5,
-            fontWeight: 600,
-            cursor: returning ? "default" : "pointer",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-          }}
         >
           <i className="ri-arrow-go-back-line" />
-          {returning ? "Returning…" : impersonation.returnLabel || "Return to Admin"}
+          <span className="impersonation-banner-return-text">
+            {returning ? "Returning…" : impersonation.returnLabel || "Return to Admin"}
+          </span>
         </button>
       </div>
     </>

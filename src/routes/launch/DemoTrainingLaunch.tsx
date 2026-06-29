@@ -115,20 +115,15 @@ const DemoTrainingLaunch = () => {
   }
 
   return (
-    <div className="d-flex align-items-center justify-content-center vh-100 bg-light">
-      <div className="card shadow-sm" style={{ maxWidth: 440, width: "100%" }}>
-        <div className="card-body p-4">
+    <main className="auth-shell-centered" style={{ minHeight: "100vh" }}>
+      <div className="auth-card auth-card-focused">
+        <div className="auth-card-body">
+          <div className="auth-card-brand">
+            <img src={logoUrl} alt={appName} className="auth-brand-logo" />
+          </div>
           <div className="text-center mb-4">
-            <img
-              src={logoUrl}
-              alt={appName}
-              style={{ maxHeight: 48, maxWidth: 180 }}
-              className="mb-2"
-            />
-            <h5 className="mb-1">{resolved?.title || "Training Demo"}</h5>
-            <p className="text-body-secondary small mb-0">
-              Enter your details to start the demo training.
-            </p>
+            <h2>{resolved?.title || "Training Demo"}</h2>
+            <p className="mb-0">Enter your details to start the demo training.</p>
           </div>
 
           <form onSubmit={handleSubmit}>
@@ -162,13 +157,15 @@ const DemoTrainingLaunch = () => {
                 disabled={isSubmitting}
               />
             </div>
-            <button
-              type="submit"
-              className="btn btn-primary w-100"
-              disabled={isSubmitting || !guestName.trim() || !guestEmail.trim()}
-            >
-              {isSubmitting ? "Starting..." : "Start Demo Training"}
-            </button>
+            <div className="d-grid">
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={isSubmitting || !guestName.trim() || !guestEmail.trim()}
+              >
+                {isSubmitting ? "Starting..." : "Start Demo Training"}
+              </button>
+            </div>
           </form>
 
           <div className="text-center mt-3">
@@ -178,7 +175,7 @@ const DemoTrainingLaunch = () => {
           </div>
         </div>
       </div>
-    </div>
+    </main>
   );
 };
 
