@@ -16,7 +16,7 @@ const Dashboard = () => {
   const scopedPath = (path: string) => getScopedAppPath(path, admin.role);
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [capacity, setCapacity] = useState<CapacityUsage | null>(null);
-  const [creditsSummary, setCreditsSummary] = useState<{ availableCredits: number; totalCredits: number } | null>(null);
+  const [creditsSummary, setCreditsSummary] = useState<{ availableCredits: number; totalCredits: number; planExpired?: boolean } | null>(null);
   const intro =
     admin.role === "super_admin"
       ? {
@@ -39,10 +39,14 @@ const Dashboard = () => {
     if (admin.role === "super_admin") return;
     const [addonRes, billingRes] = await Promise.all([
       AxiosHelper.getData<{ usage: CapacityUsage }>("/billing/addons/history"),
-      AxiosHelper.getData<{ availableCredits: number; totalCredits: number }>("/billing/summary"),
+      AxiosHelper.getData<{ availableCredits: number; totalCredits: number; planExpired?: boolean; planStatus?: string }>("/billing/summary"),
     ]);
     if (addonRes.data.status && addonRes.data.data.usage) setCapacity(addonRes.data.data.usage);
-    if (billingRes.data.status) setCreditsSummary({ availableCredits: billingRes.data.data.availableCredits, totalCredits: billingRes.data.data.totalCredits });
+    if (billingRes.data.status) setCreditsSummary({
+      availableCredits: billingRes.data.data.availableCredits,
+      totalCredits: billingRes.data.data.totalCredits,
+      planExpired: Boolean(billingRes.data.data.planExpired) || billingRes.data.data.planStatus === "expired",
+    });
   }, [admin.role]);
 
   useEffect(() => {
@@ -115,6 +119,24 @@ const Dashboard = () => {
                 </div>
               </div>
             ) : null}
+            {creditsSummary?.planExpired ? (
+              <div className="row g-3 mb-3">
+                <div className="col-12">
+                  <div className="card border-danger">
+                    <div className="card-body d-flex flex-wrap align-items-center justify-content-between gap-3">
+                      <div>
+                        <span className="badge text-bg-danger mb-1">Plan Expired</span>
+                        <div className="fw-semibold">Your subscription has expired.</div>
+                        <div className="small text-body-secondary">Renew your plan to continue creating trainings, sessions and users.</div>
+                      </div>
+                      <button type="button" className="btn btn-primary" onClick={() => navigate(scopedPath("/upgrade-billings"))}>
+                        Upgrade your plan
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
             <div className="row g-3 mb-3">
               {items.map(({ label, key }) => {
                 const u = capacity[key];
@@ -147,20 +169,30 @@ const Dashboard = () => {
                   <div className="card-body">
                     <div className="d-flex justify-content-between mb-2">
                       <span className="small fw-semibold text-body-secondary">Credits Remaining</span>
-                      <span className={`badge text-bg-${creditTone}`}>{creditsSummary ? creditsSummary.availableCredits.toLocaleString() : "—"}</span>
+                      <span className={`badge text-bg-${creditsSummary?.planExpired ? "danger" : creditTone}`}>
+                        {creditsSummary ? (creditsSummary.planExpired ? 0 : creditsSummary.availableCredits).toLocaleString() : "—"}
+                      </span>
                     </div>
                     {creditsSummary ? (
-                      <>
-                        <div className="progress mb-1" style={{ height: 6 }}>
-                          <div className={`progress-bar bg-${creditTone}`} style={{ width: `${100 - creditPct}%` }} />
+                      creditsSummary.planExpired ? (
+                        <div className="d-flex align-items-center gap-2">
+                          <span className="badge text-bg-danger">Plan Expired</span>
+                          <span className="small text-body-secondary">Renew your plan to continue.</span>
                         </div>
-                        <div className="small text-body-secondary">{(creditsSummary.totalCredits - creditsSummary.availableCredits).toLocaleString()} / {creditsSummary.totalCredits.toLocaleString()} used</div>
-                      </>
+                      ) : (
+                        <>
+                          <div className="progress mb-1" style={{ height: 6 }}>
+                            <div className={`progress-bar bg-${creditTone}`} style={{ width: `${100 - creditPct}%` }} />
+                          </div>
+                          <div className="small text-body-secondary">{(creditsSummary.totalCredits - creditsSummary.availableCredits).toLocaleString()} / {creditsSummary.totalCredits.toLocaleString()} used</div>
+                        </>
+                      )
                     ) : null}
                   </div>
                 </div>
               </div>
             </div>
+            )}
           </>
         );
       })() : null}

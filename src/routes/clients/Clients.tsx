@@ -14,6 +14,7 @@ import type { ClientFormValues, ClientRecord, PageParamState, PaginatedResponse 
 import { AllowedKeys, PermissionKeys } from "../../constant/permissions";
 import { getScopedAppPath } from "../../helper/appShell";
 import AxiosHelper from "../../helper/AxiosHelper";
+import { impersonateClientAdmin } from "../../helper/impersonationApi";
 import { useDebounce } from "../../hooks/useDebounce";
 import { useAppSelector } from "../../app/hooks";
 
@@ -149,6 +150,29 @@ const Clients = () => {
       await fetchRecords();
     } else {
       toast.error(response.data.message);
+    }
+  };
+
+  // FEATURE 1: Super Admin → Client Admin impersonation.
+  const handleImpersonateClient = async (client: ClientRecord) => {
+    const result = await Swal.fire({
+      title: "Login as Client Admin",
+      html: "You are about to access this client's admin panel. Your current Super Admin session will be preserved and can be restored at any time.",
+      icon: "info",
+      showCancelButton: true,
+      cancelButtonText: "Cancel",
+      confirmButtonText: "Continue",
+      confirmButtonColor: "#3e60d5",
+    });
+
+    if (!result.isConfirmed) {
+      return;
+    }
+
+    try {
+      await impersonateClientAdmin(client.id); // redirects into the client admin panel on success
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not start the session.");
     }
   };
 
@@ -670,8 +694,9 @@ const Clients = () => {
                         <td>{client.industry}</td>
                         <td className="text-center">
                           <span className={`badge ${formatPlanBadge[client.plan] ?? "text-bg-light border"}`}>{client.plan}</span>
+                          {client.planExpired ? <span className="badge text-bg-danger ms-1">Expired</span> : null}
                           <div className="small text-body-secondary mt-1">
-                            {Math.max(Number(client.totalCredits ?? 0) - Number(client.usedCredits ?? 0), 0)} credits left
+                            {client.planExpired ? 0 : Math.max(Number(client.totalCredits ?? 0) - Number(client.usedCredits ?? 0), 0)} credits left
                           </div>
                           {client.enterpriseRequests?.some((item) => item.status === "pending") ? (
                             <div className="small text-primary mt-1">
@@ -699,6 +724,17 @@ const Clients = () => {
                                 >
                                   <i className="bi bi-eye" />
                                   <span>View details</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  className="dropdown-item"
+                                  onClick={() => {
+                                    close();
+                                    void handleImpersonateClient(client);
+                                  }}
+                                >
+                                  <i className="bi bi-box-arrow-in-right" />
+                                  <span>Login as Client Admin</span>
                                 </button>
                                 <PermissionBlock permissionKey={PermissionKeys.clientsDelete} allowedKey={AllowedKeys.clients}>
                                   <button

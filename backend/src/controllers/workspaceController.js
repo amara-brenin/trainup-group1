@@ -7,6 +7,7 @@ const { getTenantClientId, syncClientMetrics } = require("../helpers/tenant");
 const {
   CREDIT_COSTS, assertUsageWithinPlan, consumeClientCredits,
   ensureClientEntitlement, assertLifetimeQuota, getClientEntitlement,
+  assertSubscriptionActive,
 } = require("../helpers/credits");
 const { notifyRolesInClient, notifyTrainingOwner } = require("../helpers/notifications");
 const { sendTrainingAssignmentEmails } = require("../helpers/clientDelivery");
@@ -193,8 +194,9 @@ const capacity = async (req, res) => {
     });
   }
   const ent = getClientEntitlement(client);
+  // Issue 1: an expired subscription blocks creation regardless of remaining quota.
   // Task 2: gate is lifetime-based now (publishing #11 blocked even after deletes).
-  const quotaError = assertLifetimeQuota(client, "training", 1);
+  const quotaError = assertSubscriptionActive(client) || assertLifetimeQuota(client, "training", 1);
 
   const report = (r) => ({
     limit: ent[r].unlimited ? null : ent[r].limit,
@@ -297,6 +299,13 @@ const assignTraining = async (req, res) => {
     return fail(res, 400, "Selected trainees are already assigned.");
   }
 
+  // Issue 1: an expired subscription cannot assign trainings (these become
+  // session records that consume session quota on completion).
+  const expiredError = assertSubscriptionActive(client);
+  if (expiredError) {
+    return fail(res, 402, expiredError);
+  }
+
   const newSessions = newAssignees.map((trainee) => buildAssignedTrainingSession(training, trainee));
   training.payload = {
     ...training.payload,
@@ -364,6 +373,15 @@ const sync = async (req, res) => {
     const nextStatus = normalizeStatus(training.status);
     if (nextStatus === "approved" && prevStatus !== "approved" && !prevPayload.quotaConsumed) {
       publishConsumeIds.add(training.id);
+    }
+  }
+  // Issue 1: block any credit/quota-consuming sync (new trainings or publishing)
+  // once the subscription has expired. Pure metadata edits to existing trainings
+  // (no new creates, no new publishes) are allowed through.
+  if (nextTrainingCreateCount > 0 || publishConsumeIds.size > 0) {
+    const expiredError = assertSubscriptionActive(client);
+    if (expiredError) {
+      return fail(res, 402, expiredError);
     }
   }
   if (publishConsumeIds.size > 0) {

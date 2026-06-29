@@ -44,7 +44,7 @@ const {
   buildAssessmentSnapshot,
   publicCheckpoints,
 } = require("../helpers/assessmentScoring");
-const { ensureClientEntitlement, assertLifetimeQuota } = require("../helpers/credits");
+const { ensureClientEntitlement, assertLifetimeQuota, assertSubscriptionActive } = require("../helpers/credits");
 const { ensureGroupSession, findActiveSession, findGroupTrainingByAppId } = require("../services/groupSessionService");
 
 // ----------------------------------------------------------------------------
@@ -165,9 +165,14 @@ const createGroupSession = async (req, res) => {
   }
   const willReuse = Boolean(await findActiveSession(training.appId, clientId));
   if (client && !willReuse) {
+    // Issue 1: expired subscription cannot start a new group session.
+    const expiredError = assertSubscriptionActive(client);
+    if (expiredError) {
+      return fail(res, 402, expiredError);
+    }
     const quotaError = assertLifetimeQuota(client, "session", 1);
     if (quotaError) {
-      return fail(res, 400, quotaError);
+      return fail(res, 403, quotaError);
     }
   }
 

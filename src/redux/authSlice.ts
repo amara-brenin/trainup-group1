@@ -5,6 +5,16 @@ type AuthState = AdminUser & {
   authResolved: boolean;
 };
 
+export type ImpersonationContext = {
+  active: boolean;
+  level: number;
+  rootRole: string;
+  currentName: string;
+  currentRole: string;
+  returnToRole: string;
+  returnLabel: string;
+};
+
 const initialState: AuthState = {
   _id: "",
   clientId: "",
@@ -23,7 +33,9 @@ const initialState: AuthState = {
   image: "",
   usedCredits: 0,
   totalCredits: 0,
+  planExpired: false,
   isUnreadNotifications: false,
+  impersonation: null,
   authResolved: false,
 };
 
@@ -49,7 +61,9 @@ const authSlice = createSlice({
       state.image = action.payload.image;
       state.usedCredits = action.payload.usedCredits;
       state.totalCredits = action.payload.totalCredits;
+      state.planExpired = Boolean(action.payload.planExpired);
       state.isUnreadNotifications = action.payload.isUnreadNotifications;
+      state.impersonation = action.payload.impersonation ?? null;
       state.authResolved = true;
     },
     loggedOutAdmin: () => ({

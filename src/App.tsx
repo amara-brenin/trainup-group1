@@ -12,6 +12,8 @@ import "./assets/css/admin.css";
 import "./assets/css/samsung-lms.css";
 import { ErrorBoundary } from "./component/common/ErrorBoundary";
 import { Loader } from "./component/common/Loader";
+import ImpersonationBanner from "./component/common/ImpersonationBanner";
+import ImpersonationHandoffGate from "./component/common/ImpersonationHandoffGate";
 import ProviderCustom from "./layouts/ProviderCustom";
 import { router } from "./router";
 import { store } from "./store";
@@ -21,9 +23,12 @@ const App = () => {
     <ErrorBoundary>
       <Provider store={store}>
         <ProviderCustom>
-          <Suspense fallback={<Loader />}>
-            <RouterProvider router={router} />
-          </Suspense>
+          <ImpersonationHandoffGate>
+            <ImpersonationBanner />
+            <Suspense fallback={<Loader />}>
+              <RouterProvider router={router} />
+            </Suspense>
+          </ImpersonationHandoffGate>
           <ToastContainer position="top-right" autoClose={2500} newestOnTop />
         </ProviderCustom>
       </Provider>

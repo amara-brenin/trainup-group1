@@ -47,7 +47,7 @@ const corsDelegate = async (req, callback) => {
     origin: isAllowed,
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Authorization", "Content-Type", "X-App-Base-Path", "X-Guest-Name", "X-Guest-Email"],
+    allowedHeaders: ["Authorization", "Content-Type", "X-App-Base-Path", "X-Guest-Name", "X-Guest-Email", "X-File-Name"],
   });
 };
 

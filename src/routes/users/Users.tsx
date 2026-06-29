@@ -26,6 +26,7 @@ import type {
 } from "../../constant/interfaces";
 import { AllowedKeys, PermissionKeys } from "../../constant/permissions";
 import AxiosHelper from "../../helper/AxiosHelper";
+import { impersonateUser } from "../../helper/impersonationApi";
 import { useDebounce } from "../../hooks/useDebounce";
 import { updateAdmin } from "../../redux/authSlice";
 
@@ -218,6 +219,32 @@ const Users = () => {
       await fetchRecords();
     } else {
       toast.error(response.data.message);
+    }
+  };
+
+  // FEATURE 2: Client Admin (or SA-as-CA) → User impersonation.
+  const canImpersonateUser = (user: UserRecord) =>
+    user.id !== admin._id && user.role !== "super_admin" && user.status === "active";
+
+  const handleImpersonate = async (user: UserRecord) => {
+    const result = await Swal.fire({
+      title: "Login as User",
+      html: "You are about to access this user's panel. Your current admin session will be preserved.",
+      icon: "info",
+      showCancelButton: true,
+      cancelButtonText: "Cancel",
+      confirmButtonText: "Continue",
+      confirmButtonColor: "#3e60d5",
+    });
+
+    if (!result.isConfirmed) {
+      return;
+    }
+
+    try {
+      await impersonateUser(user.id); // redirects into the user's panel on success
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not start the session.");
     }
   };
 
@@ -678,6 +705,17 @@ const Users = () => {
                               onClick={() => handleEdit(user)}
                             >
                               <i className="ri-pencil-line" />
+                            </button>
+                          </PermissionBlock>
+                          <PermissionBlock permissionKey={PermissionKeys.usersEdit} allowedKey={AllowedKeys.users}>
+                            <button
+                              type="button"
+                              className="admin-inline-action-btn permission"
+                              title={canImpersonateUser(user) ? "Login as User" : "This account cannot be impersonated"}
+                              disabled={!canImpersonateUser(user)}
+                              onClick={() => void handleImpersonate(user)}
+                            >
+                              <i className="ri-login-box-line" />
                             </button>
                           </PermissionBlock>
                           <PermissionBlock permissionKey={PermissionKeys.usersDelete} allowedKey={AllowedKeys.users}>

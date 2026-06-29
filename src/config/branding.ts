@@ -88,6 +88,20 @@ export const buildBrandTheme = (settings: BrandSettingsPayload): BrandThemeConfi
   fontFamily: settings.fontFamily || defaultBrandTheme.fontFamily,
 });
 
+// Convert a hex colour (#rgb or #rrggbb) to an "r, g, b" string for Bootstrap's
+// *-rgb CSS variables. Returns null for non-hex values (gradients, etc.).
+const hexToRgbTriplet = (hex: string): string | null => {
+  let value = String(hex || "").trim().replace(/^#/, "");
+  if (value.length === 3) {
+    value = value.split("").map((c) => c + c).join("");
+  }
+  if (!/^[0-9a-fA-F]{6}$/.test(value)) return null;
+  const r = parseInt(value.slice(0, 2), 16);
+  const g = parseInt(value.slice(2, 4), 16);
+  const b = parseInt(value.slice(4, 6), 16);
+  return `${r}, ${g}, ${b}`;
+};
+
 export const applyBrandTheme = (theme: BrandThemeConfig, mode: BrandMode) => {
   const root = document.documentElement;
   const surface = mode === "dark" ? "#111827" : "#ffffff";
@@ -132,6 +146,19 @@ export const applyBrandTheme = (theme: BrandThemeConfig, mode: BrandMode) => {
     "--ct-tertiary-color": text,
     "--ct-border-color": border,
   };
+
+  // Bootstrap utilities like `.text-primary` / `.border-primary` / `.bg-primary`
+  // use the *-rgb variables (not --bs-primary), so set those too — otherwise
+  // those classes stay the default blue and ignore the white-label colour.
+  const primaryRgb = hexToRgbTriplet(theme.primaryColor);
+  if (primaryRgb) {
+    tokens["--bs-primary-rgb"] = primaryRgb;
+    tokens["--bs-link-color-rgb"] = primaryRgb;
+  }
+  const successRgb = hexToRgbTriplet(theme.successColor);
+  if (successRgb) tokens["--bs-success-rgb"] = successRgb;
+  const dangerRgb = hexToRgbTriplet(theme.dangerColor);
+  if (dangerRgb) tokens["--bs-danger-rgb"] = dangerRgb;
 
   Object.entries(tokens).forEach(([key, value]) => root.style.setProperty(key, value));
   root.setAttribute("data-brand-sidebar", theme.sidebarTheme);

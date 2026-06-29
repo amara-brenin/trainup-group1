@@ -1,17 +1,18 @@
 import { useCallback, useEffect, type ReactNode } from "react";
 import { useAppDispatch, useAppSelector } from "../../app/hooks";
-import { changeSidebarSize, toggleTheme } from "../../redux/themeSlice";
+import { changeSidebarSize, toggleSidebar, toggleTheme } from "../../redux/themeSlice";
 import NotificationMenu from "./NotificationMenu";
 
 type SharedNavbarProps = {
   leftContent?: ReactNode;
   usedCredits: number;
   totalCredits: number;
+  planExpired?: boolean;
   userSlot: ReactNode;
   showCredits?: boolean;
 };
 
-const SharedNavbar = ({ leftContent, usedCredits, totalCredits, userSlot, showCredits = true }: SharedNavbarProps) => {
+const SharedNavbar = ({ leftContent, usedCredits, totalCredits, planExpired = false, userSlot, showCredits = true }: SharedNavbarProps) => {
   const dispatch = useAppDispatch();
   const { bsTheme } = useAppSelector((state) => state.theme);
 
@@ -70,12 +71,29 @@ const SharedNavbar = ({ leftContent, usedCredits, totalCredits, userSlot, showCr
     }
   };
 
-  const creditPercent = totalCredits > 0 ? Math.min(100, Math.round((usedCredits / totalCredits) * 100)) : 0;
+  // The topbar meter reads "used / total": a fresh plan shows 0 / 40,000 and
+  // climbs as credits are consumed (e.g. 500 / 40,000). An expired plan shows
+  // 0 / 0 — the granted credits no longer apply until a new plan is purchased.
+  const effectiveTotal = planExpired ? 0 : totalCredits;
+  const effectiveUsed = planExpired ? 0 : Math.min(Math.max(usedCredits, 0), effectiveTotal);
+  const effectiveAvailable = planExpired ? 0 : Math.max(totalCredits - usedCredits, 0);
+  // Track depletes as credits are used (full when none used, empty when spent).
+  const creditPercent = planExpired ? 0 : effectiveTotal > 0 ? Math.min(100, Math.round((effectiveAvailable / effectiveTotal) * 100)) : 0;
 
   return (
     <div className="navbar-custom">
       <div className="topbar container-fluid">
-        <div className="d-flex align-items-center gap-lg-2 gap-1">{leftContent}</div>
+        <div className="d-flex align-items-center gap-lg-2 gap-1">
+          <button
+            type="button"
+            className="button-toggle-menu d-lg-none"
+            onClick={() => dispatch(toggleSidebar())}
+            aria-label="Toggle menu"
+          >
+            <i className="ri-menu-2-line" />
+          </button>
+          {leftContent}
+        </div>
 
         <ul className="topbar-menu d-flex align-items-center gap-1 gap-lg-2 mb-0">
           <NotificationMenu buttonClassName="app-topbar-icon-button dropdown-toggle arrow-none" />
@@ -105,14 +123,14 @@ const SharedNavbar = ({ leftContent, usedCredits, totalCredits, userSlot, showCr
 
           {showCredits ? (
             <li className="d-none d-md-inline-block">
-              <div className="app-credit-meter" aria-label={`Credits used ${usedCredits} of ${totalCredits}`}>
+              <div className="app-credit-meter" aria-label={`Credits used ${effectiveUsed} of ${effectiveTotal}`}>
                 <div className="app-credit-icon">
                   <i className="ri-wallet-3-line" />
                 </div>
                 <div className="app-credit-copy">
-                  <span>Credits</span>
-                  <strong>
-                    {usedCredits} / {totalCredits}
+                  <span>{planExpired ? "Credits (Expired)" : "Credits"}</span>
+                  <strong className={planExpired ? "text-danger" : undefined}>
+                    {effectiveUsed.toLocaleString()} / {effectiveTotal.toLocaleString()}
                   </strong>
                   <div className="app-credit-track">
                     <span style={{ width: `${creditPercent}%` }} />

@@ -1,18 +1,16 @@
 import { useState } from "react";
 import { ErrorMessage, Field, Form, Formik } from "formik";
-import { GoogleLogin, type CredentialResponse } from "@react-oauth/google";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
 import * as Yup from "yup";
 import { useAppDispatch, useAppSelector } from "../../app/hooks";
 import Image from "../../component/common/Image";
-import { DEFAULT_GOOGLE_CLIENT_ID } from "../../constant/googleAuth";
 import type { AuthLoginResponse } from "../../constant/interfaces";
 import AxiosHelper from "../../helper/AxiosHelper";
 import { getAdminHomePath } from "../../helper/adminHome";
 import { getLastAppRoute, setAuthToken } from "../../helper/authSession";
 import { getScopedAppPath } from "../../helper/appShell";
-import { getRequiredAppLabelForRole, getRequiredAppUrlForRole, isRoleAllowedInCurrentApp, isSuperAdminApp } from "../../helper/appVariant";
+import { getRequiredAppLabelForRole, getRequiredAppUrlForRole, isRoleAllowedInCurrentApp } from "../../helper/appVariant";
 import { mockRequest } from "../../helper/mockApi";
 import { clientApiBaseUrl, isServerApiEnabled } from "../../helper/runtimeApi";
 import {
@@ -69,12 +67,7 @@ const Login = () => {
   const settings = useAppSelector((state) => state.settings);
   const admin = useAppSelector((state) => state.admin);
   const [show, setShow] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
   const activeRoleSession = getActivePublicRoleSession();
-  const googleClientId =
-    import.meta.env.VITE_GOOGLE_CLIENT_ID ||
-    import.meta.env.VITE_GOOGLE_AUTH_CLIENT_ID ||
-    DEFAULT_GOOGLE_CLIENT_ID;
 
   const completeLogin = (authPayload: AuthLoginResponse, message: string) => {
     if (!isRoleAllowedInCurrentApp(authPayload.user.role)) {
@@ -108,51 +101,6 @@ const Login = () => {
   if (activeRoleSession) {
     return <Navigate to={activeRoleSession.redirectTo} replace />;
   }
-
-  const submitGoogleLogin = async (response: CredentialResponse) => {
-    const credential = response.credential;
-    if (!credential) {
-      toast.error("Google did not return a login credential.");
-      return;
-    }
-
-    setGoogleLoading(true);
-    try {
-      const googleResponse = await AxiosHelper.postData<AuthLoginResponse, { credential: string }>(
-        "/auth/google",
-        { credential },
-      );
-
-      if (googleResponse.data?.status) {
-        completeLogin(googleResponse.data.data, googleResponse.data.message);
-      } else {
-        toast.error(googleResponse.data?.message || "Google sign-in failed.");
-      }
-    } catch {
-      if (canUseLocalMockFallback()) {
-        try {
-          const fallbackResponse = (await mockRequest("POST", "/auth/google", { credential })) as {
-            data: {
-              status: boolean;
-              message: string;
-              data: AuthLoginResponse;
-            };
-          };
-
-          if (fallbackResponse.data?.status) {
-            completeLogin(fallbackResponse.data.data, fallbackResponse.data.message);
-            return;
-          }
-        } catch {
-          // Fall through to unavailable state.
-        }
-      }
-
-      toast.error("Google sign-in is temporarily unavailable.");
-    } finally {
-      setGoogleLoading(false);
-    }
-  };
 
   return (
     <main className="auth-shell-centered">
@@ -288,30 +236,6 @@ const Login = () => {
               </Form>
             )}
           </Formik>
-
-          {!isSuperAdminApp && (
-            <>
-              <div className="auth-divider">
-                <span>or</span>
-              </div>
-
-              <div className="auth-google-slot">
-                {googleLoading ? (
-                  <button type="button" className="btn btn-light w-100" disabled>
-                    <span className="spinner-border spinner-border-sm" role="status" aria-hidden="true" />
-                    Signing in with Google...
-                  </button>
-                ) : googleClientId ? (
-                  <GoogleLogin
-                    onSuccess={(response) => void submitGoogleLogin(response)}
-                    onError={() => toast.error("Google sign-in could not be started.")}
-                    width="100%"
-                    text="signin_with"
-                  />
-                ) : null}
-              </div>
-            </>
-          )}
         </div>
       </div>
     </main>

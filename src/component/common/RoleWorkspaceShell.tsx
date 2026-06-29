@@ -58,8 +58,14 @@ const RoleWorkspaceShell = ({
   const navigate = useNavigate();
   const dispatch = useAppDispatch();
   const admin = useAppSelector((state) => state.admin);
+  const settings = useAppSelector((state) => state.settings);
   const { sidenavSize, menuActive } = useAppSelector((state) => state.theme);
   const [showUserMenu, setShowUserMenu] = useState(false);
+
+  // Same fallback chain as the admin Navbar so the brand logo is always visible
+  // next to the mobile hamburger, even when a tenant has no dark-logo variant.
+  const lightLogo = settings.logo || settings.favicon;
+  const darkLogo = settings.dark_logo || settings.logo || settings.favicon;
 
   const meta = roleMeta[role];
   const canViewBilling = allowed.includes(AllowedKeys.billing) && permission.includes(PermissionKeys.billingView);
@@ -107,13 +113,26 @@ const RoleWorkspaceShell = ({
         <SharedNavbar
           usedCredits={usedCredits}
           totalCredits={totalCredits}
-          // leftContent={
-          //   admin.clientName ? (
-          //     <span className="badge bg-primary-subtle text-primary-emphasis border border-primary-subtle">
-          //       {admin.clientName}
-          //     </span>
-          //   ) : null
-          // }
+          leftContent={
+            <div className="logo-topbar">
+              <button type="button" className="logo-light border-0 bg-transparent p-0" onClick={() => selectItem("dashboard")} aria-label="Dashboard">
+                <span className="logo-lg">
+                  <Image src={lightLogo} alt={settings.application_name} height={42} />
+                </span>
+                <span className="logo-sm">
+                  <Image src={settings.favicon} alt={settings.application_name} height={30} />
+                </span>
+              </button>
+              <button type="button" className="logo-dark border-0 bg-transparent p-0" onClick={() => selectItem("dashboard")} aria-label="Dashboard">
+                <span className="logo-lg">
+                  <Image src={darkLogo} alt={settings.application_name} height={42} />
+                </span>
+                <span className="logo-sm">
+                  <Image src={settings.favicon} alt={settings.application_name} height={30} />
+                </span>
+              </button>
+            </div>
+          }
           userSlot={
             <li className="dropdown">
               <button

@@ -13,6 +13,7 @@ const {
   sendSmtpTestEmail,
 } = require("../helpers/clientDelivery");
 const { sanitizeUserForClient } = require("../helpers/auth");
+const { buildXapiStatement, sendXapiStatement } = require("../helpers/xapi");
 const crypto = require("crypto");
 const {
   CREDIT_COSTS,
@@ -215,9 +216,15 @@ const buildBillingSummaryResponse = (client, metrics = null) => {
   return {
     currentPlan: snapshot.plan,
     billingCycle: snapshot.billingCycle,
-    planStatus: client.status === "inactive" || snapshot.availableCredits <= 0 ? "expired" : "active",
+    // Issue 1: surface expiry explicitly so the dashboard can show the badge /
+    // "Plan Expired" / Remaining Credits = 0.
+    planExpired: snapshot.planExpired,
+    planStatus:
+      client.status === "inactive" || snapshot.planExpired || snapshot.availableCredits <= 0
+        ? "expired"
+        : "active",
     startedOn: billingDates.startedOn,
-    expiresOn: billingDates.expiresOn,
+    expiresOn: snapshot.expiresOn || billingDates.expiresOn,
     planUsage,
     activeUsers: planUsage.users,
     trainings: planUsage.trainings,
@@ -261,6 +268,7 @@ const dashboard = async (req, res) => {
     ? { clientId, role: { $ne: "super_admin" } }
     : { role: { $ne: "super_admin" } };
   const trainingFilter = clientId ? { clientId } : {};
+  const startOfToday = new Date(new Date().setHours(0, 0, 0, 0));
 
   const [
     webhookConfig,
@@ -281,30 +289,46 @@ const dashboard = async (req, res) => {
     User.countDocuments(clientId ? { clientId, role: { $nin: ["super_admin", "trainee"] } } : { role: { $nin: ["super_admin", "trainee"] } }),
     User.countDocuments(clientId ? { clientId, role: "trainee" } : { role: "trainee" }),
     Training.countDocuments(trainingFilter),
+    // Optimized: count sessions per-document with $size/$filter instead of
+    // $unwind (which explodes one row per embedded session before regrouping).
+    // Output keys are identical: totalSessions, activeSessions, completionsToday.
     Training.aggregate([
       { $match: trainingFilter },
       { $project: { sessions: { $ifNull: ["$payload.sessions", []] } } },
-      { $unwind: { path: "$sessions", preserveNullAndEmptyArrays: false } },
+      {
+        $project: {
+          totalSessions: { $size: "$sessions" },
+          activeSessions: {
+            $size: {
+              $filter: {
+                input: "$sessions",
+                as: "s",
+                cond: { $eq: [{ $toLower: { $ifNull: ["$$s.status", ""] } }, "in-progress"] },
+              },
+            },
+          },
+          completionsToday: {
+            $size: {
+              $filter: {
+                input: "$sessions",
+                as: "s",
+                cond: {
+                  $and: [
+                    { $eq: [{ $toLower: { $ifNull: ["$$s.status", ""] } }, "completed"] },
+                    { $gte: [{ $toDate: { $ifNull: ["$$s.completedAt", "1970-01-01"] } }, startOfToday] },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
       {
         $group: {
           _id: null,
-          totalSessions: { $sum: 1 },
-          activeSessions: {
-            $sum: { $cond: [{ $eq: [{ $toLower: { $ifNull: ["$sessions.status", ""] } }, "in-progress"] }, 1, 0] },
-          },
-          completionsToday: {
-            $sum: {
-              $cond: [
-                {
-                  $and: [
-                    { $eq: [{ $toLower: { $ifNull: ["$sessions.status", ""] } }, "completed"] },
-                    { $gte: [{ $toDate: { $ifNull: ["$sessions.completedAt", "1970-01-01"] } }, new Date(new Date().setHours(0, 0, 0, 0))] },
-                  ],
-                },
-                1, 0,
-              ],
-            },
-          },
+          totalSessions: { $sum: "$totalSessions" },
+          activeSessions: { $sum: "$activeSessions" },
+          completionsToday: { $sum: "$completionsToday" },
         },
       },
     ]),
@@ -481,6 +505,42 @@ const testWebhooks = async (req, res) => {
   });
 };
 
+const testXapi = async (req, res) => {
+  const clientId = getTenantClientId(req.user);
+  if (!clientId) {
+    return fail(res, 403, "xAPI testing is available only for tenant admins.");
+  }
+  const client = await Client.findOne({ appId: clientId });
+  if (!client) {
+    return fail(res, 404, "Client configuration not found.");
+  }
+  const endpoint = String(client.xapiLrsEndpoint || "").trim();
+  if (!endpoint) {
+    return fail(res, 400, "Configure the LRS endpoint URL before testing.");
+  }
+
+  const statement = buildXapiStatement({
+    baseUrl: client.domain ? `https://${client.domain}` : "https://trainup.ai",
+    clientName: client.name,
+    training: { id: "demo-training", title: "xAPI Test Training" },
+    learner: { id: "demo-learner", name: "Demo Learner", email: client.firstUserEmail || "demo@trainup.ai" },
+    session: { score: 90, timeSpentSeconds: 120 },
+  });
+
+  const result = await sendXapiStatement(
+    { endpoint, clientId: client.xapiClientId, clientSecret: client.xapiClientSecret },
+    statement,
+  );
+
+  const currentConfig = await getTenantSetting(clientId, "webhookConfig", {});
+  await setTenantSetting(clientId, "webhookConfig", {
+    ...currentConfig,
+    logs: appendWebhookLog(currentConfig, result.log),
+  });
+
+  return ok(res, result.message, result);
+};
+
 const getIframe = async (req, res) => {
   const clientId = getTenantClientId(req.user);
   const client = clientId ? await Client.findOne({ appId: clientId }, CLIENT_HEAVY_EXCLUSION).lean() : null;
@@ -605,7 +665,8 @@ const purchaseCredits = async (req, res) => {
     });
     // Phase C: freeze the entitlement snapshot from the (DB) plan at purchase
     // time so future plan edits never change this subscriber's limits/credits.
-    await applyPlanSnapshot(client, planCode);
+    // Renewal/new billing cycle → reset lifetime usage so full quota is restored.
+    await applyPlanSnapshot(client, planCode, { resetLifetime: true });
 
     client.creditTransactions.unshift({
       ...createTransactionEntry("plan_purchase", nextSnapshot.monthlyCredits, "Razorpay test plan checkout approved"),
@@ -1104,6 +1165,7 @@ module.exports = {
   getWebhooks,
   updateWebhooks,
   testWebhooks,
+  testXapi,
   getIframe,
   updateIframe,
   health,
@@ -1116,4 +1178,5 @@ module.exports = {
   requestEnterprisePlan,
   testSmtp,
   verifyDomain,
+  buildBillingSummaryResponse,
 };

@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
-import { useAppSelector } from "../../app/hooks";
+import { useAppDispatch, useAppSelector } from "../../app/hooks";
 import { adminMenu } from "../../constant/adminMenu";
 import { superAdminMenu } from "../../constant/superAdminMenu";
 import { getAdminHomePath } from "../../helper/adminHome";
 import { getScopedAppPath, isSuperAdminRole } from "../../helper/appShell";
+import { closeSidebar } from "../../redux/themeSlice";
 import Image from "./Image";
 import { PermissionBlock } from "./PermissionBlock";
 import SharedSidebar from "./SharedSidebar";
@@ -73,6 +74,29 @@ const Sidebar = () => {
             );
           })}
         </ul>
+
+        {!isSuperAdmin && admin.planExpired ? (
+          <div className="app-sidebar-upgrade px-3 mt-3 mb-4">
+            <div
+              className="rounded p-2 mb-2 small"
+              style={{
+                background: "rgba(244, 63, 94, 0.12)",
+                border: "1px solid rgba(244, 63, 94, 0.35)",
+                color: "rgba(255, 255, 255, 0.72)",
+              }}
+            >
+              <strong className="d-block" style={{ color: "#ff8a9b" }}>Plan Expired</strong>
+              Upgrade your plan to continue.
+            </div>
+            <Link
+              to={getScopedAppPath("/upgrade-billings", admin.role)}
+              className="btn btn-primary btn-sm w-100 d-inline-flex align-items-center justify-content-center gap-1"
+            >
+              <i className="ri-arrow-up-circle-line" />
+              Upgrade your plan
+            </Link>
+          </div>
+        ) : null}
     </SharedSidebar>
   );
 };
@@ -90,10 +114,15 @@ const SingleMenu = ({
   permissionKey?: string;
   allowedKey?: string;
 }) => {
+  const dispatch = useAppDispatch();
   return (
     <PermissionBlock permissionKey={permissionKey} allowedKey={allowedKey}>
       <li className="side-nav-item">
-        <NavLink to={link} className={({ isActive }) => `side-nav-link app-sidebar-link ${isActive ? "active" : ""}`}>
+        <NavLink
+          to={link}
+          onClick={() => dispatch(closeSidebar())}
+          className={({ isActive }) => `side-nav-link app-sidebar-link ${isActive ? "active" : ""}`}
+        >
           <span className="app-sidebar-icon">
             <i className={icon} />
           </span>
@@ -114,6 +143,7 @@ const MultipleMenu = ({
   children: NonNullable<(typeof adminMenu)[number]["children"]>;
 }) => {
   const location = useLocation();
+  const dispatch = useAppDispatch();
   const admin = useAppSelector((state) => state.admin);
   const sidenavSize = useAppSelector((state) => state.theme.sidenavSize);
   const isCollapsedView = sidenavSize === "condensed";
@@ -168,7 +198,7 @@ const MultipleMenu = ({
           {scopedChildren.map((child) => (
             <PermissionBlock key={child.link} permissionKey={child.permission_key} allowedKey={child.allowed_key}>
               <li>
-                <NavLink to={child.link ?? "/dashboard"} className={({ isActive }) => `app-sidebar-submenu-link ${isActive ? "active" : ""}`}>
+                <NavLink to={child.link ?? "/dashboard"} onClick={() => dispatch(closeSidebar())} className={({ isActive }) => `app-sidebar-submenu-link ${isActive ? "active" : ""}`}>
                   <span className="app-sidebar-submenu-icon">
                     <i className={child.icon ?? "ri-arrow-right-s-line"} />
                   </span>

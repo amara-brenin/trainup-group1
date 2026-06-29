@@ -2725,6 +2725,25 @@ const TrainingLaunch = () => {
       setSessionId(response.data.data.sessionId);
     }
 
+    // When embedded inside a SCORM wrapper (or any iframe host), notify the
+    // parent on completion so it can report status/score to the LMS gradebook.
+    if (action === "complete" && typeof window !== "undefined" && window.parent !== window) {
+      try {
+        window.parent.postMessage(
+          {
+            source: "trainup",
+            type: "completed",
+            status: "completed",
+            score: overrides.score ?? launchScoreSummary.score ?? null,
+            trainingId: training.id,
+          },
+          "*",
+        );
+      } catch {
+        /* parent unreachable (cross-origin restrictions) — ignore */
+      }
+    }
+
     return response.data.data;
   };
 
