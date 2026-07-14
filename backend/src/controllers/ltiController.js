@@ -25,8 +25,10 @@ const jwks = async (_req, res) => {
 };
 
 const toolBaseUrl = (req) => `${req.protocol}://${req.get("host")}${config.apiPrefix}`;
-const frontendBaseUrl = (req) =>
-  config.frontendBaseUrl || `${req.protocol}://${req.get("host")}`;
+const frontendBaseUrl = (req, client) =>
+  (client?.domain ? `https://${client.domain}` : "") ||
+  config.frontendBaseUrl ||
+  `${req.protocol}://${req.get("host")}`;
 
 // OIDC 3rd-party login initiation. The platform calls this first; we bounce the
 // browser back to the platform's auth endpoint with state + nonce.
@@ -165,13 +167,13 @@ const launch = async (req, res) => {
   if (normalizeValue(req.query.format) === "json" || normalizeValue(req.body.format) === "json") {
     return ok(res, "LTI launch verified.", {
       trainingId: training.appId,
-      launchUrl: `${frontendBaseUrl(req)}/secure-launch/${token}`,
+      launchUrl: `${frontendBaseUrl(req, client)}/secure-launch/${token}`,
       learner: { id: claims.sub, name: claims.name, email: claims.email },
       ags,
     });
   }
 
-  return res.redirect(buildPublicUrl(frontendBaseUrl(req), `/secure-launch/${token}`));
+  return res.redirect(buildPublicUrl(frontendBaseUrl(req, client), `/secure-launch/${token}`));
 };
 
 // Deep Linking content picker — instructor chooses a training from a list.
