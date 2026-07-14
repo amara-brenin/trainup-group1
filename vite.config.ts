@@ -38,6 +38,12 @@ export default defineConfig(({ mode }) => {
       chunkSizeWarningLimit: 1300,
       rollupOptions: {
         output: {
+          assetFileNames: (assetInfo) => {
+            if (assetInfo.name && assetInfo.name.endsWith('.mjs')) {
+              return 'assets/[name]-[hash].js';
+            }
+            return 'assets/[name]-[hash][extname]';
+          },
           manualChunks(id) {
             if (!id.includes("node_modules")) {
               return;
