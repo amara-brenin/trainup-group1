@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import { ErrorMessage, Field, Form, Formik, useFormikContext } from "formik";
 import { toast } from "react-toastify";
 import * as Yup from "yup";
@@ -8,6 +8,7 @@ import PageShell from "../../component/common/PageShell";
 import type { ActionResponse, AppSettings, TenantSettingsPayload } from "../../constant/interfaces";
 import AxiosHelper from "../../helper/AxiosHelper";
 import { validateBrandAssetSource } from "../../helper/brandingAssets";
+import { sanitizePhoneInput } from "../../helper/validation";
 import { updateSettings as updateAppSettings } from "../../redux/settingsSlice";
 import { EmailCenterPanel } from "./EmailCenter";
 
@@ -182,9 +183,11 @@ const Settings = () => {
                 name: Yup.string().required("Company name is required."),
                 industry: Yup.string().required("Industry is required."),
                 supportEmail: Yup.string().email("Use a valid support email.").required("Support email is required."),
+                companyPhone: Yup.string().trim().matches(/^\d{7,15}$/, { message: "Enter a valid phone number (digits only).", excludeEmptyString: true }),
               })}
               onSubmit={async (values, { setErrors }) => saveSection("company", values, setErrors)}
             >
+              {({ values, setFieldValue }) => (
               <Form>
                 <div className="admin-form-grid">
                   <div>
@@ -204,7 +207,17 @@ const Settings = () => {
                   </div>
                   <div>
                     <label htmlFor="settings-company-companyPhone" className="form-label">Company phone</label>
-                    <Field id="settings-company-companyPhone" name="companyPhone" className="form-control" />
+                    <Field
+                      id="settings-company-companyPhone"
+                      name="companyPhone"
+                      className="form-control"
+                      inputMode="numeric"
+                      value={values.companyPhone}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                        void setFieldValue("companyPhone", sanitizePhoneInput(e.target.value))
+                      }
+                    />
+                    <ErrorMessage name="companyPhone" component="small" className="text-danger" />
                   </div>
                   <div>
                     <label htmlFor="settings-company-companyAddress" className="form-label">Company address</label>
@@ -229,6 +242,7 @@ const Settings = () => {
                   </button>
                 </div>
               </Form>
+              )}
             </Formik>
           </div>
         </div>

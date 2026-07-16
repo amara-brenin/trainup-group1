@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { ErrorMessage, Field, Form, Formik } from "formik";
 import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
@@ -15,6 +15,7 @@ import { AllowedKeys, PermissionKeys } from "../../constant/permissions";
 import { getScopedAppPath } from "../../helper/appShell";
 import AxiosHelper from "../../helper/AxiosHelper";
 import { impersonateClientAdmin } from "../../helper/impersonationApi";
+import { sanitizePhoneInput } from "../../helper/validation";
 import { useDebounce } from "../../hooks/useDebounce";
 import { useAppSelector } from "../../app/hooks";
 
@@ -68,6 +69,7 @@ const validationSchema = Yup.object({
   subdomain: Yup.string().trim().required("Subdomain is required."),
   domain: Yup.string(),
   supportEmail: Yup.string().email("Use a valid support email.").required("Support email is required."),
+  companyPhone: Yup.string().trim().matches(/^\d{7,15}$/, { message: "Enter a valid phone number (digits only).", excludeEmptyString: true }),
   firstUserName: Yup.string().trim().required("First client admin name is required."),
   firstUserEmail: Yup.string().email("Use a valid email address.").required("First client admin email is required."),
   clientAdminPermission: Yup.array().of(Yup.string()).min(1, "Select at least one client admin permission."),
@@ -352,7 +354,17 @@ const Clients = () => {
                       </div>
                       <div>
                         <label htmlFor="companyPhone" className="form-label">Company phone</label>
-                        <Field name="companyPhone" id="companyPhone" className="form-control" />
+                        <Field
+                          name="companyPhone"
+                          id="companyPhone"
+                          className="form-control"
+                          inputMode="numeric"
+                          value={values.companyPhone}
+                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                            void setFieldValue("companyPhone", sanitizePhoneInput(e.target.value))
+                          }
+                        />
+                        <ErrorMessage name="companyPhone" component="small" className="text-danger" />
                       </div>
                       <div>
                         <label htmlFor="companyAddress" className="form-label">Company address</label>

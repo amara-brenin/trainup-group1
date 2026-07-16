@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import { ErrorMessage, Field, Form, Formik } from "formik";
 import { Link } from "react-router-dom";
 import { toast } from "react-toastify";
@@ -7,6 +7,7 @@ import { useAppDispatch, useAppSelector } from "../../app/hooks";
 import PageShell from "../../component/common/PageShell";
 import type { AdminUser } from "../../constant/interfaces";
 import AxiosHelper from "../../helper/AxiosHelper";
+import { sanitizePhoneInput } from "../../helper/validation";
 import { updateAdmin } from "../../redux/authSlice";
 
 const validationSchema = Yup.object({
@@ -183,7 +184,16 @@ const Profile = () => {
                       </div>
                       <div>
                         <label htmlFor="profile-phone" className="form-label">Phone</label>
-                        <Field id="profile-phone" name="phone" className="form-control" />
+                        <Field
+                          id="profile-phone"
+                          name="phone"
+                          className="form-control"
+                          inputMode="numeric"
+                          value={values.phone}
+                          onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                            void setFieldValue("phone", sanitizePhoneInput(e.target.value))
+                          }
+                        />
                       </div>
                       <div>
                         <label htmlFor="profile-title" className="form-label">Role</label>

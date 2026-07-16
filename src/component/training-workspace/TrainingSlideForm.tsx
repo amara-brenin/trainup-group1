@@ -8,6 +8,7 @@ import {
   isMatrixField,
   normalizeTrainingFieldType,
 } from "../../helper/trainingForm";
+import { sanitizePhoneInput } from "../../helper/validation";
 
 type TrainingSlideFormMode = "preview" | "readonly" | "launch";
 export type TrainingSlideFormSubmitResult = {
@@ -606,7 +607,7 @@ const TrainingSlideForm = ({
                   step={type === "number" ? field.step || 1 : undefined}
                   maxLength={field.maxLength}
                   onChange={(event) =>
-                    updateValue(field.id, type === "number" ? event.target.value : event.target.value)
+                    updateValue(field.id, type === "phone" ? sanitizePhoneInput(event.target.value) : event.target.value)
                   }
                 />
               ) : null}

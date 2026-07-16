@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import { ErrorMessage, Field, Form, Formik } from "formik";
 import { Link } from "react-router-dom";
 import { toast } from "react-toastify";
 import * as Yup from "yup";
 import type { AdminUser } from "../../constant/interfaces";
 import AxiosHelper from "../../helper/AxiosHelper";
+import { sanitizePhoneInput } from "../../helper/validation";
 
 type WorkspaceProfilePanelProps = {
   onProfileChange: (profile: AdminUser) => void;
@@ -200,7 +201,16 @@ const WorkspaceProfilePanel = ({ onProfileChange }: WorkspaceProfilePanelProps) 
                     </div>
                     <div>
                       <label htmlFor="workspace-profile-phone" className="form-label">Phone</label>
-                      <Field id="workspace-profile-phone" name="phone" className="form-control" />
+                      <Field
+                        id="workspace-profile-phone"
+                        name="phone"
+                        className="form-control"
+                        inputMode="numeric"
+                        value={values.phone}
+                        onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                          void setFieldValue("phone", sanitizePhoneInput(e.target.value))
+                        }
+                      />
                     </div>
                     <div>
                       <label htmlFor="workspace-profile-title" className="form-label">Role</label>

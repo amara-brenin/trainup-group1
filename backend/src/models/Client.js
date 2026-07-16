@@ -44,7 +44,30 @@ const clientSchema = new Schema(
     // Once `now` passes this date the subscription is expired regardless of
     // remaining credits. null on legacy clients → expiry is computed from the
     // plan start (see getSubscriptionExpiry) for backward compatibility.
+    // Cached mirror of max(activePlans[].expiresAt) — kept for lightweight
+    // list views; activePlans is the authoritative source (see credits.js).
     planExpiryDate: { type: Date, default: null },
+    // Batch ledger: one entry per plan purchase/assignment, each with its own
+    // credits/limits/expiry so multiple purchases stack instead of the newest
+    // one overwriting the rest. Empty on legacy clients until their next
+    // purchase (see synthesizeLegacyBatch/getRawActivePlans in credits.js).
+    activePlans: {
+      type: [
+        {
+          batchId: String,
+          planCode: String,
+          label: String,
+          monthlyCredits: Number,
+          trainingLimit: { type: Number, default: null },
+          sessionLimit: { type: Number, default: null },
+          userLimit: { type: Number, default: null },
+          amount: Number,
+          purchasedAt: Date,
+          expiresAt: Date,
+        },
+      ],
+      default: [],
+    },
     joined: { type: String, default: "" },
     csm: { type: String, required: true, trim: true },
     logo: { type: String, default: "" },

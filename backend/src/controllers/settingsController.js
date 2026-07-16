@@ -3,7 +3,7 @@ const User = require("../models/User");
 const { createDomainVerificationToken, buildWebhookConfigPayload } = require("../helpers/clientDelivery");
 const { ok, fail } = require("../helpers/response");
 const { buildDefaultTenantAppSettings, buildTenantSettingsPayload, getTenantClientId, setTenantSetting } = require("../helpers/tenant");
-const { isValidEmail, isValidUrl } = require("../helpers/validation");
+const { isValidEmail, isValidUrl, isValidPhone } = require("../helpers/validation");
 const { resolveImageField } = require("../helpers/imageStorage");
 
 const parseList = (value) =>
@@ -73,6 +73,11 @@ const updateCompanySettings = async (client, values) => {
     errors.supportEmail = "Use a valid support email.";
   }
 
+  const nextCompanyPhone = String(values.companyPhone || "").trim();
+  if (nextCompanyPhone && !isValidPhone(nextCompanyPhone)) {
+    errors.companyPhone = "Enter a valid phone number (digits only).";
+  }
+
   if (Object.keys(errors).length) {
     return { errors };
   }
@@ -80,7 +85,7 @@ const updateCompanySettings = async (client, values) => {
   client.name = nextName;
   client.industry = nextIndustry;
   client.supportEmail = nextSupportEmail;
-  client.companyPhone = String(values.companyPhone || "").trim();
+  client.companyPhone = nextCompanyPhone;
   client.companyAddress = String(values.companyAddress || "").trim();
   client.status = String(values.status || client.status || "active").trim().toLowerCase();
   client.csm = String(values.csm || client.csm || "").trim();

@@ -18,8 +18,7 @@ const crypto = require("crypto");
 const {
   CREDIT_COSTS,
   PLAN_CONFIGS,
-  applyPlanToClient,
-  applyPlanSnapshot,
+  addPlanBatch,
   resolvePlan,
   buildClientCreditSnapshot,
   createTransactionEntry,
@@ -234,6 +233,9 @@ const buildBillingSummaryResponse = (client, metrics = null) => {
     availableCredits: snapshot.availableCredits,
     monthlyCredits: snapshot.monthlyCredits,
     purchasedCredits: snapshot.purchasedCredits,
+    // One row per active plan batch — feeds the "Current Subscription" table
+    // instead of a single ambiguous "current plan" label.
+    activePlans: snapshot.activePlans,
     costPerTraining: CREDIT_COSTS.training,
     costPerUser: CREDIT_COSTS.user,
     costPerSession: CREDIT_COSTS.session,
@@ -658,18 +660,15 @@ const purchaseCredits = async (req, res) => {
     }
 
     const amount = getPlanChargeAmount(client, planCode);
-    const nextSnapshot = applyPlanToClient(client, planCode, {
-      resetUsage: false,
-      resetPurchasedCredits: false,
-      carryAvailableCredits: true,
-    });
-    // Phase C: freeze the entitlement snapshot from the (DB) plan at purchase
-    // time so future plan edits never change this subscriber's limits/credits.
-    // Renewal/new billing cycle → reset lifetime usage so full quota is restored.
-    await applyPlanSnapshot(client, planCode, { resetLifetime: true });
+    // Stack: this purchase is appended as its OWN batch with its OWN expiry,
+    // adding to any still-active plan's credits/limits instead of overwriting
+    // them (a prior purchase's unused credits/expiry are never discarded here
+    // — they lapse only when THEIR OWN validity window ends).
+    const planCfg = await resolvePlan(planCode);
+    addPlanBatch(client, planCfg, { amount });
 
     client.creditTransactions.unshift({
-      ...createTransactionEntry("plan_purchase", nextSnapshot.monthlyCredits, "Razorpay test plan checkout approved"),
+      ...createTransactionEntry("plan_purchase", planCfg.monthlyCredits, "Razorpay test plan checkout approved"),
       amount,
       currency: client.billingCurrency || "INR",
       status: "captured",

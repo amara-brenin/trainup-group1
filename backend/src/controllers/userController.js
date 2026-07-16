@@ -36,7 +36,7 @@ const enforceUserLifetime = async (client, clientId, currentActiveUsers, addCoun
   return assertLifetimeQuota(client, "user", addCount);
 };
 const { notifyUserIds } = require("../helpers/notifications");
-const { isValidEmail } = require("../helpers/validation");
+const { isValidEmail, isValidPhone, sanitizePhoneInput } = require("../helpers/validation");
 const {
   areSamePermissions,
   buildAllowedFromPermissions,
@@ -214,6 +214,10 @@ const validateUser = (values, existingUsers, currentId) => {
     errors.email = "Use a valid email address.";
   }
 
+  if (values.phone && !isValidPhone(values.phone)) {
+    errors.phone = "Enter a valid phone number (digits only).";
+  }
+
   const duplicate = existingUsers.find(
     (user) => String(user.email).toLowerCase() === String(values.email).toLowerCase() && user.appId !== currentId,
   );
@@ -234,6 +238,10 @@ const validateTrainee = (values, existingUsers, currentId) => {
 
   if (!isValidEmail(values.email)) {
     errors.email = "Use a valid email address.";
+  }
+
+  if (values.phone && !isValidPhone(values.phone)) {
+    errors.phone = "Enter a valid phone number (digits only).";
   }
 
   const duplicate = existingUsers.find(
@@ -828,7 +836,7 @@ const importTrainees = async (req, res) => {
       totalCredits: 0,
       isUnreadNotifications: false,
       image: "/branding/avatar.png",
-      phone: String(row?.phone || "").trim(),
+      phone: sanitizePhoneInput(row?.phone),
       title: String(row?.title || "Trainee").trim(),
       department: String(row?.department || "").trim(),
       passwordHash: hashPassword(`pending-trainee-import-${Date.now()}-${index}`),

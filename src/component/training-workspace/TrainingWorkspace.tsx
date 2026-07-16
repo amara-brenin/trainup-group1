@@ -28,6 +28,7 @@ import type {
   TrainingQuestionSetRecord,
   TrainingReviewAttachment,
   TrainingInteractiveHotspot,
+  TrainingSlideMediaSource,
   TrainingSlideSettings,
   TrainingSlideshowTheme,
   TrainingSessionRecord,
@@ -970,6 +971,54 @@ const buildSlideFromImportedMedia = ({
   };
 };
 
+// Reconstructs the "uploaded deck" summary cards (fileName/kind/slideCount) for
+// an already-saved training's slides, so the Upload Slides step shows the
+// previously imported PDF/PPTX instead of appearing empty on re-edit — the
+// import batch itself isn't persisted, only the per-slide media it produced.
+const getUploadBatchStem = (mediaName: string, source: TrainingSlideMediaSource) => {
+  const suffix = source === "pdf_page" ? /-page-\d+\.[a-z0-9]+$/i : /-slide-\d+\.[a-z0-9]+$/i;
+  const stripped = mediaName.replace(suffix, "");
+  return stripped || getFileStem(mediaName);
+};
+
+const deriveUploadedFilesFromSlides = (slides: TrainingSlideRecord[]): ImportedUploadRecord[] => {
+  const batches: ImportedUploadRecord[] = [];
+  const batchIndexByKey = new Map<string, number>();
+
+  slides.forEach((slide) => {
+    if ((slide.mediaSource !== "pdf_page" && slide.mediaSource !== "ppt_slide") || !slide.mediaName) {
+      return;
+    }
+
+    const kind: UploadRecordKind = slide.mediaSource === "pdf_page" ? "pdf" : "ppt";
+    const stem = getUploadBatchStem(slide.mediaName, slide.mediaSource);
+    const key = `${kind}:${stem}`;
+    const existingIndex = batchIndexByKey.get(key);
+
+    if (existingIndex !== undefined) {
+      const batch = batches[existingIndex];
+      batch.slideCount += 1;
+      batch.slideIds.push(slide.id);
+      if (slide.mediaAssetId) {
+        batch.assetIds.push(slide.mediaAssetId);
+      }
+      return;
+    }
+
+    batchIndexByKey.set(key, batches.length);
+    batches.push({
+      id: `existing-upload-${key}`,
+      fileName: `${stem}.${kind === "pdf" ? "pdf" : "pptx"}`,
+      kind,
+      slideCount: 1,
+      slideIds: [slide.id],
+      assetIds: slide.mediaAssetId ? [slide.mediaAssetId] : [],
+    });
+  });
+
+  return batches;
+};
+
 const statusConfig: Record<TrainingStatus, { label: string; className: string }> = {
   draft: { label: "Draft", className: "text-bg-secondary" },
   review: { label: "Awaiting Review", className: "text-bg-warning" },
@@ -1858,7 +1907,9 @@ const TrainingBuilder = ({
     setStep(nextStep);
   };
   const [mode, setMode] = useState<BuilderMode>("upload");
-  const [uploadedFiles, setUploadedFiles] = useState<ImportedUploadRecord[]>([]);
+  const [uploadedFiles, setUploadedFiles] = useState<ImportedUploadRecord[]>(() =>
+    initialTraining ? deriveUploadedFilesFromSlides(initialTraining.slides) : [],
+  );
   const [slidesDraft, setSlidesDraft] = useState<TrainingSlideRecord[]>(
     initialTraining ? cloneSlides(initialTraining.slides) : [buildBlankSlide(0)],
   );
@@ -7069,12 +7120,19 @@ const TrainingDetail = ({
       toast.error(response.data.message || "Unable to create the group session.");
       return;
     }
-    const { session, joinCode } = response.data.data;
+    const { session, joinCode, reused } = response.data.data;
     const joinUrl = withOrigin(`/group/${session.id}`);
     const hallUrl = withOrigin(`/hall/${session.id}`);
     const dashboardUrl = withOrigin(`/group-sessions/${session.id}/live`);
     await navigator.clipboard?.writeText(`Join code: ${joinCode}\nTrainee link: ${joinUrl}`).catch(() => undefined);
-    toast.success(`Group session created. Join code ${joinCode} copied. Opening hall + live dashboard…`);
+    // Only one active session is ever allowed per training — if one is already
+    // running, we reopen it instead of creating a second one. Say so explicitly
+    // so this doesn't read as "a new session was created" to the host.
+    toast.success(
+      reused
+        ? `This training already has an active session. Rejoining it — join code ${joinCode} copied.`
+        : `Group session created. Join code ${joinCode} copied. Opening hall + live dashboard…`,
+    );
     window.open(hallUrl, "_blank", "noopener");
     window.open(dashboardUrl, "_blank", "noopener");
   };
@@ -9063,6 +9121,89 @@ const TrainingWorkspace = ({
     setView("builder");
   };
 
+  const duplicateTrainingRecord = async (trainingId: string) => {
+    if (isServerApiEnabled) {
+      setCheckingTrainingLimit(true);
+      try {
+        const response = await AxiosHelper.getData<TrainingCapacityResponse>("/training-workspace/capacity");
+        const capacity = response.data.data;
+
+        if (!response.data.status) {
+          toast.error(response.data.message || "Unable to verify training limit.");
+          return;
+        }
+
+        if (!capacity.canCreateTraining) {
+          toast.error(capacity.reason || "Your current plan does not allow another training.");
+          return;
+        }
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Unable to verify training limit.");
+        return;
+      } finally {
+        setCheckingTrainingLimit(false);
+      }
+    }
+
+    // Fetch the FULL training (slides/scripts/questions) directly rather than
+    // reading it back out of `trainings` — that array reflects this closure's
+    // render snapshot, which would still be stale immediately after the
+    // dispatch below runs.
+    let source: TrainingWorkspaceRecord | null = null;
+
+    if (isServerApiEnabled) {
+      try {
+        const response = await AxiosHelper.getData<TrainingWorkspaceRecord>(`/training-workspace/${trainingId}`);
+        if (!response.data.status || !response.data.data) {
+          toast.error(response.data.message || "Unable to load training details. Please try again.");
+          return;
+        }
+        source = response.data.data;
+        dispatch(saveTraining(source));
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : "Unable to load training details.");
+        return;
+      }
+    } else {
+      source = trainings.find((training) => training.id === trainingId) ?? null;
+    }
+
+    if (!source) {
+      toast.error("Unable to find the training to duplicate.");
+      return;
+    }
+
+    const clonedId = `T${String(Date.now()).slice(-6)}`;
+    const cloned: TrainingWorkspaceRecord = {
+      ...source,
+      id: clonedId,
+      title: `${source.title} (Copy)`,
+      status: "draft",
+      created: getTodayLabel(),
+      submittedOn: null,
+      approvedOn: null,
+      isPublished: false,
+      publishedOn: null,
+      lastActivity: "Today",
+      sessions: [],
+      reviewMessages: [],
+      slidesCount: undefined,
+      sessionsCount: undefined,
+      completedSessionsCount: undefined,
+      traineesCount: undefined,
+    };
+
+    dispatch(saveTraining(cloned));
+    toast.success("Training duplicated with attending sessions reset to zero.");
+    // The clone hasn't reached the server yet (sync is debounced), so open the
+    // builder directly against the in-memory copy instead of routing through
+    // openBuilder(), which would otherwise re-fetch the (not-yet-created) clone
+    // from the API and fail.
+    setBuilderTrainingId(clonedId);
+    setBuilderStartStep(1);
+    setView("builder");
+  };
+
   const deleteTrainingRecord = async (trainingId: string) => {
     const targetTraining = trainings.find((training) => training.id === trainingId);
 
@@ -9418,6 +9559,19 @@ const TrainingWorkspace = ({
                                             >
                                               <i className="bi bi-pencil-square" />
                                               <span>Edit</span>
+                                            </button>
+                                          ) : null}
+                                          {editable ? (
+                                            <button
+                                              type="button"
+                                              className="dropdown-item"
+                                              onClick={() => {
+                                                close();
+                                                void duplicateTrainingRecord(training.id);
+                                              }}
+                                            >
+                                              <i className="bi bi-files" />
+                                              <span>Duplicate</span>
                                             </button>
                                           ) : null}
                                           {deletable ? (

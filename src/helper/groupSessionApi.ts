@@ -56,7 +56,7 @@ export type GroupMetrics = {
 };
 
 export const createGroupSession = (trainingId: string, config?: Record<string, unknown>) =>
-  groupPost<{ session: GroupSessionView; joinCode: string; qrToken: string }>(
+  groupPost<{ session: GroupSessionView; joinCode: string; qrToken: string; reused: boolean }>(
     `/training-workspace/${trainingId}/group-session`,
     { config: config ?? {} },
   );

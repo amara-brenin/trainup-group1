@@ -600,10 +600,6 @@ const UpgradeBillings = () => {
   const isExpired = billingSummary.planStatus === "expired";
   const activePlanCode = String(billingSummary.currentPlan || "").toUpperCase();
   const activePlan = planLabels[activePlanCode] ?? billingSummary.currentPlan;
-  const activePlanPrice =
-    activePlanCode === "ENTERPRISE" && !billingSummary.enterpriseMonthlyPrice
-      ? "Custom"
-      : formatCurrency(billingSummary.planPrice, billingSummary.billingCurrency);
 
   // D2: plan cards are DB-driven (GET /billing/plans). Fall back to the legacy
   // billingSummary.planCatalog when the DB list is empty.
@@ -691,33 +687,29 @@ const UpgradeBillings = () => {
           </div>
         ) : null}
 
+        {/* The single "current plan" hero was removed — with multiple plans
+            able to be active at once (stacked), there's no one plan to name
+            here. See the "Current Subscription" table below for the per-plan
+            breakdown instead. */}
         <div className="admin-billing-hero card">
           <div className="card-body">
             <div className="admin-billing-hero-head">
               <div>
                 <p className="admin-billing-hero-kicker mb-2">{admin.clientName || "Client Workspace"}</p>
-                <h1 className="admin-billing-hero-title mb-2">{activePlan}</h1>
-                <p className="text-body-secondary mb-0">Your current subscription plan</p>
                 <div className="d-flex gap-2 mt-2 flex-wrap">
-                  {/* <span className={`badge ${sandboxMode ? "text-bg-warning" : "text-bg-success"}`}>
-                    {sandboxMode ? "Razorpay Test Mode" : "Live Billing"}
-                  </span> */}
                   {billingSummary.freeTrialActive ? <span className="badge text-bg-info">Free trial active</span> : null}
                   {billingSummary.pendingEnterpriseRequests ? (
                     <span className="badge text-bg-primary">
                       {billingSummary.pendingEnterpriseRequests} enterprise request pending
                     </span>
                   ) : null}
-                  {/* {billingSummary.gatewayReady ? <span className="badge text-bg-light border">Gateway configured</span> : <span className="badge text-bg-light border">Gateway keys pending</span>} */}
                 </div>
               </div>
-              <div className="admin-billing-hero-price">
-                <strong>{activePlanPrice}</strong>
-                <span>{activePlanCode === "ENTERPRISE" ? "" : "/month"}</span>
-                <small className={`badge ${isExpired ? "text-bg-danger" : "text-bg-primary"}`}>
-                  {isExpired ? "Expired" : "Monthly Plan"}
-                </small>
-              </div>
+              {isExpired ? (
+                <div className="admin-billing-hero-price">
+                  <small className="badge text-bg-danger">Expired</small>
+                </div>
+              ) : null}
             </div>
           </div>
         </div>
@@ -810,14 +802,53 @@ const UpgradeBillings = () => {
             {!isExpired ? (
             <div className="card mb-3">
               <div className="card-body">
-                <h2 className="h4 fw-semibold mb-3">Current Subscription</h2>
-                <div className="row g-2 mb-3">
-                  <div className="col-6 col-md-4 col-lg-2"><div className="small text-body-secondary">Plan</div><div className="fw-semibold">{activePlan}</div></div>
-                  <div className="col-6 col-md-4 col-lg-2"><div className="small text-body-secondary">Start Date</div><div className="fw-semibold">{formatDateLabel(billingSummary.startedOn)}</div></div>
-                  <div className="col-6 col-md-4 col-lg-2"><div className="small text-body-secondary">Expiry Date</div><div className="fw-semibold">{formatDateLabel(billingSummary.expiresOn)}</div></div>
-                  <div className="col-6 col-md-4 col-lg-2"><div className="small text-body-secondary">Monthly Credits</div><div className="fw-semibold">{billingSummary.monthlyCredits.toLocaleString()}</div></div>
-                  <div className="col-6 col-md-4 col-lg-2"><div className="small text-body-secondary">Total Credits</div><div className="fw-semibold">{billingSummary.totalCredits.toLocaleString()}</div></div>
-                  <div className="col-6 col-md-4 col-lg-2"><div className="small text-body-secondary">Available</div><div className="fw-semibold">{billingSummary.availableCredits.toLocaleString()}</div></div>
+                <div className="d-flex align-items-center justify-content-between flex-wrap gap-3 mb-3">
+                  <h2 className="h4 fw-semibold mb-0">Current Subscription</h2>
+                  <div className="d-flex gap-4">
+                    <div className="text-end">
+                      <div className="small text-body-secondary">Total Credits</div>
+                      <div className="fw-semibold">{billingSummary.totalCredits.toLocaleString()}</div>
+                    </div>
+                    <div className="text-end">
+                      <div className="small text-body-secondary">Available</div>
+                      <div className="fw-semibold">{billingSummary.availableCredits.toLocaleString()}</div>
+                    </div>
+                  </div>
+                </div>
+                {/* Every purchased/assigned plan stacks independently — each row
+                    keeps its own credits and its own expiry date rather than the
+                    newest purchase overwriting the rest. */}
+                <div className="table-responsive mb-3">
+                  <table className="table table-sm align-middle mb-0">
+                    <thead>
+                      <tr>
+                        <th>Plan</th>
+                        <th>Credits Granted</th>
+                        <th>Purchased On</th>
+                        <th>Expires On</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(billingSummary.activePlans && billingSummary.activePlans.length
+                        ? billingSummary.activePlans
+                        : [{
+                            batchId: "current",
+                            planCode: billingSummary.currentPlan,
+                            label: activePlan,
+                            monthlyCredits: billingSummary.monthlyCredits,
+                            purchasedAt: billingSummary.startedOn ?? "",
+                            expiresAt: billingSummary.expiresOn ?? "",
+                          }]
+                      ).map((p) => (
+                        <tr key={p.batchId}>
+                          <td className="fw-semibold">{planLabels[p.planCode] ?? p.label}</td>
+                          <td>{p.monthlyCredits.toLocaleString()}</td>
+                          <td>{formatDateLabel(p.purchasedAt)}</td>
+                          <td>{formatDateLabel(p.expiresAt)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
                 {addonUsage ? (
                   <div className="row g-3">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from "react";
 import { ErrorMessage, Field, Form, Formik } from "formik";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
@@ -16,6 +16,7 @@ import type {
 } from "../../constant/interfaces";
 import { getScopedAppPath } from "../../helper/appShell";
 import AxiosHelper from "../../helper/AxiosHelper";
+import { sanitizePhoneInput } from "../../helper/validation";
 import { useDebounce } from "../../hooks/useDebounce";
 
 const defaultValues: SuperAdminFormValues = {
@@ -30,7 +31,7 @@ const defaultValues: SuperAdminFormValues = {
 const createValidationSchema = Yup.object({
   name: Yup.string().trim().required("Name is required."),
   email: Yup.string().email("Use a valid email address.").required("Email is required."),
-  phone: Yup.string().trim().required("Mobile is required."),
+  phone: Yup.string().trim().required("Mobile is required.").matches(/^\d{7,15}$/, "Enter a valid mobile number (digits only)."),
   status: Yup.string().oneOf(["active", "inactive"]).required("Status is required."),
   image: Yup.string().optional(),
 });
@@ -334,7 +335,17 @@ const SuperAdmins = () => {
                   <label htmlFor="super-admin-phone" className="form-label">
                     Mobile <span className="text-danger">*</span>
                   </label>
-                  <Field id="super-admin-phone" name="phone" className="form-control" placeholder="Enter mobile number" />
+                  <Field
+                    id="super-admin-phone"
+                    name="phone"
+                    className="form-control"
+                    placeholder="Enter mobile number"
+                    inputMode="numeric"
+                    value={values.phone}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                      void setFieldValue("phone", sanitizePhoneInput(e.target.value))
+                    }
+                  />
                   <div className="text-danger small mt-1">
                     <ErrorMessage name="phone" />
                   </div>
