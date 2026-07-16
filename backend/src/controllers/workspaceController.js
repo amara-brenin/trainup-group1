@@ -114,7 +114,13 @@ const buildLaunchUrl = (req, client, trainingId, isGroup = false) => {
   // link auto-matches the deployed subpath even without server env config; fall
   // back to PUBLIC_BASE_PATH when the header is absent.
   const headerBase = req.headers["x-app-base-path"];
-  const resolvedOrigin = baseUrl || (client?.domain ? `https://${client.domain}` : `https://${client?.subdomain || "app"}.trainup.ai`);
+
+  // A tenant with a custom domain configured must always get links on that
+  // domain — this URL goes into trainee-facing assignment emails, so it can't
+  // depend on whichever origin the admin's browser happened to be on.
+  const resolvedOrigin = client?.domain
+    ? `https://${client.domain}`
+    : baseUrl || `https://${client?.subdomain || "app"}.trainup.ai`;
   return buildPublicUrl(resolvedOrigin, path, headerBase);
 };
 

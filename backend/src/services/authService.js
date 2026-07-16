@@ -54,9 +54,17 @@ const resolveRequestOrigin = (req) => {
 
 const withoutConsolePath = (value) => String(value || "").trim().replace(/\/console\/?$/i, "").replace(/\/+$/, "");
 
-const buildActionUrl = (req, purpose, token, user) => {
+const buildActionUrl = (req, purpose, token, user, client) => {
   const path = purpose === "reset_password" ? "/reset-password" : "/set-password";
   const query = `?token=${encodeURIComponent(token)}`;
+  const headerBase = req?.headers?.["x-app-base-path"];
+
+  // A tenant with a custom domain configured must always get links on that
+  // domain — otherwise the reset/invite link takes them to the platform's
+  // default admin URL instead of their own panel.
+  if (user?.role !== "super_admin" && client?.domain) {
+    return `${buildPublicUrl(`https://${client.domain}`, path, headerBase)}${query}`;
+  }
 
   // Explicitly configured app URLs already include the deployment subpath →
   // use them as-is (do not prepend PUBLIC_BASE_PATH, which would double it).
@@ -69,7 +77,6 @@ const buildActionUrl = (req, purpose, token, user) => {
 
   // Fallback to the bare request origin → prepend the admin base path. Prefer
   // the per-request X-App-Base-Path header, else PUBLIC_BASE_PATH.
-  const headerBase = req?.headers?.["x-app-base-path"];
   return `${buildPublicUrl(resolveRequestOrigin(req), path, headerBase)}${query}`;
 };
 
@@ -105,7 +112,7 @@ const createAuthToken = async ({ user, purpose, createdBy = "" }) => {
 const issuePasswordEmail = async ({ req, user, purpose, forcePlatform = false, createdBy = "" }) => {
   const { rawToken, expiresAt } = await createAuthToken({ user, purpose, createdBy });
   const client = await findClientForUser(user);
-  const actionUrl = buildActionUrl(req, purpose, rawToken, user);
+  const actionUrl = buildActionUrl(req, purpose, rawToken, user, client);
   const emailResult = await sendAccountActionEmail({
     client,
     user,

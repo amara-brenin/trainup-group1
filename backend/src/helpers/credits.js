@@ -118,43 +118,35 @@ const resolvePlan = async (plan) => {
   return PLAN_CONFIGS[normalized] || PLAN_CONFIGS.FREE;
 };
 
-// Phase C: freeze the entitlement snapshot on the client from the (DB) plan at
-// purchase/upgrade time. Future plan edits NEVER touch these frozen base limits.
-// Does NOT reset lifetime usage (permanent per Task 2). Mutates client; caller saves.
-// `resetLifetime` controls whether lifetime usage counters are zeroed:
-//   • true  → a NEW billing cycle (renewal / fresh subscription): full quota again.
-//   • false → a plan CHANGE (upgrade/downgrade): only the base LIMIT changes;
-//             prior lifetime usage is preserved. This is what makes a downgrade
-//             safe — e.g. 40 used under a 50-plan, downgraded to a 10-plan, still
-//             counts 40 used (remaining 0) so no new creates until renewal/upgrade.
-const applyPlanSnapshot = async (client, planCode, { resetLifetime = false } = {}) => {
-  const cfg = await resolvePlan(planCode);
-  client.subscribedPlan = cfg.code;
-  client.trainingBaseLimit = cfg.limits.trainings ?? null;
-  client.sessionBaseLimit = cfg.limits.sessions ?? null;
-  client.userBaseLimit = cfg.limits.users ?? null;
-  client.creditBaseLimit = cfg.monthlyCredits;
-  // Credits are also DB-plan-driven + frozen here (purchased credits preserved).
-  client.monthlyCredits = cfg.monthlyCredits;
-  client.totalCredits = cfg.monthlyCredits + Math.max(0, Number(client.purchasedCredits || 0));
-  client.entitlementSnapshotAt = new Date();
-  // Issue 1: stamp a fresh expiry on purchase/upgrade/renewal/downgrade.
-  stampPlanExpiry(client, cfg.validityDays);
-  if (resetLifetime) {
-    // Renewal/new cycle only — deletes never refund these (lifetime model).
-    client.trainingUsedLifetime = 0;
-    client.sessionUsedLifetime = 0;
-    client.userUsedLifetime = 0;
-    // A fresh plan purchase grants exactly the plan's credit allocation: any
-    // leftover purchased/credit-pack balance from the previous (possibly
-    // expired) cycle is NOT carried into the new plan as an add-on, and the
-    // consumed balance resets so the full allocation is available.
-    client.purchasedCredits = 0;
-    client.usedCredits = 0;
-    client.totalCredits = cfg.monthlyCredits;
+// ---- Batch ledger (stacked plan purchases) ---------------------------------
+// Each plan purchase/assignment grants its OWN credits/limits with its OWN
+// expiry (purchasedAt + validityDays), so buying a new plan while an old one
+// is still active ADDS to the total instead of overwriting it. This replaces
+// the old single-scalar model where every purchase overwrote `totalCredits`/
+// `planExpiryDate`, silently discarding whatever was left on the prior plan.
+
+const genBatchId = () => `plan-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+
+const buildBatchFromPlanConfig = (planCfg, { amount = 0, purchasedAt = new Date() } = {}) => {
+  const days = Number(planCfg.validityDays);
+  const expiresAt = new Date(purchasedAt);
+  if (Number.isFinite(days) && days > 0) {
+    expiresAt.setDate(expiresAt.getDate() + days);
+  } else {
+    expiresAt.setMonth(expiresAt.getMonth() + 1);
   }
-  client.quotaInitialized = true; // snapshot is now the authoritative base
-  return cfg;
+  return {
+    batchId: genBatchId(),
+    planCode: planCfg.code,
+    label: planCfg.label,
+    monthlyCredits: Math.max(0, Number(planCfg.monthlyCredits || 0)),
+    trainingLimit: planCfg.limits.trainings ?? null,
+    sessionLimit: planCfg.limits.sessions ?? null,
+    userLimit: planCfg.limits.users ?? null,
+    amount: Math.max(0, Number(amount || 0)),
+    purchasedAt,
+    expiresAt,
+  };
 };
 
 const getClientCreatedAt = (client) => {
@@ -211,9 +203,11 @@ const getSubscriptionStart = (client) => {
   return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
 };
 
-// Effective expiry: the stored planExpiryDate when present (authoritative, set
-// at purchase/renewal), otherwise start + 1 month (matches the billing display).
-const getSubscriptionExpiry = (client) => {
+// Pre-migration fallback expiry (mirrors the old single-scalar logic): the
+// stored planExpiryDate when present, else start + 1 month. Used ONLY to
+// synthesize a legacy client's first batch — never called once activePlans
+// is populated.
+const legacyExpiryFallback = (client) => {
   if (client?.planExpiryDate) {
     const stored = new Date(client.planExpiryDate);
     if (!Number.isNaN(stored.getTime())) {
@@ -226,9 +220,69 @@ const getSubscriptionExpiry = (client) => {
   return expiry;
 };
 
+// Pure: synthesize a single legacy batch from a pre-migration client's scalar
+// fields (plan/monthlyCredits/*BaseLimit/planExpiryDate). Never mutates the
+// client — the synthesized batch is only persisted the next time the client
+// actually purchases/is assigned a plan (see addPlanBatch/resetClientPlanState).
+const synthesizeLegacyBatch = (client) => {
+  const planCode = normalizePlan(client?.plan);
+  const cfg = getPlanConfig(planCode);
+  const rawTraining = client?.trainingBaseLimit;
+  const rawSession = client?.sessionBaseLimit;
+  const rawUser = client?.userBaseLimit;
+  return {
+    batchId: "legacy",
+    planCode,
+    label: cfg.label,
+    monthlyCredits: Math.max(0, Number(client?.monthlyCredits ?? cfg.monthlyCredits ?? 0)),
+    trainingLimit: rawTraining === null || rawTraining === undefined ? cfg.limits.trainings : Number(rawTraining),
+    sessionLimit: rawSession === null || rawSession === undefined ? cfg.limits.sessions : Number(rawSession),
+    userLimit: rawUser === null || rawUser === undefined ? cfg.limits.users : Number(rawUser),
+    amount: 0,
+    purchasedAt: client?.entitlementSnapshotAt || getClientCreatedAt(client),
+    expiresAt: legacyExpiryFallback(client),
+  };
+};
+
+// All batches on record (real ones if any, else a synthesized legacy one),
+// regardless of expiry — used for "furthest expiry ever granted" display.
+const getRawActivePlans = (client) => {
+  if (!client) return [];
+  const stored = Array.isArray(client.activePlans) ? client.activePlans : [];
+  if (stored.length) return stored;
+  return [synthesizeLegacyBatch(client)];
+};
+
+// Batches that are still within their own validity window — the live source
+// of truth for how many credits/limits are currently granted.
+const getActiveBatches = (client) => {
+  const now = Date.now();
+  return getRawActivePlans(client).filter((b) => {
+    const exp = new Date(b?.expiresAt);
+    return !Number.isNaN(exp.getTime()) && exp.getTime() > now;
+  });
+};
+
+// Effective expiry for display: the furthest-out expiresAt across ALL known
+// batches (even already-expired ones), so the UI can still show "expired on
+// X" after lapse. Falls back to start + 1 month when there's no batch at all.
+const getSubscriptionExpiry = (client) => {
+  const batches = getRawActivePlans(client);
+  if (!batches.length) {
+    const start = getSubscriptionStart(client);
+    const expiry = new Date(start);
+    expiry.setMonth(expiry.getMonth() + 1);
+    return expiry;
+  }
+  return batches.reduce((max, b) => {
+    const exp = new Date(b.expiresAt);
+    return !Number.isNaN(exp.getTime()) && exp.getTime() > max.getTime() ? exp : max;
+  }, new Date(0));
+};
+
 // Enterprise/contact-sales plans have no fixed monthly expiry unless one was
-// explicitly stamped. Everything else expires once the current date passes the
-// effective expiry — regardless of remaining credits.
+// explicitly stamped. Everything else is expired once there are no active
+// (non-lapsed) plan batches left — regardless of remaining credits.
 const isSubscriptionExpired = (client) => {
   if (!client) {
     return false;
@@ -237,26 +291,12 @@ const isSubscriptionExpired = (client) => {
   if (plan === "ENTERPRISE" && !client.planExpiryDate) {
     return false;
   }
-  return getSubscriptionExpiry(client).getTime() < Date.now();
+  return getActiveBatches(client).length === 0;
 };
 
 // Returns the expiry error string if the subscription has lapsed, else null.
 const assertSubscriptionActive = (client) =>
   isSubscriptionExpired(client) ? SUBSCRIPTION_EXPIRED_MESSAGE : null;
-
-// Compute and stamp planExpiryDate from `now` + validity (days). Mutates client.
-const stampPlanExpiry = (client, validityDays = 30) => {
-  const start = new Date();
-  const expiry = new Date(start);
-  const days = Number(validityDays);
-  if (Number.isFinite(days) && days > 0) {
-    expiry.setDate(expiry.getDate() + days);
-  } else {
-    expiry.setMonth(expiry.getMonth() + 1);
-  }
-  client.planExpiryDate = expiry;
-  return expiry;
-};
 
 const getEffectivePlanConfig = (client, plan) => {
   const normalizedPlan = normalizePlan(plan);
@@ -288,33 +328,49 @@ const getPlanChargeAmount = (client, plan) => {
   return planConfig.monthlyPrice;
 };
 
+// Aggregates credits across every currently-active plan batch (Issue: buying
+// a second plan before the first expires must ADD to the total, not replace
+// it). Each batch keeps expiring on its own purchasedAt + validityDays.
 const buildClientCreditSnapshot = (client) => {
+  const activeBatches = getActiveBatches(client);
   const plan = normalizePlan(client?.plan);
   const planConfig = getEffectivePlanConfig(client, plan);
-  const shouldFallbackEnterpriseCredits =
-    plan === "ENTERPRISE" &&
-    Number(client?.enterpriseMonthlyCredits || 0) <= 0 &&
-    Number(client?.monthlyCredits || 0) <= 0;
-  const monthlyCredits =
-    Number.isFinite(Number(client?.monthlyCredits)) &&
-    Number(client?.monthlyCredits) >= 0 &&
-    !shouldFallbackEnterpriseCredits
-      ? Number(client.monthlyCredits)
-      : planConfig.monthlyCredits;
+
+  const planExpired = activeBatches.length === 0;
+  // Derived from the most-recently-purchased ACTIVE batch (not the client.
+  // monthlyCredits scalar mirror — that field is only refreshed AFTER this
+  // snapshot runs inside addPlanBatch, so trusting it here would show the
+  // previous plan's amount for one call).
+  const latestBatch = activeBatches.length
+    ? activeBatches.reduce((latest, b) => (new Date(b.purchasedAt).getTime() > new Date(latest.purchasedAt).getTime() ? b : latest), activeBatches[0])
+    : null;
+  const monthlyCredits = latestBatch ? Math.max(0, Number(latestBatch.monthlyCredits || 0)) : planConfig.monthlyCredits;
   const purchasedCredits = Math.max(0, Number(client?.purchasedCredits || 0));
   const usedCredits = Math.max(0, Number(client?.usedCredits || 0));
-  const totalCredits =
-    Number.isFinite(Number(client?.totalCredits)) &&
-    Number(client?.totalCredits) >= 0 &&
-    !(shouldFallbackEnterpriseCredits && Number(client?.totalCredits || 0) <= 0)
-      ? Number(client.totalCredits)
-      : monthlyCredits + purchasedCredits;
+  const batchCredits = activeBatches.reduce((sum, b) => sum + Math.max(0, Number(b.monthlyCredits || 0)), 0);
+  const totalCredits = batchCredits + purchasedCredits;
 
   // Issue 1: credits are computed WITH expiry validation, never trusted from
-  // stored values alone. An expired subscription has ZERO effective credits.
-  const planExpired = isSubscriptionExpired(client);
+  // stored values alone. A client with zero active batches has ZERO credits.
   const rawAvailableCredits = Math.max(totalCredits - usedCredits, 0);
   const availableCredits = planExpired ? 0 : rawAvailableCredits;
+
+  // One row per active plan purchase, oldest first — feeds the "active plans"
+  // table on the billing page instead of a single "current plan" label.
+  const activePlans = activeBatches
+    .slice()
+    .sort((a, b) => new Date(a.purchasedAt).getTime() - new Date(b.purchasedAt).getTime())
+    .map((b) => ({
+      batchId: b.batchId,
+      planCode: b.planCode,
+      label: b.label,
+      monthlyCredits: Math.max(0, Number(b.monthlyCredits || 0)),
+      purchasedAt: new Date(b.purchasedAt).toISOString(),
+      expiresAt: new Date(b.expiresAt).toISOString(),
+      trainingLimit: b.trainingLimit ?? null,
+      sessionLimit: b.sessionLimit ?? null,
+      userLimit: b.userLimit ?? null,
+    }));
 
   return {
     plan: planConfig.code,
@@ -323,13 +379,14 @@ const buildClientCreditSnapshot = (client) => {
     purchasedCredits,
     usedCredits,
     totalCredits,
-    // Effective available credits: 0 when the plan has expired.
+    // Effective available credits: 0 when there's no active plan batch.
     availableCredits,
     // Raw (pre-expiry) balance, retained for display/reporting if needed.
     rawAvailableCredits,
     planExpired,
     expiresOn: getSubscriptionExpiry(client).toISOString(),
     billingCycle: "monthly",
+    activePlans,
   };
 };
 
@@ -341,39 +398,58 @@ const createTransactionEntry = (type, credits, note = "") => ({
   createdAt: new Date().toISOString(),
 });
 
-const applyPlanToClient = (client, plan, options = {}) => {
-  const normalizedPlan = normalizePlan(plan);
-  const planConfig = getEffectivePlanConfig(client, normalizedPlan);
-  const currentSnapshot = buildClientCreditSnapshot(client);
-  const preservedPurchasedCredits = options.resetPurchasedCredits ? 0 : currentSnapshot.purchasedCredits;
-  const preservedUsedCredits = options.resetUsage ? 0 : currentSnapshot.usedCredits;
-  // Use the RAW (pre-expiry) balance for carry-over so renewal credit-carry
-  // behavior is unchanged by the expiry-aware snapshot.
-  const carryBase = Math.max(0, Number(currentSnapshot.rawAvailableCredits ?? currentSnapshot.availableCredits));
-  const carriedAvailableCredits = options.carryAvailableCredits
-    ? Math.max(0, carryBase - preservedPurchasedCredits)
-    : 0;
+// The ONE path for granting a plan — fresh purchase, renewal, or admin
+// (re)assignment. Appends a batch instead of overwriting, so credits/limits
+// stack with independent expiries while multiple purchases are still valid.
+// Never resets lifetime usage counters (permanent, never refunded — matches
+// the existing lifetime-entitlement model for trainings/sessions/users).
+// Mutates client; caller saves.
+const addPlanBatch = (client, planCfg, { amount = 0 } = {}) => {
+  const batches = Array.isArray(client.activePlans) ? client.activePlans.slice() : [];
+  if (!batches.length) {
+    // First write since this feature shipped — seed the client's pre-existing
+    // scalar state as its own batch so it isn't silently dropped.
+    batches.push(synthesizeLegacyBatch(client));
+  }
+  const batch = buildBatchFromPlanConfig(planCfg, { amount });
+  batches.push(batch);
 
-  client.plan = normalizedPlan;
-  client.monthlyCredits = planConfig.monthlyCredits;
-  client.purchasedCredits = preservedPurchasedCredits + carriedAvailableCredits;
-  client.usedCredits = preservedUsedCredits;
-  client.totalCredits = planConfig.monthlyCredits + preservedPurchasedCredits + carriedAvailableCredits;
-  client.billingCycle = "monthly";
-  // Issue 1: stamp a fresh expiry whenever a plan is (re)assigned.
-  stampPlanExpiry(client, planConfig.validityDays);
-  client.creditTransactions = Array.isArray(client.creditTransactions) ? client.creditTransactions : [];
+  client.activePlans = batches;
+  client.plan = planCfg.code;
+  client.subscribedPlan = planCfg.code;
+  client.entitlementSnapshotAt = batch.purchasedAt;
+  client.quotaInitialized = true;
 
-  client.creditTransactions.unshift(
-    createTransactionEntry(
-      "plan_assignment",
-      planConfig.monthlyCredits,
-      `Plan set to ${planConfig.label}`,
-    ),
-  );
-  client.creditTransactions = client.creditTransactions.slice(0, 25);
+  // Refresh cached mirrors for the lightweight super-admin list view (not
+  // authoritative — buildClientCreditSnapshot/getActiveBatches recompute live).
+  const snapshot = buildClientCreditSnapshot(client);
+  client.totalCredits = snapshot.totalCredits;
+  client.monthlyCredits = snapshot.monthlyCredits;
+  client.planExpiryDate = getSubscriptionExpiry(client);
+  return snapshot;
+};
 
-  return buildClientCreditSnapshot(client);
+// Explicit full reset — used ONLY by the super-admin "reset monthly credits"
+// operational override. Wipes every batch and all lifetime usage counters,
+// unlike addPlanBatch which always stacks. Mutates client; caller saves.
+const resetClientPlanState = (client, planCfg, { amount = 0 } = {}) => {
+  const batch = buildBatchFromPlanConfig(planCfg, { amount });
+  client.activePlans = [batch];
+  client.plan = planCfg.code;
+  client.subscribedPlan = planCfg.code;
+  client.entitlementSnapshotAt = batch.purchasedAt;
+  client.quotaInitialized = true;
+  client.trainingUsedLifetime = 0;
+  client.sessionUsedLifetime = 0;
+  client.userUsedLifetime = 0;
+  client.purchasedCredits = 0;
+  client.usedCredits = 0;
+
+  const snapshot = buildClientCreditSnapshot(client);
+  client.totalCredits = snapshot.totalCredits;
+  client.monthlyCredits = snapshot.monthlyCredits;
+  client.planExpiryDate = batch.expiresAt;
+  return snapshot;
 };
 
 // ---- Feature Set 6 / Task 2: lifetime entitlement model --------------------
@@ -384,18 +460,21 @@ const RESOURCE_MAP = {
   user: { prefix: "user", planKey: "users", label: "user" },
 };
 
-// Effective entitlement per resource, read from client fields (NOT PLAN_CONFIGS
-// directly — Plan-snapshot compatible). base `null` ⇒ unlimited. Falls back to
-// the plan limit when the client's base hasn't been initialized yet.
+// Effective entitlement per resource: SUMMED across every currently-active
+// plan batch (stacking applies to limits too, not just credits), plus any
+// purchased add-on capacity. `null` base ⇒ unlimited (any active batch grants
+// unlimited for that resource). No active batches ⇒ base 0 (nothing granted).
 const getClientEntitlement = (client) => {
-  const { planConfig } = buildClientCreditSnapshot(client);
+  const activeBatches = getActiveBatches(client);
   const out = {};
-  for (const [resource, { prefix, planKey }] of Object.entries(RESOURCE_MAP)) {
-    const rawBase = client?.[`${prefix}BaseLimit`];
-    const base = rawBase === null || rawBase === undefined ? planConfig.limits[planKey] : Number(rawBase);
+  for (const [resource, { prefix }] of Object.entries(RESOURCE_MAP)) {
+    const limitKey = `${prefix}Limit`;
+    const unlimited = activeBatches.length > 0 && activeBatches.some((b) => b[limitKey] === null || b[limitKey] === undefined);
+    const base = unlimited
+      ? null
+      : activeBatches.reduce((sum, b) => sum + Math.max(0, Number(b[limitKey] || 0)), 0);
     const purchased = Math.max(0, Number(client?.[`${prefix}PurchasedLimit`] || 0));
     const usedLifetime = Math.max(0, Number(client?.[`${prefix}UsedLifetime`] || 0));
-    const unlimited = base === null || base === undefined;
     const limit = unlimited ? null : Number(base) + purchased;
     out[resource] = {
       base: unlimited ? null : Number(base),
@@ -584,13 +663,15 @@ module.exports = {
   getFreeTrialMeta,
   buildClientCreditSnapshot,
   createTransactionEntry,
-  applyPlanToClient,
+  addPlanBatch,
+  resetClientPlanState,
+  getActiveBatches,
+  getRawActivePlans,
   assertUsageWithinPlan,
   assertCreditAvailability,
   assertSubscriptionActive,
   isSubscriptionExpired,
   getSubscriptionExpiry,
-  stampPlanExpiry,
   SUBSCRIPTION_EXPIRED_MESSAGE,
   consumeClientCredits,
   addClientCredits,
@@ -600,7 +681,6 @@ module.exports = {
   assertLifetimeQuota,
   resolvePlan,
   planRowToConfig,
-  applyPlanSnapshot,
   ADDON_CREDIT_UNIT,
   ADDON_MONEY_UNIT,
   applyAddonQuota,

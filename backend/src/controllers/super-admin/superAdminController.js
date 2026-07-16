@@ -5,7 +5,7 @@ const { hashPassword } = require("../../helpers/auth");
 const { issuePasswordEmail } = require("../../services/authService");
 const { notifyUserIds, notifySuperAdmins } = require("../../helpers/notifications");
 const { ok, fail } = require("../../helpers/response");
-const { isValidEmail } = require("../../helpers/validation");
+const { isValidEmail, isValidPhone } = require("../../helpers/validation");
 const { resolveImageField } = require("../../helpers/imageStorage");
 
 const paginate = (records, query) => {
@@ -45,6 +45,12 @@ const validateSuperAdmin = (values, existingUsers, currentId) => {
 
   if (!isValidEmail(values.email)) {
     errors.email = "Use a valid email address.";
+  }
+
+  if (!String(values.phone || "").trim()) {
+    errors.phone = "Mobile is required.";
+  } else if (!isValidPhone(values.phone)) {
+    errors.phone = "Enter a valid mobile number (digits only).";
   }
 
   const duplicate = existingUsers.find(

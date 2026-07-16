@@ -15,12 +15,12 @@ const {
   verifyDomainRecord,
   sendSmtpTestEmail,
 } = require("../../helpers/clientDelivery");
-const { CREDIT_COSTS, buildClientCreditSnapshot, applyPlanToClient, applyPlanSnapshot, addClientCredits, normalizePlan, isSubscriptionExpired, getSubscriptionExpiry } = require("../../helpers/credits");
+const { CREDIT_COSTS, buildClientCreditSnapshot, addPlanBatch, resetClientPlanState, resolvePlan, addClientCredits, normalizePlan, isSubscriptionExpired, getSubscriptionExpiry } = require("../../helpers/credits");
 const { resolveImageField } = require("../../helpers/imageStorage");
 const { notifyRolesInClient, notifySuperAdmins, notifyUserIds } = require("../../helpers/notifications");
 const { getEditableRoleDefaults, getRoleDefinitions, getRoleDefinitionById, filterPermissionArrayForRole, buildAllowedFromPermissions } = require("../../helpers/permissions");
 const { ok, fail } = require("../../helpers/response");
-const { isValidEmail, isValidUrl } = require("../../helpers/validation");
+const { isValidEmail, isValidUrl, isValidPhone } = require("../../helpers/validation");
 const { buildDefaultTenantAppSettings, getTenantSetting, setTenantSetting, syncClientMetrics } = require("../../helpers/tenant");
 
 const paginate = (records, query) => {
@@ -79,7 +79,9 @@ const LIST_PROJECTION = {
   monthlyCredits: 1, purchasedCredits: 1, usedCredits: 1, totalCredits: 1,
   // planExpiryDate is required so the list's expiry badge reflects the stored
   // (renewed) expiry instead of falling back to the createdAt+1mo computation.
-  planExpiryDate: 1, subscribedPlan: 1, entitlementSnapshotAt: 1,
+  // activePlans is required so isSubscriptionExpired/getSubscriptionExpiry can
+  // read the real batch ledger instead of only the cached scalar mirror.
+  planExpiryDate: 1, subscribedPlan: 1, entitlementSnapshotAt: 1, activePlans: 1,
   activeUsers: 1, trainings: 1, sessions: 1,
   domain: 1, domainStatus: 1, subdomain: 1, joined: 1, csm: 1,
   logo: 1, logoColor: 1, logoBg: 1,
@@ -380,6 +382,10 @@ const validateClient = async (values, currentId, currentUserId = "") => {
     errors.supportEmail = "Use a valid support email.";
   }
 
+  if (values.companyPhone && !isValidPhone(values.companyPhone)) {
+    errors.companyPhone = "Enter a valid phone number (digits only).";
+  }
+
   if (values.smtpFromEmail && !isValidEmail(values.smtpFromEmail)) {
     errors.smtpFromEmail = "Use a valid SMTP sender email.";
   }
@@ -512,8 +518,9 @@ const create = async (req, res) => {
     firstUserEmail: String(req.body.firstUserEmail || "").trim().toLowerCase(),
   });
   applyDomainConfiguration(client, req.body.domain);
-  applyPlanToClient(client, req.body.plan, { resetUsage: true, resetPurchasedCredits: true });
-  await applyPlanSnapshot(client, req.body.plan); // Phase C: freeze entitlement from DB plan
+  // Brand-new client — seed its first (only) plan batch.
+  const initialPlanCfg = await resolvePlan(req.body.plan);
+  resetClientPlanState(client, initialPlanCfg);
   await client.save();
 
   const tenantRoleDefaults = getEditableRoleDefaults();
@@ -660,14 +667,11 @@ const update = async (req, res) => {
   if (req.body.plan) {
     const nextPlan = normalizePlan(req.body.plan);
     if (nextPlan !== normalizePlan(client.plan)) {
-      applyPlanToClient(client, nextPlan, {
-        resetUsage: false,
-        resetPurchasedCredits: false,
-        carryAvailableCredits: true,
-      });
-      await applyPlanSnapshot(client, nextPlan); // Phase C: re-snapshot on plan change
+      // Stack: this reassignment adds a new batch with its own expiry instead
+      // of overwriting whatever plan(s) the client already has active.
+      const nextPlanCfg = await resolvePlan(nextPlan);
+      addPlanBatch(client, nextPlanCfg);
     }
-    client.plan = nextPlan;
   }
   client.status = req.body.status || client.status;
   client.csm = String(req.body.csm || client.csm).trim();
@@ -734,6 +738,10 @@ const updateSettings = async (req, res) => {
     }
     if (!isValidEmail(values.supportEmail)) {
       errors.supportEmail = "Use a valid support email.";
+    }
+
+    if (values.companyPhone && !isValidPhone(values.companyPhone)) {
+      errors.companyPhone = "Enter a valid phone number (digits only).";
     }
 
     if (Object.keys(errors).length) {
@@ -891,17 +899,16 @@ const updateSettings = async (req, res) => {
     client.enterpriseMonthlyCredits = Math.max(0, Number(values.enterpriseMonthlyCredits || client.enterpriseMonthlyCredits || 0));
     client.enterpriseSupportNotes = String(values.enterpriseSupportNotes || client.enterpriseSupportNotes || "").trim();
 
-    if (nextPlan !== normalizePlan(client.plan) || shouldResetToPlanCredits) {
-      applyPlanToClient(client, nextPlan, {
-        resetUsage: false,
-        resetPurchasedCredits: false,
-        carryAvailableCredits: nextPlan !== previousPlan && !shouldResetToPlanCredits,
-      });
-      // A same-plan "reset monthly credits" is a renewal/new billing cycle →
-      // reset lifetime counters (full quota again). A plan CHANGE (upgrade/
-      // downgrade) preserves usage so a downgrade can't grant new creates.
-      const isSamePlanRenewal = shouldResetToPlanCredits && nextPlan === previousPlan;
-      await applyPlanSnapshot(client, nextPlan, { resetLifetime: isSamePlanRenewal });
+    if (shouldResetToPlanCredits) {
+      // Explicit ops override ("reset monthly credits") — wipe every batch and
+      // all lifetime usage, replacing with one fresh batch. Not a stack.
+      const cfg = await resolvePlan(nextPlan);
+      resetClientPlanState(client, cfg);
+    } else if (nextPlan !== previousPlan) {
+      // Stack: add a new batch with its own expiry instead of overwriting
+      // whatever plan(s) the client already has active.
+      const cfg = await resolvePlan(nextPlan);
+      addPlanBatch(client, cfg);
     }
 
     if (nextPlan === "ENTERPRISE" && Array.isArray(client.enterpriseRequests)) {

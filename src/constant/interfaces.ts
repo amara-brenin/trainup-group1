@@ -414,6 +414,19 @@ export interface BillingSummary {
     users: number | null;
     sessions: number | null;
   };
+  // One entry per currently-active plan purchase/assignment — each has its
+  // own credits/limits and its own expiry (see the batch-ledger fix).
+  activePlans?: Array<{
+    batchId: string;
+    planCode: string;
+    label: string;
+    monthlyCredits: number;
+    purchasedAt: string;
+    expiresAt: string;
+    trainingLimit: number | null;
+    sessionLimit: number | null;
+    userLimit: number | null;
+  }>;
   planCatalog: BillingPlanCatalogItem[];
   recentTransactions: Array<{
     id?: string;

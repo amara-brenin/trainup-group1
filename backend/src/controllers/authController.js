@@ -22,7 +22,7 @@ const {
 const config = require("../config");
 const { ok, fail } = require("../helpers/response");
 const { buildDefaultTenantAppSettings, buildPlatformAppSettings, findClientByHostname, getRequestHostname, getTenantClientId, getTenantSetting } = require("../helpers/tenant");
-const { isValidEmail } = require("../helpers/validation");
+const { isValidEmail, isValidPhone } = require("../helpers/validation");
 const { resolveImageField } = require("../helpers/imageStorage");
 const {
   completePasswordToken,
@@ -464,6 +464,10 @@ const updateProfile = async (req, res) => {
     if (duplicate) {
       errors.email = "Email already exists.";
     }
+  }
+
+  if (nextPhone && !isValidPhone(nextPhone)) {
+    errors.phone = "Enter a valid phone number (digits only).";
   }
 
   if (Object.keys(errors).length) {

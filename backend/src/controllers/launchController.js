@@ -1577,8 +1577,12 @@ const createSecureLaunchUrl = async (req, res) => {
   const referer = normalizeValue(req.headers.referer);
   const origin = normalizeValue(req.headers.origin) || (referer ? new URL(referer).origin : "");
   const client = await Client.findOne({ appId: clientId }).lean();
-  const resolvedOrigin =
-    origin || (client?.domain ? `https://${client.domain}` : `https://${client?.subdomain || "app"}.trainup.ai`);
+  // This link is shared with an external LMS — a tenant's custom domain must
+  // win over the ambient admin-session origin, or the external system's
+  // config would randomly point at whichever domain the admin last used.
+  const resolvedOrigin = client?.domain
+    ? `https://${client.domain}`
+    : origin || `https://${client?.subdomain || "app"}.trainup.ai`;
   const launchUrl = buildPublicUrl(resolvedOrigin, `/secure-launch/${token}`, req.headers["x-app-base-path"]);
 
   return ok(res, "Secure launch link generated.", {
@@ -1620,8 +1624,12 @@ const downloadScormPackage = async (req, res) => {
 
   const referer = normalizeValue(req.headers.referer);
   const origin = normalizeValue(req.headers.origin) || (referer ? new URL(referer).origin : "");
-  const resolvedOrigin =
-    origin || (client?.domain ? `https://${client.domain}` : `https://${client?.subdomain || "app"}.trainup.ai`);
+  // The SCORM zip is uploaded into the customer's own LMS and can't easily be
+  // regenerated — the embedded launch URL must use the tenant's custom domain
+  // whenever one is configured, not whichever origin the admin browsed from.
+  const resolvedOrigin = client?.domain
+    ? `https://${client.domain}`
+    : origin || `https://${client?.subdomain || "app"}.trainup.ai`;
   const launchUrl = buildPublicUrl(resolvedOrigin, `/secure-launch/${token}`, req.headers["x-app-base-path"]);
 
   const title = normalizeValue(training.payload?.title) || "Training";
