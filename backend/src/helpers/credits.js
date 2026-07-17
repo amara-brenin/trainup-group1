@@ -529,27 +529,6 @@ const assertLifetimeQuota = (client, resource, addCount = 1) => {
   return `Your plan allows ${ent.limit} ${label}${ent.limit === 1 ? "" : "s"} (lifetime). ${ent.usedLifetime} already used. Upgrade your plan or buy additional ${label} capacity.`;
 };
 
-const assertUsageWithinPlan = ({ client, resource, nextCount }) => {
-  const { planConfig } = buildClientCreditSnapshot(client);
-  const limit = planConfig.limits[resource];
-
-  if (limit === null || limit === undefined) {
-    return null;
-  }
-
-  if (nextCount <= limit) {
-    return null;
-  }
-
-  const labels = {
-    trainings: "training",
-    users: "user",
-    sessions: "session",
-  };
-
-  return `Current ${planConfig.label} plan allows only ${limit} ${labels[resource]}${limit === 1 ? "" : "s"}. Upgrade plan or buy a custom enterprise allocation.`;
-};
-
 const assertCreditAvailability = (client, requiredCredits) => {
   const snapshot = buildClientCreditSnapshot(client);
 
@@ -667,7 +646,6 @@ module.exports = {
   resetClientPlanState,
   getActiveBatches,
   getRawActivePlans,
-  assertUsageWithinPlan,
   assertCreditAvailability,
   assertSubscriptionActive,
   isSubscriptionExpired,

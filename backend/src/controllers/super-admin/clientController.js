@@ -214,7 +214,11 @@ const toClientRecord = async (client) => {
     trainingCreditCost: CREDIT_COSTS.training,
     userCreditCost: CREDIT_COSTS.user,
     sessionCreditCost: CREDIT_COSTS.session,
-    planLimits: creditSnapshot.planConfig.limits,
+    // Reuse the same entitlement-based limits already computed for `billing`
+    // (stacked across all active plan batches) instead of the static
+    // single-plan config, so this matches what the client's own Upgrade &
+    // Billing page and the actual create/add enforcement see.
+    planLimits: billing.planLimits,
     status: client.status,
     domain: client.domain,
     domainStatus: client.domainStatus,

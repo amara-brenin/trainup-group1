@@ -5,7 +5,7 @@ const User = require("../models/User");
 const { ok, fail } = require("../helpers/response");
 const { getTenantClientId, syncClientMetrics } = require("../helpers/tenant");
 const {
-  CREDIT_COSTS, assertUsageWithinPlan, consumeClientCredits,
+  CREDIT_COSTS, consumeClientCredits,
   ensureClientEntitlement, assertLifetimeQuota, getClientEntitlement,
   assertSubscriptionActive,
 } = require("../helpers/credits");
