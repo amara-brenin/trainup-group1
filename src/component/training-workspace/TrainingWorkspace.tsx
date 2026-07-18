@@ -246,6 +246,7 @@ type TrainingSetupValues = {
   showFinalScore: boolean;
   allowPublicDemoAccess: boolean;
   demoToken: string;
+  proctoringEnabled: boolean;
   theme: TrainingSlideshowTheme;
   branding: TrainingBrandingSettings;
   // Group Training Hall configuration (only used when deliveryType === "group").
@@ -1231,6 +1232,7 @@ const buildDefaultSetupValues = (
   showFinalScore: training?.options.showFinalScore ?? false,
   allowPublicDemoAccess: training?.options.allowPublicDemoAccess ?? false,
   demoToken: training?.options.demoToken ?? "",
+  proctoringEnabled: training?.options.proctoringEnabled ?? true,
   theme: training?.theme ? { ...defaultSlideshowTheme, ...training.theme } : { ...defaultSlideshowTheme },
   branding: training?.branding ? { ...defaultTrainingBranding, ...training.branding } : { ...defaultTrainingBranding },
   deliveryType: training?.trainingType === "group" ? "group" : "one_on_one",
@@ -4398,6 +4400,7 @@ const TrainingBuilder = ({
           showFinalScore: values.showFinalScore,
           allowPublicDemoAccess: values.allowPublicDemoAccess,
           demoToken: values.demoToken || "",
+          proctoringEnabled: values.proctoringEnabled,
         },
         theme: { ...values.theme },
         branding: { ...values.branding },
@@ -5080,6 +5083,17 @@ const TrainingBuilder = ({
                               <Field id="durationMins" name="durationMins" type="number" className="form-control" />
                               <div className="form-text">Used for the learner launch timer and session report context.</div>
                               <ErrorMessage name="durationMins" component="small" className="text-danger" />
+                            </div>
+                          </div>
+
+                          <div className="training-builder-subcaption mt-4">Proctoring</div>
+                          <div className="training-setting-group">
+                            <label className="form-label d-flex align-items-center gap-2 mb-2" style={{ cursor: "pointer" }}>
+                              <Field type="checkbox" name="proctoringEnabled" className="form-check-input mt-0" />
+                              Enable AI Proctoring
+                            </label>
+                            <div className="form-text mt-1">
+                              When enabled, the user's camera and browser activity will be monitored for attention and risk events during the session. If disabled, proctoring will not be started and the report will default to 100% score (no risk).
                             </div>
                           </div>
 

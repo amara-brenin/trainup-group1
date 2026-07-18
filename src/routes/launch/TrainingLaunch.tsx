@@ -749,6 +749,11 @@ const TrainingLaunch = () => {
   const [selectedLanguageCode, setSelectedLanguageCode] = useState("");
   const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
   const [avatarReady, setAvatarReady] = useState(false);
+  // Tracks whether the upfront microphone permission probe has resolved
+  // (granted or denied) so "Preparing Training" can wait on it the same way
+  // it waits on the camera and the avatar, instead of the screen dropping
+  // away before the learner has even seen the mic prompt.
+  const [micPermissionSettled, setMicPermissionSettled] = useState(false);
   const [avatarVisible, setAvatarVisible] = useState(true);
   const [avatarMuted, setAvatarMuted] = useState(false);
   const [isAskConnecting, setIsAskConnecting] = useState(false);
@@ -972,7 +977,8 @@ const TrainingLaunch = () => {
     [speechActivity],
   );
 
-  const isProctoringLive = proctoringStatus === "monitoring";
+  const proctoringEnabled = training?.options?.proctoringEnabled ?? true;
+  const isProctoringLive = !proctoringEnabled || proctoringStatus === "monitoring";
   const isVoiceTraining = training?.trainingMode === "voice";
   const learnerSessions = useMemo(() => {
     const profileEmail = learnerProfile?.email.trim().toLowerCase();
@@ -1570,6 +1576,26 @@ const TrainingLaunch = () => {
   const isLaunchRuntimeReady = Boolean(
     isProctoringLive && (!hasAvatarRuntime || avatarReady),
   );
+  // Requests (and immediately releases) the microphone up front, at the same
+  // time as the camera permission prompt, so both prompts appear together
+  // before the learner sees any training content, instead of the mic only
+  // being requested later when a voice feature first needs it.
+  const primeMicrophonePermission = useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setMicPermissionSettled(true);
+      return;
+    }
+
+    try {
+      const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      micStream.getTracks().forEach((track) => track.stop());
+    } catch {
+      // Denied/unavailable mic shouldn't block the whole launch by itself;
+      // voice features that actually need it will surface their own error.
+    } finally {
+      setMicPermissionSettled(true);
+    }
+  }, []);
   useEffect(() => {
     if (!training || !hasStarted || hasCompletedRun || !sessionId || !sessionStartedAt) {
       resumedLaunchBootstrappedRef.current = false;
@@ -1591,12 +1617,15 @@ const TrainingLaunch = () => {
         ? "Waiting for proctoring to go live."
         : "Waiting for camera feed to go live.",
     );
+    setMicPermissionSettled(false);
     avatarRef.current?.primeAudio();
+    void primeMicrophonePermission();
     void proctoringRef.current?.startSession();
   }, [
     hasAvatarRuntime,
     hasCompletedRun,
     hasStarted,
+    primeMicrophonePermission,
     proctoringStatus,
     sessionId,
     sessionStartedAt,
@@ -2192,31 +2221,72 @@ const TrainingLaunch = () => {
     }
 
     const avatarReadyToShow = !hasAvatarRuntime || avatarReady;
-    const proctoringReadyToShow = isProctoringLive;
+    const micReadyToShow = micPermissionSettled;
+    // "Settled" means proctoring reached a terminal state either way — live,
+    // or a definitive error — not just "not yet live". Gating on isProctoringLive
+    // alone (as this used to) meant a fast proctoring error (no camera on the
+    // machine, a previously-blocked permission, connection refused, etc.) could
+    // never satisfy the condition, so a separate effect had to force-clear
+    // isPreparingLaunch on error — but it did so unconditionally, without
+    // checking avatarReadyToShow/micReadyToShow, which is exactly what let the
+    // "Preparing Training" screen disappear before the avatar had loaded and
+    // before the mic/camera prompts had resolved. Folding the error case into
+    // this single gate means every path waits on the same three conditions.
+    const proctoringSettled = isProctoringLive || proctoringStatus === "error";
 
-    if (!avatarReadyToShow || !proctoringReadyToShow) {
+    if (!avatarReadyToShow || !micReadyToShow || !proctoringSettled) {
       return;
+    }
+
+    if (proctoringStatus === "error") {
+      setIsPlaying(false);
+      setSpeechActivity("idle");
+      setAudioState("idle");
+      setLaunchStatus(
+        isVoiceTraining
+          ? "Camera could not go live. Please allow access and restart training."
+          : "Proctoring could not go live. Please check your camera/connection and restart training.",
+      );
+    } else {
+      setLaunchStatus("");
     }
 
     setIsPreparingLaunch(false);
-    setLaunchStatus("");
-  }, [avatarReady, hasAvatarRuntime, hasStarted, isPreparingLaunch, isProctoringLive]);
+  }, [
+    avatarReady,
+    hasAvatarRuntime,
+    hasStarted,
+    isPreparingLaunch,
+    isProctoringLive,
+    isVoiceTraining,
+    micPermissionSettled,
+    proctoringStatus,
+  ]);
 
   useEffect(() => {
-    if (
-      !isVoiceTraining ||
-      !isPreparingLaunch ||
-      !hasStarted ||
-      proctoringStatus !== "error"
-    ) {
+    if (!isPreparingLaunch || !hasStarted) {
       return;
     }
 
-    setIsPlaying(false);
-    setSpeechActivity("idle");
-    setAudioState("idle");
-    setLaunchStatus("Camera could not go live. Please allow access and restart training.");
-  }, [hasStarted, isPreparingLaunch, isVoiceTraining, proctoringStatus]);
+    // Safety net: no matter what stalls (proctoring cold start, a socket
+    // that never fires open/error/close, an avatar that never reports
+    // ready, etc.), never leave the learner staring at "Preparing Training"
+    // indefinitely.
+    const timeoutId = window.setTimeout(() => {
+      setIsPreparingLaunch((current) => {
+        if (!current) {
+          return current;
+        }
+
+        setLaunchStatus(
+          "Training is taking longer than expected to start. You can continue, or refresh and try again.",
+        );
+        return false;
+      });
+    }, 45000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [hasStarted, isPreparingLaunch]);
 
   useEffect(() => {
     let active = true;
@@ -2703,8 +2773,17 @@ const TrainingLaunch = () => {
       askHistory: overrides.askHistory ?? questionHistoryRef.current,
       proctoringReport:
         overrides.proctoringReport ??
-        proctoringRef.current?.getSnapshot() ??
-        null,
+        (proctoringEnabled
+          ? proctoringRef.current?.getSnapshot() ?? null
+          : {
+              status: "stopped",
+              attentionScore: 100,
+              riskScore: 0,
+              attentionLabel: "Low Risk",
+              eventCounts: { reading: 0, talking: 0, lookingAway: 0, tabSwitch: 0, noFace: 0, multipleFaces: 0, returnedToInterview: 0, anotherDevice: 0 },
+              timeline: [],
+              events: [],
+            }),
       viewedSlideIds: viewedSlideIdsRef.current,
       timeSpentSeconds: sessionStartedAt
         ? getDurationSeconds(sessionStartedAt)
@@ -3008,10 +3087,12 @@ const TrainingLaunch = () => {
     setHasStarted(true);
     setSessionStartedAt(Date.now());
     setProctoringStatus("connecting");
+    setMicPermissionSettled(false);
     viewedSlideIdsRef.current = firstSequenceItem?.id
       ? [firstSequenceItem.id]
       : [];
     avatarRef.current?.primeAudio();
+    void primeMicrophonePermission();
     void proctoringRef.current?.startSession();
 
     if (hasAvatarRuntime) {
@@ -3053,7 +3134,17 @@ const TrainingLaunch = () => {
 
     stopCurrentPlayback();
     pendingCompletionReportRef.current =
-      proctoringRef.current?.stopSession() ?? null;
+      proctoringEnabled
+        ? proctoringRef.current?.stopSession() ?? null
+        : {
+            status: "stopped",
+            attentionScore: 100,
+            riskScore: 0,
+            attentionLabel: "Low Risk",
+            eventCounts: { reading: 0, talking: 0, lookingAway: 0, tabSwitch: 0, noFace: 0, multipleFaces: 0, returnedToInterview: 0, anotherDevice: 0 },
+            timeline: [],
+            events: [],
+          };
     setIsSubmittingTraining(true);
 
     try {
@@ -4946,37 +5037,39 @@ const TrainingLaunch = () => {
             </div>
           </div>
 
-          <TrainingLaunchProctoring
-            ref={proctoringRef}
-            className={`training-launch-stage-rail${hasStarted ? "" : " is-pending"}`}
-            onStatusChange={(status) => {
-              setProctoringStatus(status);
-              if (!hasStarted) {
-                return;
-              }
+          {proctoringEnabled ? (
+            <TrainingLaunchProctoring
+              ref={proctoringRef}
+              className={`training-launch-stage-rail${hasStarted ? "" : " is-pending"}`}
+              onStatusChange={(status) => {
+                setProctoringStatus(status);
+                if (!hasStarted) {
+                  return;
+                }
 
-              if (status === "connecting") {
-                setLaunchStatus("Waiting for proctoring to go live.");
-                return;
-              }
+                if (status === "connecting") {
+                  setLaunchStatus("Waiting for proctoring to go live.");
+                  return;
+                }
 
-              if (status === "monitoring") {
-                setLaunchStatus((current) =>
-                  current === "Waiting for proctoring to go live." ? "" : current,
-                );
-                return;
-              }
+                if (status === "monitoring") {
+                  setLaunchStatus((current) =>
+                    current === "Waiting for proctoring to go live." ? "" : current,
+                  );
+                  return;
+                }
 
-              if (status === "error") {
-                setLaunchStatus("Proctoring could not go live.");
-                return;
-              }
+                if (status === "error") {
+                  setLaunchStatus("Proctoring could not go live.");
+                  return;
+                }
 
-              if (status === "stopped") {
-                setLaunchStatus("Proctoring stopped.");
-              }
-            }}
-          />
+                if (status === "stopped") {
+                  setLaunchStatus("Proctoring stopped.");
+                }
+              }}
+            />
+          ) : null}
 
           {hasAvatarRuntime ? (
             <div className="training-launch-avatar-rail">

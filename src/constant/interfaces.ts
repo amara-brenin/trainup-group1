@@ -1021,6 +1021,7 @@ export interface TrainingWorkspaceRecord {
     showFinalScore: boolean;
     allowPublicDemoAccess?: boolean;
     demoToken?: string;
+    proctoringEnabled?: boolean;
   };
   theme?: TrainingSlideshowTheme;
   branding?: TrainingBrandingSettings;
