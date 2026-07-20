@@ -654,6 +654,19 @@ const TrainingLaunch = () => {
   const pendingAskTranscriptRef = useRef<{ text: string; metadata: AskTranscriptMetadata } | null>(null);
   const askTranscriptDebounceTimerRef = useRef<number | null>(null);
   const handledAskTranscriptRef = useRef("");
+  // Lets long-lived callbacks (the browser speech-recognition instance is now
+  // kept alive for the whole Ask session instead of being recreated per
+  // question) read current state without closing over a stale value.
+  const isQuestionLoadingRef = useRef(false);
+  const isAskModeRef = useRef(false);
+  // Invalidates an in-flight answer request when the trainee barges in with
+  // a new question before the previous one has finished generating/speaking.
+  const askRequestIdRef = useRef(0);
+  // Distinguishes a deliberate stop (leaving Ask mode / "Go Back") from
+  // recognition simply ending on its own, so the auto-restart in
+  // fallbackToBrowserListening()'s onend doesn't re-arm the mic right as the
+  // trainee is exiting Ask mode.
+  const isStoppingAskRecognitionRef = useRef(false);
   const avatarSpeechContextRef = useRef<{
     type: "slide" | "answer" | null;
     slideId: string | null;
@@ -754,6 +767,11 @@ const TrainingLaunch = () => {
   // it waits on the camera and the avatar, instead of the screen dropping
   // away before the learner has even seen the mic prompt.
   const [micPermissionSettled, setMicPermissionSettled] = useState(false);
+  // Blocks "Start Training" until camera + microphone access is confirmed
+  // when this training has AI proctoring enabled, and holds the message to
+  // show if either is unavailable/denied instead of letting training start.
+  const [isVerifyingStartPermissions, setIsVerifyingStartPermissions] = useState(false);
+  const [startPermissionError, setStartPermissionError] = useState("");
   const [avatarVisible, setAvatarVisible] = useState(true);
   const [avatarMuted, setAvatarMuted] = useState(false);
   const [isAskConnecting, setIsAskConnecting] = useState(false);
@@ -1201,6 +1219,8 @@ const TrainingLaunch = () => {
     setIsLoading(true);
     setErrorMessage("");
     setAvatarReady(false);
+    setStartPermissionError("");
+    setIsVerifyingStartPermissions(false);
     setLaunchLoginError("");
     setGoogleLoginError("");
 
@@ -1378,6 +1398,12 @@ const TrainingLaunch = () => {
   useEffect(() => {
     autoplayEnabledRef.current = autoplayEnabled;
   }, [autoplayEnabled]);
+  useEffect(() => {
+    isQuestionLoadingRef.current = isQuestionLoading;
+  }, [isQuestionLoading]);
+  useEffect(() => {
+    isAskModeRef.current = isAskMode;
+  }, [isAskMode]);
   useEffect(() => {
     const nextCode =
       training?.localizedVoiceovers?.defaultLanguageCode ||
@@ -1631,6 +1657,37 @@ const TrainingLaunch = () => {
     sessionStartedAt,
     training,
   ]);
+  useEffect(() => {
+    if (!hasStarted || !hasAvatarRuntime || typeof document === "undefined") {
+      return;
+    }
+
+    // Browsers only allow an AudioContext to move from "suspended" to
+    // "running" inside a genuine user-gesture call stack. The click that
+    // starts training satisfies that for the first slide, but autoplay and
+    // Ask-mode answers are triggered from timers/network callbacks with no
+    // gesture behind them — and every time the avatar's connection drops and
+    // reconnects (their SDK does this every 20-40s or so per its own logs),
+    // it spins up a fresh internal audio context that starts suspended again.
+    // Lip-sync/animation doesn't depend on that context, so the avatar
+    // visibly "talks" while producing no sound. Re-priming on every click
+    // anywhere in the page (not just the dedicated controls) maximizes the
+    // chance a freshly-suspended context gets unlocked by the very next
+    // interaction instead of staying silently muted for the rest of the run.
+    const unlockAvatarAudio = () => {
+      avatarRef.current?.primeAudio();
+    };
+
+    document.addEventListener("click", unlockAvatarAudio);
+    document.addEventListener("touchstart", unlockAvatarAudio, { passive: true });
+    document.addEventListener("keydown", unlockAvatarAudio);
+
+    return () => {
+      document.removeEventListener("click", unlockAvatarAudio);
+      document.removeEventListener("touchstart", unlockAvatarAudio);
+      document.removeEventListener("keydown", unlockAvatarAudio);
+    };
+  }, [hasStarted, hasAvatarRuntime]);
   const selectedLocalizedLanguage = useMemo(
     () => findLocalizedLanguage(training?.localizedVoiceovers, selectedLanguageCode),
     [selectedLanguageCode, training?.localizedVoiceovers],
@@ -3064,7 +3121,96 @@ const TrainingLaunch = () => {
     setSpeechActivity("idle");
   };
 
+  // When AI proctoring is enabled, camera + microphone access must be
+  // confirmed *before* training is allowed to start — not requested best-effort
+  // in the background while the learner is already inside the training (that
+  // was the previous behaviour: startTraining() marked hasStarted true and
+  // created the session immediately, and camera/mic were only sorted out
+  // afterwards). Requesting both together means a missing camera, a missing
+  // mic, or either being blocked fails this check as a whole, matching AI
+  // proctoring's requirement that both be working before the training begins.
+  const verifyProctoringStartPermissions = async (): Promise<{
+    ok: boolean;
+    message?: string;
+  }> => {
+    if (!proctoringEnabled) {
+      return { ok: true };
+    }
+
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      return {
+        ok: false,
+        message:
+          "This browser does not support camera/microphone access, which AI proctoring requires to start this training.",
+      };
+    }
+
+    let probeStream: MediaStream | null = null;
+
+    try {
+      probeStream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: true,
+      });
+      return { ok: true };
+    } catch (error) {
+      const domErrorName = error instanceof DOMException ? error.name : "";
+
+      if (domErrorName === "NotFoundError" || domErrorName === "DevicesNotFoundError") {
+        return {
+          ok: false,
+          message:
+            "No camera or microphone was found on this device. AI proctoring for this training requires both to start.",
+        };
+      }
+
+      if (
+        domErrorName === "NotAllowedError" ||
+        domErrorName === "PermissionDeniedError" ||
+        domErrorName === "SecurityError"
+      ) {
+        return {
+          ok: false,
+          message:
+            "Camera and microphone access was blocked. Please allow access for this site and try starting the training again.",
+        };
+      }
+
+      if (domErrorName === "NotReadableError" || domErrorName === "TrackStartError") {
+        return {
+          ok: false,
+          message:
+            "Your camera or microphone could not be accessed — they may be in use by another app. Close it and try again.",
+        };
+      }
+
+      return {
+        ok: false,
+        message:
+          "Camera and microphone access is required for this training's AI proctoring and could not be verified.",
+      };
+    } finally {
+      probeStream?.getTracks().forEach((track) => track.stop());
+    }
+  };
+
   const startTraining = async () => {
+    setStartPermissionError("");
+
+    if (proctoringEnabled) {
+      setIsVerifyingStartPermissions(true);
+      const permissionResult = await verifyProctoringStartPermissions();
+      setIsVerifyingStartPermissions(false);
+
+      if (!permissionResult.ok) {
+        setStartPermissionError(
+          permissionResult.message ||
+            "Camera and microphone access is required to start this training.",
+        );
+        return;
+      }
+    }
+
     const firstSequenceItem = launchSequence[0] ?? null;
 
     stopCurrentPlayback();
@@ -3265,6 +3411,13 @@ const TrainingLaunch = () => {
       return;
     }
 
+    // Each call claims the next request id. If a barge-in starts a newer
+    // question before this one's answer comes back, isStaleRequest() below
+    // lets this older call quietly drop its result instead of speaking an
+    // answer for a question the trainee already moved past.
+    const requestId = (askRequestIdRef.current += 1);
+    const isStaleRequest = () => askRequestIdRef.current !== requestId;
+
     setIsQuestionLoading(true);
     setQuestionError("");
     setLaunchStatus(`${assistantLabel} is preparing an answer.`);
@@ -3293,6 +3446,10 @@ const TrainingLaunch = () => {
         slideId: metadata.slideId ?? currentSlide?.id ?? null,
         ...askDemoFields,
       });
+
+      if (isStaleRequest()) {
+        return;
+      }
 
       if (!response.data.status) {
         throw new Error(
@@ -3337,6 +3494,10 @@ const TrainingLaunch = () => {
         });
       }
     } catch (error) {
+      if (isStaleRequest()) {
+        return;
+      }
+
       setQuestionError(
         error instanceof Error
           ? error.message
@@ -3345,13 +3506,16 @@ const TrainingLaunch = () => {
       setLaunchStatus("");
       resumeCurrentSlideNarration();
     } finally {
-      setIsQuestionLoading(false);
+      if (!isStaleRequest()) {
+        setIsQuestionLoading(false);
+      }
     }
   };
 
   const stopBrowserQuestion = useCallback(
     (options?: { keepQuestionPanel?: boolean }) => {
       clearPendingAskTranscriptCapture();
+      isStoppingAskRecognitionRef.current = true;
       browserRecognitionRef.current?.stop();
       browserRecognitionRef.current = null;
       pendingBrowserTranscriptRef.current = "";
@@ -3372,7 +3536,7 @@ const TrainingLaunch = () => {
   const queueUnifiedTranscript = (
     text: string,
     metadata: AskTranscriptMetadata = {},
-    delayMs = 1800,
+    delayMs?: number,
   ) => {
     const normalizedTranscript = normalizeTranscriptText(text);
 
@@ -3392,12 +3556,26 @@ const TrainingLaunch = () => {
       metadata,
     };
     setQuestionDraft(nextText);
-    setLaunchStatus("Listening for your question...");
+
+    // While an answer is being generated or spoken, new speech is a
+    // potential barge-in rather than the primary question — use a shorter
+    // debounce so interrupting the avatar feels responsive instead of
+    // waiting out the normal end-of-question pause.
+    const isAnswering =
+      isQuestionLoadingRef.current || avatarSpeechContextRef.current.type === "answer";
+
+    setLaunchStatus(
+      isAnswering
+        ? "Listening — speak to interrupt."
+        : "Listening for your question...",
+    );
     setSpeechActivity("listening");
 
     if (askTranscriptDebounceTimerRef.current) {
       window.clearTimeout(askTranscriptDebounceTimerRef.current);
     }
+
+    const resolvedDelayMs = delayMs ?? (isAnswering ? 900 : 1800);
 
     askTranscriptDebounceTimerRef.current = window.setTimeout(() => {
       askTranscriptDebounceTimerRef.current = null;
@@ -3409,7 +3587,7 @@ const TrainingLaunch = () => {
       }
 
       handleUnifiedTranscript(pending.text, pending.metadata);
-    }, delayMs);
+    }, resolvedDelayMs);
   };
 
   const handleAvatarTranscript = (transcript: string) => {
@@ -3891,17 +4069,34 @@ const TrainingLaunch = () => {
       return;
     }
 
+    // If this new question arrives while the previous one is still being
+    // answered (generating a reply, or the avatar is speaking it), treat it
+    // as a barge-in: cut the current answer off and move straight to this
+    // one instead of waiting for the old answer to finish and only then
+    // requiring a manual restart.
+    const isBargeIn =
+      isQuestionLoadingRef.current || avatarSpeechContextRef.current.type === "answer";
+
     handledAskTranscriptRef.current = question;
-    avatarRef.current?.stopListening();
-    browserRecognitionRef.current?.stop();
-    browserRecognitionRef.current = null;
     pendingBrowserTranscriptRef.current = "";
     pendingAskTranscriptRef.current = null;
-    setIsAskListening(false);
     setQuestionError("");
+    setQuestionDraft(question);
+
+    if (isBargeIn) {
+      stopCurrentPlayback();
+    } else {
+      // Not interrupting anything, so there's no need to keep listening while
+      // the answer is prepared — restartAskListening()/the barge-in path
+      // above are what re-arm the mic afterward. The recognition instance
+      // itself is left running either way; it's created once per Ask session
+      // and kept alive so the trainee never has to press "Start Listening"
+      // again mid-conversation.
+      setIsAskListening(false);
+    }
+
     setLaunchStatus(`${assistantLabel} is preparing an answer.`);
     setSpeechActivity("idle");
-    setQuestionDraft(question);
 
     void submitLaunchQuestion(question, {
       inputMode: metadata.inputMode ?? "browser-voice",
@@ -3912,6 +4107,18 @@ const TrainingLaunch = () => {
   };
 
   const fallbackToBrowserListening = (options?: { silent?: boolean }) => {
+    // Idempotent: Ask mode now keeps a single recognition instance alive for
+    // the whole session (started once, restarted only if it actually ends)
+    // instead of tearing it down and recreating it around every question, so
+    // a barge-in during the avatar's answer can be picked up without the
+    // trainee needing to press "Start Listening" again.
+    if (browserRecognitionRef.current) {
+      if (!options?.silent) {
+        setIsAskListening(true);
+      }
+      return true;
+    }
+
     const SpeechRecognitionCtor = resolveSpeechRecognitionCtor();
 
     if (!SpeechRecognitionCtor) {
@@ -3924,6 +4131,7 @@ const TrainingLaunch = () => {
 
     const recognition = new SpeechRecognitionCtor();
     browserRecognitionRef.current = recognition;
+    isStoppingAskRecognitionRef.current = false;
 
     recognition.continuous = true;
     recognition.interimResults = true;
@@ -3946,10 +4154,19 @@ const TrainingLaunch = () => {
         sttProvider: "browser",
         language: selectedSpeechLocale,
         slideId: currentSlide?.id ?? null,
-      }, 2600);
+      });
     };
 
-    recognition.onerror = () => {
+    recognition.onerror = (event) => {
+      const errorName = event?.error;
+
+      // "no-speech"/"aborted" fire routinely during ordinary pauses with
+      // continuous recognition — they aren't real failures. Let onend (which
+      // follows) handle restarting instead of surfacing them as errors.
+      if (errorName === "no-speech" || errorName === "aborted") {
+        return;
+      }
+
       if (!options?.silent) {
         setQuestionError("Could not capture voice.");
         setIsAskListening(false);
@@ -3959,6 +4176,25 @@ const TrainingLaunch = () => {
 
     recognition.onend = () => {
       browserRecognitionRef.current = null;
+
+      if (isStoppingAskRecognitionRef.current) {
+        isStoppingAskRecognitionRef.current = false;
+        if (!options?.silent) {
+          setIsAskListening(false);
+        }
+        return;
+      }
+
+      // Browser speech recognition can end on its own (silence timeout, etc.)
+      // even with continuous=true. Previously this just switched off
+      // isAskListening and left the mic off until the trainee manually
+      // clicked "Start Listening" again. Auto-restart it so the conversation
+      // stays hands-free for as long as we're still meant to be listening.
+      if (!options?.silent && isAskModeRef.current) {
+        fallbackToBrowserListening();
+        return;
+      }
+
       if (!options?.silent) {
         setIsAskListening(false);
       }
@@ -4653,12 +4889,25 @@ const TrainingLaunch = () => {
                     <button
                       type="button"
                       className="btn btn-primary btn-lg training-launch-start-button"
+                      disabled={isVerifyingStartPermissions}
                       onClick={() => {
                         void startTraining();
                       }}
                     >
-                      {hasCompletedRun ? "Restart Training" : "Start Training"}
+                      {isVerifyingStartPermissions
+                        ? "Checking camera & microphone..."
+                        : hasCompletedRun
+                          ? "Restart Training"
+                          : "Start Training"}
                     </button>
+                    {startPermissionError ? (
+                      <p
+                        className="training-launch-start-permission-error text-danger mt-3 mb-0"
+                        role="alert"
+                      >
+                        {startPermissionError}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
