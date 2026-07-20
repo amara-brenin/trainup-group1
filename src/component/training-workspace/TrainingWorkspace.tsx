@@ -8035,7 +8035,7 @@ const TrainingDetail = ({
                     Open Launch UI
                   </button>
                 </div>
-                <LmsLaunchLinkGenerator trainingId={training.id} />
+                <LmsLaunchLinkGenerator key={training.id} trainingId={training.id} lastLaunchLink={training.lastLaunchLink} />
               </>
             )}
           </div>

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import AxiosHelper from "../../helper/AxiosHelper";
 import { getRequestUrl } from "../../helper/runtimeApi";
 import { getAuthToken } from "../../helper/authSession";
@@ -14,14 +14,36 @@ type LaunchUrlResponse = {
   expiresInMinutes: number;
 };
 
-const LmsLaunchLinkGenerator = ({ trainingId }: { trainingId: string }) => {
-  const [learnerName, setLearnerName] = useState("");
-  const [learnerEmail, setLearnerEmail] = useState("");
+const LmsLaunchLinkGenerator = ({ 
+  trainingId, 
+  lastLaunchLink 
+}: { 
+  trainingId: string; 
+  lastLaunchLink?: {
+    launchUrl?: string;
+    expiresInMinutes?: number;
+    learnerName?: string;
+    learnerEmail?: string;
+  };
+}) => {
+  const [learnerName, setLearnerName] = useState(() => lastLaunchLink?.learnerName || "");
+  const [learnerEmail, setLearnerEmail] = useState(() => lastLaunchLink?.learnerEmail || "");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [launchUrl, setLaunchUrl] = useState("");
+  const [launchUrl, setLaunchUrl] = useState(() => lastLaunchLink?.launchUrl || "");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [isDownloadingScorm, setIsDownloadingScorm] = useState(false);
+
+  const [expiresInMinutes, setExpiresInMinutes] = useState(() => lastLaunchLink?.expiresInMinutes || 0);
+
+  const handleInputChange = (setter: React.Dispatch<React.SetStateAction<string>>, value: string) => {
+    setter(value);
+    if (launchUrl) {
+      setLaunchUrl("");
+      setCopied(false);
+      setExpiresInMinutes(0);
+    }
+  };
 
   // SCORM package is an authenticated binary (zip) download, so fetch it as a
   // blob with the auth header and trigger a save — a plain <a href> can't send it.
@@ -89,6 +111,7 @@ const LmsLaunchLinkGenerator = ({ trainingId }: { trainingId: string }) => {
         throw new Error(data.message || "Could not generate launch link.");
       }
       setLaunchUrl(data.data.launchUrl);
+      setExpiresInMinutes(data.data.expiresInMinutes || 0);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Could not generate launch link.");
     } finally {
@@ -112,7 +135,7 @@ const LmsLaunchLinkGenerator = ({ trainingId }: { trainingId: string }) => {
             className="form-control form-control-sm"
             placeholder="Learner name (optional)"
             value={learnerName}
-            onChange={(e) => setLearnerName(e.target.value)}
+            onChange={(e) => handleInputChange(setLearnerName, e.target.value)}
           />
         </div>
         <div className="col-12 col-md-6">
@@ -121,7 +144,7 @@ const LmsLaunchLinkGenerator = ({ trainingId }: { trainingId: string }) => {
             className="form-control form-control-sm"
             placeholder="Learner email (optional)"
             value={learnerEmail}
-            onChange={(e) => setLearnerEmail(e.target.value)}
+            onChange={(e) => handleInputChange(setLearnerEmail, e.target.value)}
           />
         </div>
       </div>
@@ -132,7 +155,7 @@ const LmsLaunchLinkGenerator = ({ trainingId }: { trainingId: string }) => {
           onClick={() => void handleGenerate()}
           disabled={isGenerating}
         >
-          {isGenerating ? "Generating..." : "Generate launch link"}
+          {isGenerating ? "Generating..." : launchUrl ? "Regenerate launch link" : "Generate launch link"}
         </button>
         <button
           type="button"
@@ -163,7 +186,11 @@ const LmsLaunchLinkGenerator = ({ trainingId }: { trainingId: string }) => {
               {copied ? "Copied" : "Copy"}
             </button>
           </div>
-          <div className="form-text">Default validity 7 days. Generate again to issue a fresh link.</div>
+          <div className="form-text">
+            {expiresInMinutes > 0 
+              ? `Link valid for ${Math.round(expiresInMinutes / 60 / 24)} days. Generate again to issue a fresh link.`
+              : "Default validity 7 days. Generate again to issue a fresh link."}
+          </div>
         </div>
       ) : null}
     </div>

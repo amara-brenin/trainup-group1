@@ -43,6 +43,7 @@ const toTrainingListRecord = (record) => {
     trainingType: payload.trainingType,
     avatarName: payload.avatarName || "",
     avatarId: payload.avatarId || "",
+    lastLaunchLink: payload.lastLaunchLink || null,
     ttsMode: payload.ttsMode,
     ttsProvider: payload.ttsProvider || "",
     voiceName: payload.voiceName || "",

@@ -1585,6 +1585,23 @@ const createSecureLaunchUrl = async (req, res) => {
     : origin || `https://${client?.subdomain || "app"}.trainup.ai`;
   const launchUrl = buildPublicUrl(resolvedOrigin, `/secure-launch/${token}`, req.headers["x-app-base-path"]);
 
+  // Save this link information in the database so it survives page reloads
+  await Training.updateOne(
+    { appId: trainingId, clientId },
+    {
+      $set: {
+        "payload.lastLaunchLink": {
+          launchUrl,
+          token,
+          expiresInMinutes,
+          learnerName: normalizeValue(req.body?.learnerName),
+          learnerEmail: normalizeValue(req.body?.learnerEmail),
+          generatedAt: new Date().toISOString()
+        }
+      }
+    }
+  );
+
   return ok(res, "Secure launch link generated.", {
     trainingId: training.appId,
     token,
