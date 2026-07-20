@@ -5122,29 +5122,40 @@ const TrainingLaunch = () => {
                 <div className="training-launch-overlay training-launch-start-overlay">
                   <div className="training-launch-start-hero">
                     {pendingResumeSession ? (
-                      <>
-                        <p className="training-launch-resume-prompt mb-3">
-                          You have an unfinished session for this training.
-                          Would you like to continue where you left off, or start over?
-                        </p>
-                        <div className="d-flex gap-2 justify-content-center flex-wrap">
-                          <button
-                            type="button"
-                            className="btn btn-secondary"
-                            disabled={isVerifyingStartPermissions}
-                            onClick={handleRestartIncompleteTraining}
-                          >
-                            Restart Training
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-primary btn-lg training-launch-start-button"
-                            onClick={handleResumeIncompleteTraining}
-                          >
-                            Resume Training
-                          </button>
+                      <div className="card border-0 shadow-lg mx-auto" style={{ maxWidth: '450px' }}>
+                        <div className="card-body p-4 p-md-5 text-center">
+                          <div className="mb-4">
+                            <i className="bi bi-clock-history fs-1 text-primary opacity-75"></i>
+                          </div>
+                          <h3 className="h4 mb-3 text-dark">Resume Session?</h3>
+                          <p className="training-launch-resume-prompt mb-4 text-secondary">
+                            You have an unfinished session for this training.
+                            Would you like to continue where you left off, or start over?
+                          </p>
+                          <div className="d-flex gap-3 justify-content-center flex-wrap">
+                            <button
+                              type="button"
+                              className="btn btn-light border px-4 py-2"
+                              disabled={isVerifyingStartPermissions}
+                              onClick={handleRestartIncompleteTraining}
+                            >
+                              Start Over
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-primary px-4 py-2"
+                              style={{ 
+                                backgroundColor: 'var(--launch-primary)', 
+                                borderColor: 'var(--launch-primary-border)',
+                                color: 'var(--launch-primary-text)'
+                              }}
+                              onClick={handleResumeIncompleteTraining}
+                            >
+                              Resume
+                            </button>
+                          </div>
                         </div>
-                      </>
+                      </div>
                     ) : (
                       <button
                         type="button"
