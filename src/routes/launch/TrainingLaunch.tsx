@@ -5144,8 +5144,8 @@ const TrainingLaunch = () => {
                             <button
                               type="button"
                               className="btn btn-primary px-4 py-2"
-                              style={{ 
-                                backgroundColor: 'var(--launch-primary)', 
+                              style={{
+                                backgroundColor: 'var(--launch-primary)',
                                 borderColor: 'var(--launch-primary-border)',
                                 color: 'var(--launch-primary-text)'
                               }}
@@ -5174,9 +5174,9 @@ const TrainingLaunch = () => {
                     )}
                     {startPermissionError ? (
                       <div
-                        className="alert alert-danger d-flex align-items-center mt-4 mx-auto shadow-sm text-start"
+                        className="alert alert-danger d-flex align-items-center mt-4 mx-auto shadow-sm text-start position-fixed"
                         role="alert"
-                        style={{ maxWidth: '450px' }}
+                        style={{ top: '0px' }}
                       >
                         <i className="bi bi-exclamation-triangle-fill flex-shrink-0 me-3 fs-4"></i>
                         <div>
