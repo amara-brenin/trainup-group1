@@ -3911,7 +3911,15 @@ const TrainingLaunch = () => {
   };
 
   const restartAskListening = useCallback(() => {
-    if (!isAskMode) {
+    // Read from the ref, not the isAskMode state variable: this callback is
+    // invoked from the avatar SDK's event callbacks (handleAvatarStatusChange)
+    // and the <audio> element's onEnded handler, both of which may have been
+    // registered by the underlying SDK/DOM once and not necessarily rebound
+    // on every render. A plain state read there can end up checking a stale
+    // snapshot of isAskMode from before Ask mode was even entered, which is
+    // exactly what silently no-ops this restart and makes it look like
+    // listening never resumes on its own after an answer.
+    if (!isAskModeRef.current) {
       return;
     }
 
@@ -3924,10 +3932,8 @@ const TrainingLaunch = () => {
     setIsAskListening(true);
     setSpeechActivity("listening");
 
-    // Add a small delay to ensure previous audio is cleared and engine is ready
-    
-        fallbackToBrowserListening();
-  }, [isAskMode, hasAvatarRuntime, avatarReady]);
+    fallbackToBrowserListening();
+  }, []);
 
   const toggleAutoplay = () => {
     setAutoplayEnabled((current) => {
