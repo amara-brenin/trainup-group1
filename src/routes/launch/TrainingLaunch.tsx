@@ -2357,6 +2357,21 @@ const TrainingLaunch = () => {
       return;
     }
 
+    // Navigating away from a slide force-disables the avatar's speaker (see
+    // stopSpeaking() in TrainingLaunchAvatar, called from stopCurrentPlayback
+    // on every next/previous/auto-advance) so the previous utterance doesn't
+    // bleed into the new slide. That's only meant to be a momentary silence:
+    // it's supposed to get re-enabled by primeAudio() inside speakText() once
+    // this slide's narration actually starts. But if this slide has no
+    // narration script, or the avatar/proctoring connection hiccups (their own
+    // reconnect logs show frequent socket timeouts) so speakText never fires,
+    // that re-enable never happens and the avatar is left silently muted from
+    // here on. Proactively re-arming the speaker for every new slide —
+    // whether or not it ends up speaking — closes that gap.
+    if (hasAvatarRuntime) {
+      avatarRef.current?.primeAudio();
+    }
+
     const playTimer = window.setTimeout(() => {
       void (async () => {
         const didStart = await playCurrentSlideNarration({ force: true });
