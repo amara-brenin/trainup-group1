@@ -5173,12 +5173,16 @@ const TrainingLaunch = () => {
                       </button>
                     )}
                     {startPermissionError ? (
-                      <p
-                        className="training-launch-start-permission-error text-danger mt-3 mb-0"
+                      <div
+                        className="alert alert-danger d-flex align-items-center mt-4 mx-auto shadow-sm text-start"
                         role="alert"
+                        style={{ maxWidth: '450px' }}
                       >
-                        {startPermissionError}
-                      </p>
+                        <i className="bi bi-exclamation-triangle-fill flex-shrink-0 me-3 fs-4"></i>
+                        <div>
+                          {startPermissionError}
+                        </div>
+                      </div>
                     ) : null}
                   </div>
                 </div>
