@@ -667,6 +667,16 @@ const TrainingLaunch = () => {
   // fallbackToBrowserListening()'s onend doesn't re-arm the mic right as the
   // trainee is exiting Ask mode.
   const isStoppingAskRecognitionRef = useRef(false);
+  // Repeatedly re-asserts the avatar's speaker-enabled state while it's
+  // actively "talking". Several distinct things have turned out to leave the
+  // avatar visibly speaking (lip-sync/animation) with no actual audio — a
+  // stray mute call racing a reconnect, a browser audio-context suspension,
+  // OS-level mic-triggered ducking, etc. Rather than continuing to chase each
+  // new trigger individually, this heartbeat re-enables the speaker every
+  // 400ms for the whole duration of any utterance, so whatever silences it
+  // self-corrects within well under a second instead of staying muted for
+  // the rest of the slide (or the rest of the session).
+  const speakerHeartbeatIntervalRef = useRef<number | null>(null);
   const avatarSpeechContextRef = useRef<{
     type: "slide" | "answer" | null;
     slideId: string | null;
@@ -772,6 +782,18 @@ const TrainingLaunch = () => {
   // show if either is unavailable/denied instead of letting training start.
   const [isVerifyingStartPermissions, setIsVerifyingStartPermissions] = useState(false);
   const [startPermissionError, setStartPermissionError] = useState("");
+  // When a manual page refresh (or crash) leaves behind an in-progress,
+  // not-yet-submitted session, we no longer auto-resume it silently. Instead
+  // this holds the restored session details until the learner explicitly
+  // chooses to resume or restart; hasStarted stays false in the meantime so
+  // the normal "choose" screen shows instead of jumping straight back in.
+  const [pendingResumeSession, setPendingResumeSession] = useState<{
+    sessionId: string;
+    sessionStartedAt: number | null;
+    currentSlideIndex: number;
+    questionHistory: QuestionHistoryItem[];
+    viewedSlideIds: string[];
+  } | null>(null);
   const [avatarVisible, setAvatarVisible] = useState(true);
   const [avatarMuted, setAvatarMuted] = useState(false);
   const [isAskConnecting, setIsAskConnecting] = useState(false);
@@ -1121,6 +1143,10 @@ const TrainingLaunch = () => {
         window.clearTimeout(askConnectTimerRef.current);
         askConnectTimerRef.current = null;
       }
+      if (speakerHeartbeatIntervalRef.current) {
+        window.clearInterval(speakerHeartbeatIntervalRef.current);
+        speakerHeartbeatIntervalRef.current = null;
+      }
       proctoringRef.current?.stopSession();
     };
   }, []);
@@ -1252,6 +1278,9 @@ const TrainingLaunch = () => {
         const restoredSlideIndex = restoredSession
           ? clampIndex(restoredSession.currentSlideIndex, nextLaunchSequence.length)
           : 0;
+        const hasIncompleteRestoredSession = Boolean(
+          restoredSession?.hasStarted && restoredSession.sessionId,
+        );
 
         setTraining(nextTraining);
         setLearnerProfile((current) => ({
@@ -1262,18 +1291,14 @@ const TrainingLaunch = () => {
           sessionsCount: current?.sessionsCount || 0,
         }));
         setRequiresLaunchLogin(false);
-        setCurrentSlideIndex(restoredSlideIndex);
         setSubmittedSlides({});
         setSlideScores({});
-        const restoredHasStarted = Boolean(
-          restoredSession?.hasStarted && restoredSession.sessionId,
-        );
-        setHasStarted(restoredHasStarted);
+        // Never auto-resume an in-progress session on load — hasStarted stays
+        // false so the "Resume or Restart?" choice screen shows instead of
+        // silently dropping the learner back into mid-training content before
+        // the avatar/proctoring/mic have even had a chance to reconnect.
+        setHasStarted(false);
         setHasCompletedRun(false);
-        setSessionId(restoredSession?.sessionId ?? "");
-        setSessionStartedAt(restoredSession?.sessionStartedAt ?? null);
-        setQuestionHistory(restoredSession?.questionHistory ?? []);
-        questionHistoryRef.current = restoredSession?.questionHistory ?? [];
         setQuestionDraft("");
         setQuestionError("");
         setShowQuestionPanel(false);
@@ -1287,12 +1312,33 @@ const TrainingLaunch = () => {
           "",
         );
         setLaunchStatus("");
-        setIsPreparingLaunch(restoredHasStarted);
-        setProctoringStatus(restoredHasStarted ? "connecting" : "idle");
+        setIsPreparingLaunch(false);
+        setProctoringStatus("idle");
         resumedLaunchBootstrappedRef.current = false;
-        viewedSlideIdsRef.current = restoredSession?.hasStarted
-          ? restoredSession.viewedSlideIds
-          : [];
+
+        if (hasIncompleteRestoredSession && restoredSession) {
+          setCurrentSlideIndex(0);
+          viewedSlideIdsRef.current = [];
+          setSessionId("");
+          setSessionStartedAt(null);
+          setQuestionHistory([]);
+          questionHistoryRef.current = [];
+          setPendingResumeSession({
+            sessionId: restoredSession.sessionId,
+            sessionStartedAt: restoredSession.sessionStartedAt,
+            currentSlideIndex: restoredSlideIndex,
+            questionHistory: restoredSession.questionHistory ?? [],
+            viewedSlideIds: restoredSession.viewedSlideIds ?? [],
+          });
+        } else {
+          setPendingResumeSession(null);
+          setCurrentSlideIndex(restoredSlideIndex);
+          setSessionId("");
+          setSessionStartedAt(null);
+          setQuestionHistory([]);
+          questionHistoryRef.current = [];
+          viewedSlideIdsRef.current = [];
+        }
       })
       .catch((error: unknown) => {
         if (!active) {
@@ -1986,7 +2032,25 @@ const TrainingLaunch = () => {
       const wordCount = plainText.split(/\s+/).filter(Boolean).length;
       const characterCount = plainText.length;
 
-      if (!normalizedText || !training || !avatarReady) {
+      if (!normalizedText || !training) {
+        return false;
+      }
+
+      if (!avatarReady) {
+        // Callers already check avatarReady before calling this, but if the
+        // avatar drops/hasn't finished (re)connecting right in that narrow
+        // window — e.g. right after resuming a training, before its
+        // connection has fully settled — this used to bail out silently
+        // with zero cleanup: no error shown, and isPlaying/speechActivity
+        // left however they were. That's exactly what makes the avatar look
+        // permanently "muted": nothing ever spoke, but nothing ever told the
+        // trainee why or reset the stuck loading/listening state either.
+        setCurrentNarrationTransport(null);
+        setSpeechActivity("idle");
+        setIsPlaying(false);
+        setQuestionError(
+          "The avatar isn't connected yet. Please wait a moment and try again.",
+        );
         return false;
       }
 
@@ -2002,10 +2066,10 @@ const TrainingLaunch = () => {
       setAudioMessage("");
 
       const didStart = avatarRef.current?.speakText({
-          text: normalizedText,
-          trainingId: training.id,
-          currentSlideId: options.slideId ?? currentSlide?.id ?? null,
-        }) ?? false;
+        text: normalizedText,
+        trainingId: training.id,
+        currentSlideId: options.slideId ?? currentSlide?.id ?? null,
+      }) ?? false;
 
       if (didStart && options.type === "slide") {
         avatarSpeechTimingRef.current = {
@@ -2848,14 +2912,14 @@ const TrainingLaunch = () => {
         (proctoringEnabled
           ? proctoringRef.current?.getSnapshot() ?? null
           : {
-              status: "stopped",
-              attentionScore: 100,
-              riskScore: 0,
-              attentionLabel: "Low Risk",
-              eventCounts: { reading: 0, talking: 0, lookingAway: 0, tabSwitch: 0, noFace: 0, multipleFaces: 0, returnedToInterview: 0, anotherDevice: 0 },
-              timeline: [],
-              events: [],
-            }),
+            status: "stopped",
+            attentionScore: 100,
+            riskScore: 0,
+            attentionLabel: "Low Risk",
+            eventCounts: { reading: 0, talking: 0, lookingAway: 0, tabSwitch: 0, noFace: 0, multipleFaces: 0, returnedToInterview: 0, anotherDevice: 0 },
+            timeline: [],
+            events: [],
+          }),
       viewedSlideIds: viewedSlideIdsRef.current,
       timeSpentSeconds: sessionStartedAt
         ? getDurationSeconds(sessionStartedAt)
@@ -3145,53 +3209,85 @@ const TrainingLaunch = () => {
       };
     }
 
-    let probeStream: MediaStream | null = null;
+    // The Trulience avatar SDK independently tries to access the microphone
+    // as part of its own connect/load sequence (visible in its console logs
+    // as "Error unmute() microphone"), completely separate from anything this
+    // probe requests. If that happens to land at the same moment as this
+    // probe's own getUserMedia call, one of the two loses the race with
+    // NotReadableError even though nothing is genuinely holding the device
+    // long-term. Retry through a couple of these collisions with a short
+    // backoff before treating it as a real "camera/mic unavailable" failure.
+    const maxAttempts = 3;
 
-    try {
-      probeStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true,
-      });
-      return { ok: true };
-    } catch (error) {
-      const domErrorName = error instanceof DOMException ? error.name : "";
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      let probeStream: MediaStream | null = null;
 
-      if (domErrorName === "NotFoundError" || domErrorName === "DevicesNotFoundError") {
+      try {
+        probeStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: true,
+        });
+        probeStream.getTracks().forEach((track) => track.stop());
+        probeStream = null;
+        // Give the OS/driver a brief moment to actually release the camera and
+        // mic before the real, persistent acquisitions (proctoring's camera
+        // feed) try to grab them again right after this. Re-acquiring the same
+        // hardware within milliseconds of releasing it is a common source of
+        // NotReadableError on some webcam/mic drivers, even though permission
+        // was already granted and nothing else is actually using the device.
+        await new Promise((resolve) => window.setTimeout(resolve, 400));
+        return { ok: true };
+      } catch (error) {
+        probeStream?.getTracks().forEach((track) => track.stop());
+
+        const domErrorName = error instanceof DOMException ? error.name : "";
+
+        if (domErrorName === "NotFoundError" || domErrorName === "DevicesNotFoundError") {
+          return {
+            ok: false,
+            message:
+              "No camera or microphone was found on this device. AI proctoring for this training requires both to start.",
+          };
+        }
+
+        if (
+          domErrorName === "NotAllowedError" ||
+          domErrorName === "PermissionDeniedError" ||
+          domErrorName === "SecurityError"
+        ) {
+          return {
+            ok: false,
+            message:
+              "Camera and microphone access was blocked. Please allow access for this site and try starting the training again.",
+          };
+        }
+
+        if (domErrorName === "NotReadableError" || domErrorName === "TrackStartError") {
+          if (attempt < maxAttempts) {
+            await new Promise((resolve) => window.setTimeout(resolve, 700 * attempt));
+            continue;
+          }
+
+          return {
+            ok: false,
+            message:
+              "Your camera or microphone could not be accessed — they may be in use by another app. Close it and try again.",
+          };
+        }
+
         return {
           ok: false,
           message:
-            "No camera or microphone was found on this device. AI proctoring for this training requires both to start.",
+            "Camera and microphone access is required for this training's AI proctoring and could not be verified.",
         };
       }
-
-      if (
-        domErrorName === "NotAllowedError" ||
-        domErrorName === "PermissionDeniedError" ||
-        domErrorName === "SecurityError"
-      ) {
-        return {
-          ok: false,
-          message:
-            "Camera and microphone access was blocked. Please allow access for this site and try starting the training again.",
-        };
-      }
-
-      if (domErrorName === "NotReadableError" || domErrorName === "TrackStartError") {
-        return {
-          ok: false,
-          message:
-            "Your camera or microphone could not be accessed — they may be in use by another app. Close it and try again.",
-        };
-      }
-
-      return {
-        ok: false,
-        message:
-          "Camera and microphone access is required for this training's AI proctoring and could not be verified.",
-      };
-    } finally {
-      probeStream?.getTracks().forEach((track) => track.stop());
     }
+
+    return {
+      ok: false,
+      message:
+        "Camera and microphone access is required for this training's AI proctoring and could not be verified.",
+    };
   };
 
   const startTraining = async () => {
@@ -3205,7 +3301,7 @@ const TrainingLaunch = () => {
       if (!permissionResult.ok) {
         setStartPermissionError(
           permissionResult.message ||
-            "Camera and microphone access is required to start this training.",
+          "Camera and microphone access is required to start this training.",
         );
         return;
       }
@@ -3253,7 +3349,18 @@ const TrainingLaunch = () => {
       ? [firstSequenceItem.id]
       : [];
     avatarRef.current?.primeAudio();
-    void primeMicrophonePermission();
+    if (proctoringEnabled) {
+      // verifyProctoringStartPermissions() above already requested camera +
+      // mic together and confirmed both work. Requesting the mic again here
+      // — concurrently with proctoring's own camera acquisition just below —
+      // was a second, near-simultaneous re-acquisition of the same
+      // microphone right after releasing it from the pre-flight probe,
+      // which is exactly the kind of back-to-back getUserMedia race that
+      // throws NotReadableError even though permission was already granted.
+      setMicPermissionSettled(true);
+    } else {
+      void primeMicrophonePermission();
+    }
     void proctoringRef.current?.startSession();
 
     if (hasAvatarRuntime) {
@@ -3288,6 +3395,54 @@ const TrainingLaunch = () => {
     }
   };
 
+  // "Resume Training" from the reload choice screen: apply the restored
+  // session fields and mark the training started. This intentionally does
+  // NOT flip isPreparingLaunch/proctoringStatus itself — setting hasStarted
+  // (with sessionId/sessionStartedAt already in place) is exactly what the
+  // existing "resumed launch" bootstrap effect below watches for, and that
+  // effect + the isPreparingLaunch-clearing effect already keep the loader up
+  // until the avatar, proctoring, and mic are all actually ready before
+  // revealing training content — so resuming gets the same "wait for the
+  // avatar to fully load" guarantee as a fresh start.
+  const handleResumeIncompleteTraining = () => {
+    if (!pendingResumeSession) {
+      return;
+    }
+
+    const resume = pendingResumeSession;
+    setPendingResumeSession(null);
+
+    setCurrentSlideIndex(resume.currentSlideIndex);
+    viewedSlideIdsRef.current = resume.viewedSlideIds;
+    setQuestionHistory(resume.questionHistory);
+    questionHistoryRef.current = resume.questionHistory;
+    setSessionId(resume.sessionId);
+    setSessionStartedAt(resume.sessionStartedAt);
+    // Unlike startTraining(), which calls this synchronously in the same
+    // click handler, the resumed-launch bootstrap effect below only calls
+    // primeAudio() later, from inside a useEffect — one render cycle removed
+    // from this click. Calling it here too means "Resume Training" gets the
+    // exact same direct, gesture-linked audio unlock as a fresh start,
+    // rather than relying solely on the effect-triggered one.
+    if (hasAvatarRuntime) {
+      avatarRef.current?.primeAudio();
+    }
+    setHasStarted(true);
+  };
+
+  // "Restart Training" from the reload choice screen: discard the abandoned
+  // session entirely and begin a completely fresh run via the normal
+  // startTraining() flow (including its own camera/mic pre-flight check).
+  const handleRestartIncompleteTraining = () => {
+    setPendingResumeSession(null);
+
+    if (training) {
+      clearLaunchSessionSnapshot(training.id);
+    }
+
+    void startTraining();
+  };
+
   const completeTraining = async () => {
     if (!training || isSubmittingTraining) {
       return;
@@ -3298,14 +3453,14 @@ const TrainingLaunch = () => {
       proctoringEnabled
         ? proctoringRef.current?.stopSession() ?? null
         : {
-            status: "stopped",
-            attentionScore: 100,
-            riskScore: 0,
-            attentionLabel: "Low Risk",
-            eventCounts: { reading: 0, talking: 0, lookingAway: 0, tabSwitch: 0, noFace: 0, multipleFaces: 0, returnedToInterview: 0, anotherDevice: 0 },
-            timeline: [],
-            events: [],
-          };
+          status: "stopped",
+          attentionScore: 100,
+          riskScore: 0,
+          attentionLabel: "Low Risk",
+          eventCounts: { reading: 0, talking: 0, lookingAway: 0, tabSwitch: 0, noFace: 0, multipleFaces: 0, returnedToInterview: 0, anotherDevice: 0 },
+          timeline: [],
+          events: [],
+        };
     setIsSubmittingTraining(true);
 
     try {
@@ -3599,7 +3754,7 @@ const TrainingLaunch = () => {
     ) {
       return;
     }
- const isAvatarActive = hasAvatarRuntime && avatarReady;
+    const isAvatarActive = hasAvatarRuntime && avatarReady;
     queueUnifiedTranscript(normalizedTranscript, {
       inputMode: isAvatarActive ? "avatar" : "browser-voice",
       sttProvider: "trulience",
@@ -3611,6 +3766,11 @@ const TrainingLaunch = () => {
   const handleAvatarStatusChange = (status: TrainingLaunchAvatarStatus) => {
     const previousStatus = lastAvatarStatusRef.current;
     lastAvatarStatusRef.current = status.state;
+
+    if (status.state !== "talking" && speakerHeartbeatIntervalRef.current) {
+      window.clearInterval(speakerHeartbeatIntervalRef.current);
+      speakerHeartbeatIntervalRef.current = null;
+    }
 
     if (
       pendingAvatarInteractionLogRef.current &&
@@ -3633,11 +3793,25 @@ const TrainingLaunch = () => {
     }
 
     if (status.state === "listening") {
+      // Trulience can report a "listening" status for reasons that have
+      // nothing to do with the trainee wanting to ask a question — e.g. as
+      // part of its own connection/lifecycle housekeeping right after the
+      // avatar (re)connects, which happens on every page load and on every
+      // reconnect (their SDK does this fairly often per its own logs).
+      // Treating every occurrence as "enter Ask mode" used to flip the whole
+      // app into Ask mode immediately on page refresh, and could also fire
+      // right after leaving Ask mode and silence slide narration the moment
+      // it tried to resume. Only actually react to this if we're already in
+      // Ask mode (entered deliberately via the "Ask Question" button) —
+      // otherwise ignore it entirely.
+      if (!isAskModeRef.current) {
+        return;
+      }
+
       if (avatarSpeechContextRef.current.type === "slide") {
         stopCurrentPlayback();
       }
       setIsAskListening(true);
-      setIsAskMode(true);
       setSpeechActivity("listening");
       setLaunchStatus("Listening for your question.");
       return;
@@ -3674,6 +3848,11 @@ const TrainingLaunch = () => {
 
       setIsPlaying(true);
       setSpeechActivity("speaking");
+      if (!speakerHeartbeatIntervalRef.current) {
+        speakerHeartbeatIntervalRef.current = window.setInterval(() => {
+          avatarRef.current?.primeAudio();
+        }, 400);
+      }
       // logAutoplay("Avatar speech started", {
       //   currentIndex: currentSlideIndexRef.current,
       //   slideId: avatarSpeechContextRef.current.slideId,
@@ -3887,6 +4066,16 @@ const TrainingLaunch = () => {
     handledAskTranscriptRef.current = "";
     pendingBrowserTranscriptRef.current = "";
     clearPendingAskTranscriptCapture();
+
+    // "Go Back" is a direct click, so it's a genuine user gesture — the best
+    // chance to re-unlock audio output if entering Ask mode (which activates
+    // the mic) left the avatar's audio suspended/ducked. Do this
+    // unconditionally rather than relying on resumeCurrentSlideNarration()
+    // below, which can bail out early (e.g. no narration to resume) without
+    // ever getting a chance to re-prime audio.
+    if (hasAvatarRuntime) {
+      avatarRef.current?.primeAudio();
+    }
 
     resumeCurrentSlideNarration();
   };
@@ -4197,7 +4386,14 @@ const TrainingLaunch = () => {
       // clicked "Start Listening" again. Auto-restart it so the conversation
       // stays hands-free for as long as we're still meant to be listening.
       if (!options?.silent && isAskModeRef.current) {
-        fallbackToBrowserListening();
+        // A short delay before restarting avoids immediately calling start()
+        // while the browser's speech-recognition service is still tearing
+        // down the previous session — doing that back-to-back can throw
+        // synchronously (see the try/catch around start() below), and this
+        // reduces how often that race gets hit in the first place.
+        window.setTimeout(() => {
+          fallbackToBrowserListening();
+        }, 250);
         return;
       }
 
@@ -4206,7 +4402,32 @@ const TrainingLaunch = () => {
       }
     };
 
-    recognition.start();
+    try {
+      recognition.start();
+    } catch {
+      // Starting immediately after a previous session just ended can throw
+      // (InvalidStateError) if the browser's speech-recognition service
+      // hasn't fully released yet. Without this, the failed instance stayed
+      // in browserRecognitionRef.current, and the idempotent check at the
+      // top of this function treated that dead reference as "already
+      // listening" forever — the UI kept showing "Listening..." while
+      // nothing was actually capturing audio, permanently, from that point
+      // on. Drop the dead instance and retry shortly instead.
+      if (browserRecognitionRef.current === recognition) {
+        browserRecognitionRef.current = null;
+      }
+
+      if (!options?.silent && isAskModeRef.current) {
+        window.setTimeout(() => {
+          fallbackToBrowserListening();
+        }, 300);
+      } else if (!options?.silent) {
+        setIsAskListening(false);
+      }
+
+      return false;
+    }
+
     return true;
   };
 
@@ -4222,6 +4443,15 @@ const TrainingLaunch = () => {
       },
     });
     stopCurrentPlayback();
+
+    // Clicking "Ask Question" is a genuine user gesture — re-prime audio
+    // right here (in addition to the priming already inside speakText()
+    // below) so entering Ask mode gets the same fresh unlock opportunity as
+    // any other click, rather than relying solely on whatever happens a
+    // moment later inside the greeting's speakText call.
+    if (hasAvatarRuntime) {
+      avatarRef.current?.primeAudio();
+    }
 
     autoplaySuspendedSlideRef.current = currentSlide?.id || "";
 
@@ -4266,9 +4496,9 @@ const TrainingLaunch = () => {
       setLaunchStatus("Listening for your question...");
       setSpeechActivity("listening");
 
-      
-          fallbackToBrowserListening();
-        
+
+      fallbackToBrowserListening();
+
     }, connectDelay);
   };
 
@@ -4892,20 +5122,46 @@ const TrainingLaunch = () => {
               {!hasStarted && !isPreparingLaunch ? (
                 <div className="training-launch-overlay training-launch-start-overlay">
                   <div className="training-launch-start-hero">
-                    <button
-                      type="button"
-                      className="btn btn-primary btn-lg training-launch-start-button"
-                      disabled={isVerifyingStartPermissions}
-                      onClick={() => {
-                        void startTraining();
-                      }}
-                    >
-                      {isVerifyingStartPermissions
-                        ? "Checking camera & microphone..."
-                        : hasCompletedRun
-                          ? "Restart Training"
-                          : "Start Training"}
-                    </button>
+                    {pendingResumeSession ? (
+                      <>
+                        <p className="training-launch-resume-prompt mb-3">
+                          You have an unfinished session for this training.
+                          Would you like to continue where you left off, or start over?
+                        </p>
+                        <div className="d-flex gap-2 justify-content-center flex-wrap">
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            disabled={isVerifyingStartPermissions}
+                            onClick={handleRestartIncompleteTraining}
+                          >
+                            Restart Training
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-primary btn-lg training-launch-start-button"
+                            onClick={handleResumeIncompleteTraining}
+                          >
+                            Resume Training
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-lg training-launch-start-button"
+                        disabled={isVerifyingStartPermissions}
+                        onClick={() => {
+                          void startTraining();
+                        }}
+                      >
+                        {isVerifyingStartPermissions
+                          ? "Checking camera & microphone..."
+                          : hasCompletedRun
+                            ? "Restart Training"
+                            : "Start Training"}
+                      </button>
+                    )}
                     {startPermissionError ? (
                       <p
                         className="training-launch-start-permission-error text-danger mt-3 mb-0"
