@@ -12,6 +12,7 @@ import {
   setPublicRoleLastPath,
   setPublicRoleSession,
 } from "../../helper/publicRoleAuth";
+import { useForceLogoutWatcher } from "../../hooks/useForceLogoutWatcher";
 import { loggedOutAdmin, updateAdmin } from "../../redux/authSlice";
 
 const TrainerWorkspacePanel = () => {
@@ -20,6 +21,16 @@ const TrainerWorkspacePanel = () => {
   const location = useLocation();
   const [session, setSession] = useState(() => getPublicRoleSession("trainer"));
   const isSignedOut = useRef(false);
+
+  const signOut = useCallback(() => {
+    if (isSignedOut.current) return;
+    isSignedOut.current = true;
+    clearPublicRoleSession("trainer");
+    clearAuthToken();
+    dispatch(loggedOutAdmin());
+    setSession(null);
+    navigate("/login", { replace: true });
+  }, [dispatch, navigate]);
 
   const refreshSession = useCallback(async () => {
     if (isSignedOut.current) return;
@@ -30,6 +41,11 @@ const TrainerWorkspacePanel = () => {
       if (isSignedOut.current) return;
 
       if (!response.data.status || response.data.data.role !== "trainer") {
+        // The account no longer exists, was deactivated, or was reassigned to a
+        // different role — either way this session is no longer valid, so sign
+        // out instead of silently leaving the stale cached session in place
+        // (which previously just kept re-firing 401s forever).
+        signOut();
         return;
       }
 
@@ -38,9 +54,13 @@ const TrainerWorkspacePanel = () => {
       setSession(nextSession);
       dispatch(updateAdmin(response.data.data));
     } catch {
-      // Silently ignore — likely a 401 after logout
+      // Network hiccup — not a definitive "unauthorized", so don't sign out.
     }
-  }, [dispatch]);
+  }, [dispatch, signOut]);
+
+  // Immediate kick if a super-admin or client admin deletes/deactivates this
+  // trainer while they're on this page (socket push + polling fallback).
+  useForceLogoutWatcher({ enabled: Boolean(session) });
 
   useEffect(() => {
     setPublicRoleLastPath("trainer", `${location.pathname}${location.search}${location.hash}`);
@@ -72,13 +92,7 @@ const TrainerWorkspacePanel = () => {
       totalCredits={Number(session.totalCredits ?? 0)}
       permission={session.permission ?? []}
       allowed={session.allowed ?? []}
-      onSignOut={() => {
-        isSignedOut.current = true;
-        clearPublicRoleSession("trainer");
-        clearAuthToken();
-        dispatch(loggedOutAdmin());
-        navigate("/login", { replace: true });
-      }}
+      onSignOut={signOut}
     />
   );
 };

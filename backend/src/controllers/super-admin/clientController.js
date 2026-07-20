@@ -704,6 +704,10 @@ const remove = async (req, res) => {
     return fail(res, 404, "Client not found.");
   }
 
+  // Grab every user id in this tenant BEFORE the cascade delete so we can push
+  // an immediate force-logout to any of them who are currently logged in.
+  const clientUserIds = await User.find({ clientId: req.params.id }, { appId: 1 }).lean();
+
   await Promise.all([
     Client.deleteOne({ appId: req.params.id }),
     User.deleteMany({ clientId: req.params.id }),
@@ -713,6 +717,8 @@ const remove = async (req, res) => {
     MediaAsset.deleteMany({ clientId: req.params.id }),
     Setting.deleteMany({ key: new RegExp(`^client:${req.params.id}:`) }),
   ]);
+
+  req.app.get("groupRuntime")?.forceLogoutUsers(clientUserIds.map((u) => u.appId), "account-removed");
 
   return ok(res, "Client deleted successfully.", true);
 };

@@ -174,6 +174,8 @@ const update = async (req, res) => {
     return fail(res, 400, "Please correct the highlighted fields.", errors);
   }
 
+  const previousStatus = targetUser.status === "inactive" ? "inactive" : "active";
+
   targetUser.name = String(req.body.name || "").trim();
   targetUser.fullname = String(req.body.name || "").trim();
   targetUser.email = String(req.body.email || "").trim().toLowerCase();
@@ -182,6 +184,9 @@ const update = async (req, res) => {
   targetUser.image = (await resolveImageField(req.body.image, "super-admin-avatars")) || targetUser.image || "/branding/avatar.png";
 
   await targetUser.save();
+  if (previousStatus !== "inactive" && targetUser.status === "inactive") {
+    req.app.get("groupRuntime")?.forceLogoutUser(targetUser.appId, "account-deactivated");
+  }
   return ok(res, "Super admin updated successfully.", sanitizeSuperAdmin(targetUser.toObject()));
 };
 
@@ -208,6 +213,8 @@ const remove = async (req, res) => {
   await SuperAdmin.deleteOne({ appId: req.params.id });
   await User.deleteOne({ appId: req.params.id, role: "super_admin" });
   await Notification.deleteMany({ userId: req.params.id });
+  // Immediately kick this super admin out of any open session/tab.
+  req.app.get("groupRuntime")?.forceLogoutUser(req.params.id, "account-removed");
   return ok(res, "Super admin removed successfully.", true);
 };
 

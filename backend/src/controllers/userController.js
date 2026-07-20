@@ -636,6 +636,8 @@ const update = async (req, res) => {
     return fail(res, 403, "You can only assign permissions available to your account.", grantErrors);
   }
 
+  const previousStatus = targetUser.status;
+
   const roleAccess = buildAccessFromPayload(req.body, roleDefinitions, requester, targetUser.permission);
   targetUser.name = String(req.body.name).trim();
   targetUser.fullname = String(req.body.name).trim();
@@ -650,8 +652,15 @@ const update = async (req, res) => {
   targetUser.title = String(req.body.title || targetUser.title || "").trim();
   targetUser.department = String(req.body.department || targetUser.department || "").trim();
 
+  const becameInactive = previousStatus !== "inactive" && targetUser.status === "inactive";
+
   await targetUser.save();
   await syncClientMetrics(clientId);
+  if (becameInactive) {
+    // Same reasoning as remove(): push an immediate signal instead of waiting
+    // for authTokenAdmin.js to reject their next request.
+    req.app.get("groupRuntime")?.forceLogoutUser(targetUser.appId, "account-deactivated");
+  }
   return ok(res, "User updated successfully.", sanitizeUserRecord(targetUser.toObject(), roleDefinitions, { primaryAdminUserId: client?.clientAdminUserId }));
 };
 
@@ -671,6 +680,10 @@ const remove = async (req, res) => {
 
   await syncClientMetrics(clientId);
   await Notification.deleteMany({ userId: req.params.id });
+  // Immediately push a force-logout signal to any open tab this (now-deleted)
+  // user still has open, in addition to the server-side JWT re-check
+  // (authTokenAdmin.js) that would otherwise only bite on their next request.
+  req.app.get("groupRuntime")?.forceLogoutUser(req.params.id, "account-removed");
   return ok(res, "User removed successfully.", true);
 };
 
@@ -796,6 +809,8 @@ const removeTrainee = async (req, res) => {
 
   await syncClientMetrics(clientId);
   await Notification.deleteMany({ userId: req.params.id });
+  // Immediately kick any open tab/group-session socket for this trainee.
+  req.app.get("groupRuntime")?.forceLogoutUser(req.params.id, "account-removed");
   return ok(res, "Trainee removed successfully.", true);
 };
 

@@ -28,6 +28,11 @@ const {
 } = require("../helpers/groupSession");
 
 const roomName = (gsId) => `session:${gsId}`;
+// Every authenticated socket (admin, super-admin, or trainee/host with a known
+// user appId) joins this room. It lets us push an immediate "you were
+// deleted/deactivated" signal to any tab that user has open, independent of
+// which group-session room (if any) they're also in.
+const userRoomName = (userId) => `user:${userId}`;
 const isTrustedVercelPreviewOrigin = (origin) => /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin || "");
 
 const log = (msg, meta) => logger.lifecycle.info(msg, meta);
@@ -503,12 +508,36 @@ class GroupRuntime {
     await training.save();
   }
 
+  // ---- forced logout -----------------------------------------------------
+  // Called right after a super-admin/admin deletes (or deactivates) a user.
+  // Pushes an immediate signal to every open tab/socket for that user so they
+  // don't have to wait for their next API call or a page refresh to be signed
+  // out. This is a best-effort UX nicety — the actual security boundary is the
+  // server-side re-check of the user's existence/status on every REST request
+  // (see authTokenAdmin.js) and the socket auth handshake below.
+  forceLogoutUser(userId, reason = "account-removed") {
+    if (!userId) return;
+    this.io.to(userRoomName(userId)).emit("auth:force-logout", { reason });
+    logger.socket.info("force-logout emitted", { userId, reason });
+  }
+
+  forceLogoutUsers(userIds, reason = "account-removed") {
+    (Array.isArray(userIds) ? userIds : []).filter(Boolean).forEach((id) => this.forceLogoutUser(id, reason));
+  }
+
   // ---- connection lifecycle -------------------------------------------
   registerConnection(socket) {
     const { gsId, role, sub, name } = socket.data;
-    socket.join(roomName(gsId));
-    logger.socket.info("socket connected", { socketId: socket.id, role, gsId, room: roomName(gsId), transport: socket.conn?.transport?.name });
+    if (gsId) socket.join(roomName(gsId));
+    // sub is the authenticated user's appId for admin/host/trainee sockets —
+    // join their personal room so forceLogoutUser can reach every open tab.
+    if (sub) socket.join(userRoomName(sub));
+    logger.socket.info("socket connected", { socketId: socket.id, role, gsId, room: gsId ? roomName(gsId) : "(presence-only)", transport: socket.conn?.transport?.name });
     socket.on("disconnect", (reason) => logger.socket.info("socket disconnected", { socketId: socket.id, role, gsId, reason }));
+
+    // Presence-only sockets don't participate in any group-session logic —
+    // register nothing further for them.
+    if (role === "presence") return;
 
     // Wrap every async handler so one failure cannot crash the process or leak
     // an unhandled rejection. Errors are logged structurally and a safe,
@@ -749,6 +778,14 @@ const authenticateSocket = (socket, next) => {
   const gsId = normalizeValue(socket.handshake.auth?.gsId);
   if (adminPayload?.sub && gsId) {
     socket.data = { gsId, clientId: "", sub: adminPayload.sub, role: "admin", name: "" };
+    return next();
+  }
+  // Presence-only connection: any authenticated admin/super-admin/user JWT
+  // without a gsId is accepted purely so they can be reached via their
+  // personal user:<appId> room (e.g. for an immediate force-logout push when
+  // a super-admin deletes them). It does not join any group-session room.
+  if (adminPayload?.sub) {
+    socket.data = { gsId: "", clientId: "", sub: adminPayload.sub, role: "presence", name: "" };
     return next();
   }
   return next(new Error("Invalid auth token."));
