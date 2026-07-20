@@ -980,6 +980,12 @@ export interface TrainingWorkspaceRecord {
   submittedOn: string | null;
   approvedOn: string | null;
   lastActivity: string;
+  lastLaunchLink?: {
+    launchUrl?: string;
+    expiresInMinutes?: number;
+    learnerName?: string;
+    learnerEmail?: string;
+  } | null;
   trainingType?: "one_on_one" | "group";
   groupConfig?: TrainingGroupConfig | null;
   trainingMode?: TrainingMode;
@@ -1019,9 +1025,9 @@ export interface TrainingWorkspaceRecord {
     markAnswersInRealTime: boolean;
     showMarksInProgressBar: boolean;
     showFinalScore: boolean;
+    proctoringEnabled: boolean;
     allowPublicDemoAccess?: boolean;
     demoToken?: string;
-    proctoringEnabled?: boolean;
   };
   theme?: TrainingSlideshowTheme;
   branding?: TrainingBrandingSettings;
