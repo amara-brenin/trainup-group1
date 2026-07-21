@@ -10,9 +10,10 @@ type SharedNavbarProps = {
   planExpired?: boolean;
   userSlot: ReactNode;
   showCredits?: boolean;
+  hideHamburger?: boolean;
 };
 
-const SharedNavbar = ({ leftContent, usedCredits, totalCredits, planExpired = false, userSlot, showCredits = true }: SharedNavbarProps) => {
+const SharedNavbar = ({ leftContent, usedCredits, totalCredits, planExpired = false, userSlot, showCredits = true, hideHamburger = false }: SharedNavbarProps) => {
   const dispatch = useAppDispatch();
   const { bsTheme } = useAppSelector((state) => state.theme);
 
@@ -84,14 +85,16 @@ const SharedNavbar = ({ leftContent, usedCredits, totalCredits, planExpired = fa
     <div className="navbar-custom">
       <div className="topbar container-fluid">
         <div className="d-flex align-items-center gap-lg-2 gap-1">
-          <button
-            type="button"
-            className="button-toggle-menu d-lg-none"
-            onClick={() => dispatch(toggleSidebar())}
-            aria-label="Toggle menu"
-          >
-            <i className="ri-menu-2-line" />
-          </button>
+          {!hideHamburger && (
+            <button
+              type="button"
+              className="button-toggle-menu d-lg-none"
+              onClick={() => dispatch(toggleSidebar())}
+              aria-label="Toggle menu"
+            >
+              <i className="ri-menu-2-line" />
+            </button>
+          )}
           {leftContent}
         </div>
 

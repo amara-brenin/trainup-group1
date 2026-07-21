@@ -1,7 +1,7 @@
 import { getFixedRoleDefinition } from "../constant/accessControl";
 import type { AdminUser } from "../constant/interfaces";
 
-export type PublicRole = "trainer" | "reviewer" | "employee";
+export type PublicRole = "trainer" | "reviewer" | "employee" | "trainee";
 
 export type PublicRoleSession = {
   role: PublicRole;
@@ -25,6 +25,7 @@ export const publicRoleHomePaths: Record<PublicRole, string> = {
   trainer: "/trainer",
   reviewer: "/reviewer",
   employee: "/employee-sso",
+  trainee: "/trainee",
 };
 
 const storageKey = (role: PublicRole) => `trainup-public-role-${role}`;
@@ -100,7 +101,7 @@ export const setPublicRoleSession = (role: PublicRole, session: PublicRoleSessio
 };
 
 export const buildPublicRoleSessionFromAdmin = (
-  role: Extract<PublicRole, "trainer" | "reviewer">,
+  role: Extract<PublicRole, "trainer" | "reviewer" | "trainee">,
   user: AdminUser,
   existingSession?: PublicRoleSession | null,
 ): PublicRoleSession => ({
