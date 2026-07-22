@@ -991,7 +991,7 @@ const ClientDetail = () => {
 
       {activeTab === "billing" ? (
         <div className="row g-3">
-          <div className="col-12 col-xl-8">
+          <div className="col-12">
             <div className="card h-100">
               <div className="card-header bg-transparent border-0 pb-0">
                 <h2 className="h5 fw-semibold mb-1">Plan and credits</h2>
@@ -1225,53 +1225,6 @@ const ClientDetail = () => {
             </div>
           </div>
 
-          <div className="col-12 col-xl-4">
-            <div className="card h-100">
-              <div className="card-header bg-transparent border-0 pb-0">
-                <h2 className="h5 fw-semibold mb-1">Credit rules</h2>
-                <p className="small text-body-secondary mb-0">Current package limits and per-action deductions.</p>
-              </div>
-              <div className="card-body admin-settings-list">
-                <div className="admin-settings-item d-flex align-items-center justify-content-between">
-                  <span className="small text-body-secondary">Monthly credits</span>
-                  <span className="fw-semibold">{Number(client.monthlyCredits ?? 0)}</span>
-                </div>
-                <div className="admin-settings-item d-flex align-items-center justify-content-between">
-                  <span className="small text-body-secondary">Enterprise monthly price</span>
-                  <span className="fw-semibold">{Number(client.enterpriseMonthlyPrice ?? 0) ? `Rs. ${Number(client.enterpriseMonthlyPrice ?? 0).toLocaleString()}` : "Custom"}</span>
-                </div>
-                <div className="admin-settings-item d-flex align-items-center justify-content-between">
-                  <span className="small text-body-secondary">Per training create</span>
-                  <span className="fw-semibold">{Number(client.trainingCreditCost ?? 500)} credits</span>
-                </div>
-                <div className="admin-settings-item d-flex align-items-center justify-content-between">
-                  <span className="small text-body-secondary">Per added user</span>
-                  <span className="fw-semibold">{Number(client.userCreditCost ?? 200)} credits</span>
-                </div>
-                <div className="admin-settings-item d-flex align-items-center justify-content-between">
-                  <span className="small text-body-secondary">Per completed session</span>
-                  <span className="fw-semibold">{Number(client.sessionCreditCost ?? 100)} credits</span>
-                </div>
-                {client.enterpriseRequests?.length ? (
-                  <div className="admin-settings-item">
-                    <div className="small text-body-secondary mb-2">Enterprise upgrade requests</div>
-                    <div className="d-grid gap-2">
-                      {client.enterpriseRequests.slice(0, 3).map((request) => (
-                        <div key={request.id} className="border rounded-3 p-2">
-                          <div className="d-flex justify-content-between gap-2">
-                            <span className="fw-semibold">{request.requestedByName}</span>
-                            <span className={`badge ${request.status === "pending" ? "text-bg-primary" : "text-bg-success"}`}>{request.status}</span>
-                          </div>
-                          <div className="small text-body-secondary">{request.requestedByEmail}</div>
-                          <div className="small mt-2">{request.message}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          </div>
         </div>
       ) : null}
     </PageShell>

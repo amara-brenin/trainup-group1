@@ -20,9 +20,16 @@ router.put("/settings/billing", settingController.updateGlobalSettings);
 router.get("/plans", planController.list);
 router.post("/plans", planController.create);
 router.put("/plans/:id", planController.update);
+router.delete("/plans/:id", planController.remove);
 router.patch("/plans/:id/status", planController.setStatus);
 router.get("/plans/:id/history", planController.history);
 router.get("/billing/insights", planController.billingInsights);
+
+// Enterprise inquiry queue — centralized across all clients (see PlanManagement's
+// sibling "Queries" tab), replacing the old per-client display on ClientDetail.
+router.get("/enterprise-requests", planController.listEnterpriseRequests);
+router.post("/enterprise-requests/:clientId/:requestId/offer", planController.sendEnterpriseOffer);
+router.post("/enterprise-requests/:clientId/:requestId/reject", planController.rejectEnterpriseRequest);
 
 router.get("/clients", clientController.list);
 router.post("/clients", clientController.create);

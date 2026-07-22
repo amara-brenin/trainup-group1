@@ -9,16 +9,6 @@ import { PermissionKeys } from "../constant/permissions";
 import AxiosHelper from "../helper/AxiosHelper";
 import { updateAdmin } from "../redux/authSlice";
 
-// Phase D: add-on marketplace quantity options per resource.
-const ADDON_OPTIONS: Record<"training" | "session" | "user", number[]> = {
-  training: [5, 10, 25],
-  session: [50, 100, 250],
-  user: [100, 500, 1000],
-};
-const ADDON_LABEL: Record<"training" | "session" | "user", string> = {
-  training: "Trainings", session: "Sessions", user: "Users",
-};
-
 const planLabels: Record<string, string> = {
   FREE: "Free",
   PRO: "Pro",
@@ -80,15 +70,6 @@ type BillingPlanRow = {
   code: string; name: string; monthlyPrice: number; yearlyPrice: number; credits: number; discountPercentage?: number;
   trainingLimit: number | null; sessionLimit: number | null; userLimit: number | null; features: string[];
 };
-
-// Phase D: add-on usage + history.
-type ResourceUsage = { limit: number | null; used: number; remaining: number | null; unlimited: boolean; purchased: number };
-type AddonUsage = { training: ResourceUsage; session: ResourceUsage; user: ResourceUsage };
-type AddonHistoryRow = {
-  id: string; type: string; quantity: number; purchaseMethod: string;
-  unitCost: number; totalCost: number; currency: string; status: string; performedBy: string; createdAt: string;
-};
-type AddonPricing = { creditUnit: Record<string, number>; moneyUnit: Record<string, number> };
 
 // Task 3: credit audit log row.
 type CreditAuditRow = {
@@ -278,21 +259,25 @@ const UpgradeBillings = () => {
   const [billingSummary, setBillingSummary] = useState<BillingSummary | null>(null);
   const [creditHistory, setCreditHistory] = useState<CreditAuditRow[]>([]);
   const [dbPlans, setDbPlans] = useState<BillingPlanRow[]>([]);
-  const [addonUsage, setAddonUsage] = useState<AddonUsage | null>(null);
-  const [addonHistory, setAddonHistory] = useState<AddonHistoryRow[]>([]);
-  const [addonPricing, setAddonPricing] = useState<AddonPricing | null>(null);
-  const [razorpayConfigured, setRazorpayConfigured] = useState(false);
-  const [addonBusy, setAddonBusy] = useState(false);
+  const [txnFilterFrom, setTxnFilterFrom] = useState("");
+  const [txnFilterTo, setTxnFilterTo] = useState("");
+  const [txnFilterType, setTxnFilterType] = useState("");
+  const [txnFilterPlan, setTxnFilterPlan] = useState("");
   const [creditFilterFrom, setCreditFilterFrom] = useState("");
   const [creditFilterTo, setCreditFilterTo] = useState("");
   const [creditFilterAction, setCreditFilterAction] = useState("");
   const [creditFilterBy, setCreditFilterBy] = useState("");
   const [supportOpen, setSupportOpen] = useState(false);
   const [supportMessage, setSupportMessage] = useState("");
+  const [approxUsers, setApproxUsers] = useState("");
+  const [approxTrainings, setApproxTrainings] = useState("");
+  const [approxSessions, setApproxSessions] = useState("");
+  const [approxBudget, setApproxBudget] = useState("");
   const [selectedInvoice, setSelectedInvoice] = useState<BillingSummary["recentTransactions"][number] | null>(null);
   const [invoicePdfUrl, setInvoicePdfUrl] = useState<string>("");
   const [purchasing, setPurchasing] = useState(false);
   const [submittingSupport, setSubmittingSupport] = useState(false);
+  const [payingOfferId, setPayingOfferId] = useState<string | null>(null);
   const canViewBilling = admin.permission.includes(PermissionKeys.billingView);
   const canManageBilling = admin.permission.includes(PermissionKeys.billingManage);
 
@@ -333,82 +318,13 @@ const UpgradeBillings = () => {
     }
   }, []);
 
-  const fetchAddons = useCallback(async () => {
-    const response = await AxiosHelper.getData<{ record: AddonHistoryRow[]; usage: AddonUsage; pricing: AddonPricing; razorpayConfigured: boolean }>("/billing/addons/history");
-    if (response.data.status) {
-      setAddonHistory(response.data.data.record || []);
-      setAddonUsage(response.data.data.usage || null);
-      setAddonPricing(response.data.data.pricing || null);
-      setRazorpayConfigured(Boolean(response.data.data.razorpayConfigured));
-    }
-  }, []);
-
   useEffect(() => {
     if (canViewBilling) {
       void fetchBillingSummary();
       void fetchCreditHistory();
       void fetchPlans();
-      void fetchAddons();
     }
-  }, [canViewBilling, fetchBillingSummary, fetchCreditHistory, fetchPlans, fetchAddons]);
-
-  const loadRazorpayScript = () => new Promise<boolean>((resolve) => {
-    if ((window as unknown as { Razorpay?: unknown }).Razorpay) return resolve(true);
-    const s = document.createElement("script");
-    s.src = "https://checkout.razorpay.com/v1/checkout.js";
-    s.onload = () => resolve(true);
-    s.onerror = () => resolve(false);
-    document.body.appendChild(s);
-  });
-
-  const buyAddonWithCredits = async (type: "training" | "session" | "user", quantity: number) => {
-    setAddonBusy(true);
-    const idempotencyKey = crypto.randomUUID();
-    const res = await AxiosHelper.postData<{ usage: AddonUsage }, { type: string; quantity: number; purchaseMethod: string; idempotencyKey: string }>(
-      "/billing/addons/purchase", { type, quantity, purchaseMethod: "credits", idempotencyKey });
-    setAddonBusy(false);
-    if (res.data.status) {
-      toast.success(`Added +${quantity} ${type} capacity.`);
-      if (res.data.data.usage) setAddonUsage(res.data.data.usage);
-      void fetchAddons();
-      void fetchBillingSummary(); // credits changed
-      void fetchCreditHistory();
-    } else {
-      toast.error(res.data.message);
-    }
-  };
-
-  const buyAddonWithRazorpay = async (type: "training" | "session" | "user", quantity: number) => {
-    setAddonBusy(true);
-    const orderRes = await AxiosHelper.postData<{ razorpayConfigured?: boolean; order?: { id: string; amount: number; currency: string; keyId: string } }, Record<string, unknown>>(
-      "/billing/addons/purchase", { type, quantity, purchaseMethod: "razorpay", action: "create-order" });
-    if (!orderRes.data.status) { setAddonBusy(false); toast.error(orderRes.data.message); return; }
-    if (orderRes.data.data.razorpayConfigured === false || !orderRes.data.data.order) {
-      setAddonBusy(false); toast.info("Razorpay is not configured for this account."); return;
-    }
-    const order = orderRes.data.data.order;
-    const loaded = await loadRazorpayScript();
-    setAddonBusy(false);
-    if (!loaded) { toast.error("Could not load Razorpay checkout."); return; }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rzp = new (window as any).Razorpay({
-      key: order.keyId, amount: order.amount, currency: order.currency, order_id: order.id,
-      name: "Capacity add-on", description: `+${quantity} ${type}`,
-      handler: async (resp: { razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }) => {
-        const verify = await AxiosHelper.postData<{ usage: AddonUsage }, Record<string, unknown>>(
-          "/billing/addons/purchase",
-          { type, quantity, purchaseMethod: "razorpay", action: "verify", ...resp });
-        if (verify.data.status) {
-          toast.success(`Added +${quantity} ${type} capacity via Razorpay.`);
-          if (verify.data.data.usage) setAddonUsage(verify.data.data.usage);
-          void fetchAddons();
-        } else {
-          toast.error(verify.data.message);
-        }
-      },
-    });
-    rzp.open();
-  };
+  }, [canViewBilling, fetchBillingSummary, fetchCreditHistory, fetchPlans]);
 
   useEffect(() => {
     if (!selectedInvoice) {
@@ -466,21 +382,35 @@ const UpgradeBillings = () => {
 
   const handleSupportRequest = async () => {
     const message = supportMessage.trim();
+    const users = approxUsers.trim();
+    const trainings = approxTrainings.trim();
+    const sessions = approxSessions.trim();
+    const budget = approxBudget.trim();
 
-    if (!message) {
-      toast.error("Support query is required.");
+    if (!message && !users && !trainings && !sessions && !budget) {
+      toast.error("Share at least one approximate requirement or a message.");
       return;
     }
 
     setSubmittingSupport(true);
-    const response = await AxiosHelper.postData<BillingSummary, { message: string }>(
-      "/billing/enterprise-request",
-      { message },
-    );
+    const response = await AxiosHelper.postData<
+      BillingSummary,
+      { message: string; approxUsers?: number; approxTrainings?: number; approxSessions?: number; approxBudget?: number }
+    >("/billing/enterprise-request", {
+      message,
+      ...(users ? { approxUsers: Number(users) } : {}),
+      ...(trainings ? { approxTrainings: Number(trainings) } : {}),
+      ...(sessions ? { approxSessions: Number(sessions) } : {}),
+      ...(budget ? { approxBudget: Number(budget) } : {}),
+    });
 
     if (response.data.status) {
       setBillingSummary(response.data.data);
       setSupportMessage("");
+      setApproxUsers("");
+      setApproxTrainings("");
+      setApproxSessions("");
+      setApproxBudget("");
       setSupportOpen(false);
       toast.success(response.data.message);
     } else {
@@ -488,6 +418,25 @@ const UpgradeBillings = () => {
     }
 
     setSubmittingSupport(false);
+  };
+
+  // Finalizes a super-admin-sent custom Enterprise offer (see Queries tab in
+  // the super-admin console). Sandbox/simulated, same as handlePlanCheckout —
+  // there's no real payment gateway wired into this app yet.
+  const handlePayEnterpriseOffer = async (requestId: string) => {
+    setPayingOfferId(requestId);
+    const response = await AxiosHelper.postData<BillingSummary, Record<string, never>>(
+      `/billing/enterprise-request/${requestId}/pay`,
+      {},
+    );
+    setPayingOfferId(null);
+
+    if (response.data.status) {
+      setBillingSummary(response.data.data);
+      toast.success(response.data.message);
+    } else {
+      toast.error(response.data.message);
+    }
   };
 
   const derived = useMemo(() => {
@@ -568,16 +517,10 @@ const UpgradeBillings = () => {
     };
   }, [billingSummary, selectedPlan]);
 
-  const planTransactions = useMemo(
-    () =>
-      (billingSummary?.recentTransactions ?? [])
-        .filter((item) => {
-          const planCode = String(item.planCode || "").toUpperCase();
-          return (item.type === "plan_purchase" || item.type === "plan_assignment") && (planCode === "FREE" || planCode === "PRO");
-        })
-        .slice(0, 2),
-    [billingSummary?.recentTransactions],
-  );
+  // Every recorded transaction (purchases, assignments, add-ons, debits) — no
+  // longer filtered down to just FREE/PRO plan events, so admins can actually
+  // see the billing activity that happened on their account.
+  const recentTransactions = billingSummary?.recentTransactions ?? [];
 
   if (!canViewBilling) {
     return (
@@ -613,6 +556,34 @@ const UpgradeBillings = () => {
   const isExpired = billingSummary.planStatus === "expired";
   const activePlanCode = String(billingSummary.currentPlan || "").toUpperCase();
   const activePlan = planLabels[activePlanCode] ?? billingSummary.currentPlan;
+
+  const filteredTransactions = recentTransactions.filter((item) => {
+    if (txnFilterFrom && (!item.createdAt || new Date(item.createdAt) < new Date(txnFilterFrom))) {
+      return false;
+    }
+
+    if (txnFilterTo) {
+      const to = new Date(txnFilterTo);
+      to.setHours(23, 59, 59, 999);
+      if (!item.createdAt || new Date(item.createdAt) > to) {
+        return false;
+      }
+    }
+
+    if (txnFilterType && item.type !== txnFilterType) {
+      return false;
+    }
+
+    if (txnFilterPlan) {
+      const isPlanEvent = item.type === "plan_purchase" || item.type === "plan_assignment";
+      const transactionPlan = String(item.planCode || (isPlanEvent ? activePlanCode : "")).toUpperCase();
+      if (transactionPlan !== txnFilterPlan) {
+        return false;
+      }
+    }
+
+    return true;
+  });
 
   // D2: plan cards are DB-driven (GET /billing/plans). Fall back to the legacy
   // billingSummary.planCatalog when the DB list is empty.
@@ -794,27 +765,28 @@ const UpgradeBillings = () => {
         {selectedPlanCode ? null : (
           <>
 
-            {/* Phase E / Task 4: capacity alert banners */}
-            {addonUsage ? (() => {
-              const alerts: string[] = [];
-              for (const [k, label] of [["training", "training"], ["session", "session"], ["user", "user"]] as const) {
-                const u = addonUsage[k];
-                if (!u.unlimited && u.limit && u.remaining !== null && u.remaining / u.limit < 0.2) {
-                  alerts.push(u.remaining <= 0
-                    ? `${label.charAt(0).toUpperCase() + label.slice(1)} capacity is exhausted.`
-                    : `You have only ${u.remaining.toLocaleString()} ${label} slot${u.remaining === 1 ? "" : "s"} remaining.`);
-                }
-              }
-              return alerts.length ? (
-                <div className="mb-3">
-                  {alerts.map((msg) => (
-                    <div key={msg} className="alert alert-warning d-flex align-items-center py-2 mb-2">
-                      <i className="ri-error-warning-line me-2 fs-5" />{msg}
+            {(billingSummary.enterpriseRequests || [])
+              .filter((request) => request.status === "offer_sent")
+              .map((request) => (
+                <div key={request.id} className="alert alert-success d-flex align-items-center justify-content-between flex-wrap gap-3 mb-3">
+                  <div>
+                    <div className="fw-semibold">Your custom Enterprise plan is ready</div>
+                    <div className="small">
+                      {Number(request.offerCredits || 0).toLocaleString()} credits
+                      {request.offerPrice ? ` for ${formatCurrency(request.offerPrice, billingSummary.billingCurrency)}` : ""}
+                      {request.offerValidityDays ? ` · valid ${request.offerValidityDays} days` : ""}
                     </div>
-                  ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-success"
+                    disabled={payingOfferId === request.id || !canManageBilling}
+                    onClick={() => void handlePayEnterpriseOffer(request.id)}
+                  >
+                    {payingOfferId === request.id ? "Processing..." : "Pay Now"}
+                  </button>
                 </div>
-              ) : null;
-            })() : null}
+              ))}
 
             {/* Phase E / Task 1: Current Subscription — hidden once the plan
                 has expired (the expired plan header + renew CTA stay above). */}
@@ -988,8 +960,47 @@ const UpgradeBillings = () => {
               <div className="card-body">
                 <div className="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
                   <div>
-                    <h2 className="h4 fw-semibold mb-1">Recent Transactions</h2>
-                    <p className="text-body-secondary mb-0">Latest plan assignments, purchases, and credit deductions.</p>
+                    <h2 className="h4 fw-semibold mb-1">Transactions</h2>
+                    <p className="text-body-secondary mb-0">Every plan assignment, purchase, and credit deduction on this account.</p>
+                  </div>
+                </div>
+
+                <div className="row g-2 mb-3">
+                  <div className="col-auto">
+                    <input type="date" className="form-control form-control-sm" value={txnFilterFrom} onChange={(e) => setTxnFilterFrom(e.target.value)} placeholder="From" />
+                  </div>
+                  <div className="col-auto">
+                    <input type="date" className="form-control form-control-sm" value={txnFilterTo} onChange={(e) => setTxnFilterTo(e.target.value)} placeholder="To" />
+                  </div>
+                  <div className="col-auto">
+                    <select className="form-select form-select-sm" value={txnFilterType} onChange={(e) => setTxnFilterType(e.target.value)}>
+                      <option value="">All Types</option>
+                      <option value="plan_purchase">Plan Purchase</option>
+                      <option value="plan_assignment">Plan Assignment</option>
+                      <option value="credit_purchase">Credit Purchase</option>
+                      <option value="debit">Debit</option>
+                    </select>
+                  </div>
+                  <div className="col-auto">
+                    <select className="form-select form-select-sm" value={txnFilterPlan} onChange={(e) => setTxnFilterPlan(e.target.value)}>
+                      <option value="">All Plans</option>
+                      <option value="FREE">Free</option>
+                      <option value="PRO">Pro</option>
+                      <option value="ENTERPRISE">Enterprise</option>
+                    </select>
+                  </div>
+                  <div className="col-auto">
+                    <button
+                      className="btn btn-sm btn-outline-secondary"
+                      onClick={() => {
+                        setTxnFilterFrom("");
+                        setTxnFilterTo("");
+                        setTxnFilterType("");
+                        setTxnFilterPlan("");
+                      }}
+                    >
+                      Clear
+                    </button>
                   </div>
                 </div>
 
@@ -1008,20 +1019,21 @@ const UpgradeBillings = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {planTransactions.length ? (
-                        planTransactions.map((item, index) => {
+                      {filteredTransactions.length ? (
+                        filteredTransactions.map((item, index) => {
                           const status = getTransactionStatus(item.type);
-                          const transactionPlan = item.planCode || activePlanCode;
+                          const isPlanEvent = item.type === "plan_purchase" || item.type === "plan_assignment";
+                          const transactionPlan = item.planCode || (isPlanEvent ? activePlanCode : "");
                           return (
                             <tr key={item.createdAt || `${item.note}-${index}`}>
-                              <td className="fw-semibold text-primary">{item.invoiceId || item.orderId || `PLAN${String(index + 1).padStart(6, "0")}`}</td>
+                              <td className="fw-semibold text-primary">{item.invoiceId || item.orderId || `TXN${String(index + 1).padStart(6, "0")}`}</td>
                               <td>
                                 <div className="fw-semibold">{item.note || item.reason || "Credit activity"}</div>
                                 <div className="small text-body-secondary">{item.reason || item.note || "Billing ledger entry"}</div>
                               </td>
                               <td>{formatDateLabel(item.createdAt)}</td>
-                              <td>{getExpiryDateLabel(item.createdAt, String(transactionPlan))}</td>
-                              <td>{planLabels[String(transactionPlan).toUpperCase()] ?? transactionPlan}</td>
+                              <td>{transactionPlan ? getExpiryDateLabel(item.createdAt, String(transactionPlan)) : "—"}</td>
+                              <td>{transactionPlan ? (planLabels[String(transactionPlan).toUpperCase()] ?? transactionPlan) : "—"}</td>
                               <td>{Number(item.credits ?? 0).toLocaleString()}</td>
                               <td>
                                 <span className={`badge ${status.className}`}>{status.label}</span>
@@ -1041,7 +1053,7 @@ const UpgradeBillings = () => {
                       ) : (
                         <tr>
                           <td colSpan={8} className="text-center text-body-secondary py-4">
-                            No billing transactions yet.
+                            No billing transactions match these filters.
                           </td>
                         </tr>
                       )}
@@ -1143,107 +1155,6 @@ const UpgradeBillings = () => {
               </div>
             </div>
 
-            {/* Capacity Usage is now shown in the Current Subscription section above (Task 1). */}
-
-            {/* Phase D: add-on marketplace. */}
-            <div className="card admin-billing-transactions-card">
-              <div className="card-body">
-                <div className="mb-3">
-                  <h2 className="h4 fw-semibold mb-1">Add-On Marketplace</h2>
-                  <p className="text-body-secondary mb-0">Buy extra capacity without changing your plan. Add-ons never expire and stack.</p>
-                </div>
-                <div className="row g-3">
-                  {(["training", "session", "user"] as const).map((type) => (
-                    <div key={type} className="col-12 col-lg-4">
-                      <div className="border rounded p-3 h-100">
-                        <div className="fw-semibold mb-2">{ADDON_LABEL[type]} capacity</div>
-                        {ADDON_OPTIONS[type].map((qty) => (
-                          <div key={qty} className="d-flex align-items-center justify-content-between mb-2">
-                            <span>+{qty.toLocaleString()} {ADDON_LABEL[type]}</span>
-                            <span className="d-flex gap-1">
-                              <button
-                                className="btn btn-sm btn-outline-primary"
-                                disabled={addonBusy || !canManageBilling}
-                                title={addonPricing ? `${(addonPricing.creditUnit[type] * qty).toLocaleString()} credits` : ""}
-                                onClick={() => void buyAddonWithCredits(type, qty)}
-                              >
-                                Credits{addonPricing ? ` (${(addonPricing.creditUnit[type] * qty).toLocaleString()})` : ""}
-                              </button>
-                              <button
-                                className="btn btn-sm btn-outline-secondary"
-                                disabled={addonBusy || !canManageBilling || !razorpayConfigured}
-                                title={razorpayConfigured ? "Pay with Razorpay" : "Razorpay not configured"}
-                                onClick={() => void buyAddonWithRazorpay(type, qty)}
-                              >
-                                Pay
-                              </button>
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {!razorpayConfigured ? (
-                  <div className="small text-body-secondary mt-2"><i className="bi bi-info-circle me-1" />Razorpay not configured — payment purchases are disabled. Use credits, or configure Razorpay keys.</div>
-                ) : null}
-              </div>
-            </div>
-
-            {/* Phase D + Phase E / Task 6: add-on purchase history with export. */}
-            <div className="card admin-billing-transactions-card">
-              <div className="card-body">
-                <div className="d-flex align-items-center justify-content-between flex-wrap gap-2 mb-3">
-                  <h2 className="h4 fw-semibold mb-0">Add-On Purchase History</h2>
-                  <div className="d-flex gap-1">
-                    <button className="btn btn-sm btn-outline-secondary" onClick={() => {
-                      const header = "Date,Resource,Quantity,Method,Cost,Currency,Status,By\n";
-                      const rows = addonHistory.map((r) => `${r.createdAt},${r.type},${r.quantity},${r.purchaseMethod},${r.totalCost},${r.currency},${r.status},${r.performedBy || ""}`).join("\n");
-                      const blob = new Blob([header + rows], { type: "text/csv" });
-                      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "addon-history.csv"; a.click();
-                    }}>CSV</button>
-                    <button className="btn btn-sm btn-outline-secondary" onClick={() => {
-                      const pdf = new jsPDF({ unit: "pt", format: "a4", orientation: "landscape" });
-                      pdf.setFontSize(14); pdf.text("Add-On Purchase History", 40, 40);
-                      let y = 70; pdf.setFontSize(8);
-                      pdf.text("Date", 40, y); pdf.text("Resource", 150, y); pdf.text("Qty", 230, y); pdf.text("Method", 280, y); pdf.text("Cost", 370, y); pdf.text("Status", 450, y); pdf.text("By", 530, y);
-                      y += 16;
-                      for (const r of addonHistory) {
-                        if (y > 560) { pdf.addPage(); y = 40; }
-                        pdf.text(formatDateLabel(r.createdAt), 40, y); pdf.text(r.type, 150, y); pdf.text(`+${r.quantity}`, 230, y);
-                        pdf.text(r.purchaseMethod, 280, y); pdf.text(`${r.totalCost} ${r.currency}`, 370, y); pdf.text(r.status, 450, y); pdf.text(r.performedBy || "", 530, y);
-                        y += 14;
-                      }
-                      pdf.save("addon-history.pdf");
-                    }}>PDF</button>
-                  </div>
-                </div>
-                <div className="table-responsive">
-                  <table className="table align-middle mb-0">
-                    <thead>
-                      <tr><th>Date</th><th>Resource</th><th>Quantity</th><th>Method</th><th>Cost</th><th>Status</th><th>By</th></tr>
-                    </thead>
-                    <tbody>
-                      {addonHistory.length ? (
-                        addonHistory.map((row) => (
-                          <tr key={row.id}>
-                            <td>{formatDateLabel(row.createdAt)}</td>
-                            <td className="text-capitalize">{row.type}</td>
-                            <td>+{row.quantity.toLocaleString()}</td>
-                            <td className="text-capitalize">{row.purchaseMethod}</td>
-                            <td>{row.totalCost.toLocaleString()} {row.currency === "credits" ? "credits" : row.currency}</td>
-                            <td><span className="badge text-bg-success text-capitalize">{row.status}</span></td>
-                            <td>{row.performedBy || "—"}</td>
-                          </tr>
-                        ))
-                      ) : (
-                        <tr><td colSpan={7} className="text-center text-body-secondary py-4">No add-on purchases yet.</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
           </>
         )}
       </div>
@@ -1253,16 +1164,69 @@ const UpgradeBillings = () => {
           <div>
             <h3 className="h6 fw-semibold mb-1">Enterprise plan request</h3>
             <p className="text-body-secondary mb-0">
-              Share your pricing, user scale, or credit requirement. This request will be visible to the super admin for manual enterprise assignment.
+              Everything below is optional and approximate — fill in what you know, or skip straight to the message. Our team will follow up with custom pricing.
             </p>
           </div>
 
+          <div className="row g-3">
+            <div className="col-6 col-md-3">
+              <label htmlFor="enterprise-approx-users" className="form-label small">Approx. users</label>
+              <input
+                id="enterprise-approx-users"
+                type="number"
+                min={0}
+                className="form-control"
+                value={approxUsers}
+                onChange={(event) => setApproxUsers(event.target.value)}
+                placeholder="e.g. 400"
+              />
+            </div>
+            <div className="col-6 col-md-3">
+              <label htmlFor="enterprise-approx-trainings" className="form-label small">Approx. trainings / month</label>
+              <input
+                id="enterprise-approx-trainings"
+                type="number"
+                min={0}
+                className="form-control"
+                value={approxTrainings}
+                onChange={(event) => setApproxTrainings(event.target.value)}
+                placeholder="e.g. 40"
+              />
+            </div>
+            <div className="col-6 col-md-3">
+              <label htmlFor="enterprise-approx-sessions" className="form-label small">Approx. sessions / month</label>
+              <input
+                id="enterprise-approx-sessions"
+                type="number"
+                min={0}
+                className="form-control"
+                value={approxSessions}
+                onChange={(event) => setApproxSessions(event.target.value)}
+                placeholder="e.g. 200"
+              />
+            </div>
+            <div className="col-6 col-md-3">
+              <label htmlFor="enterprise-approx-budget" className="form-label small">Approx. monthly budget</label>
+              <input
+                id="enterprise-approx-budget"
+                type="number"
+                min={0}
+                className="form-control"
+                value={approxBudget}
+                onChange={(event) => setApproxBudget(event.target.value)}
+                placeholder="e.g. 50000"
+              />
+            </div>
+          </div>
+
           <div>
-            <label htmlFor="enterprise-support-message" className="form-label">Query</label>
+            <label htmlFor="enterprise-support-message" className="form-label">
+              Message <span className="text-body-secondary fw-normal">(or just tell us directly if you'd rather skip the fields above)</span>
+            </label>
             <textarea
               id="enterprise-support-message"
               className="form-control"
-              rows={5}
+              rows={4}
               value={supportMessage}
               onChange={(event) => setSupportMessage(event.target.value)}
               placeholder="Example: We need an enterprise plan for 400 users, 40 trainings, and custom monthly credit allocation."
