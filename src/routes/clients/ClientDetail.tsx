@@ -1390,7 +1390,7 @@ const ClientDetail = () => {
             ) : (
               <div className="text-center text-muted py-5">
                 <p>No avatars assigned to this client yet.</p>
-                <p className="small">If none are assigned, the client will have access to all avatars by default.</p>
+                <p className="small">Please click the 'Update Avatars' button to assign avatars to this client.</p>
               </div>
             )}
           </div>

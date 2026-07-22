@@ -42,13 +42,7 @@ const getAvatars = async (req, res) => {
 
     const assignedAvatars = client.assignedAvatars || [];
     
-    // As per backward compatibility plan, if assignedAvatars is empty, show all.
-    // If we want strict restriction, we would return [] when empty. 
-    // The user's open question feedback was skipped, so we default to showing all if empty.
-    if (assignedAvatars.length === 0) {
-      return ok(res, "Avatars fetched successfully", allAvatars);
-    }
-
+    // Strict restriction: return only assigned avatars. If empty, return empty array.
     const filteredAvatars = allAvatars.filter(avatar => assignedAvatars.includes(avatar.avatarId));
     
     return ok(res, "Avatars fetched successfully", filteredAvatars);
