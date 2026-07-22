@@ -78,7 +78,6 @@ const TraineeWorkspacePanel = () => {
   return (
     <TraineePanel
       sessionName={session.name}
-      sessionEmail={session.email}
       sessionImage={session.image}
       onSignOut={signOut}
     />

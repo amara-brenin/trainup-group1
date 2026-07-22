@@ -143,6 +143,11 @@ export interface ClientRecord {
   trainingCreditCost?: number;
   userCreditCost?: number;
   sessionCreditCost?: number;
+  creditCostOverrides?: {
+    training: number | null;
+    session: number | null;
+    user: number | null;
+  };
   planLimits?: {
     trainings: number | null;
     users: number | null;
@@ -421,6 +426,7 @@ export interface BillingSummary {
     planCode: string;
     label: string;
     monthlyCredits: number;
+    usedCredits: number;
     purchasedAt: string;
     expiresAt: string;
     trainingLimit: number | null;

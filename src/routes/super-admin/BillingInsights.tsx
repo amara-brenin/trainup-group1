@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import PageShell from "../../component/common/PageShell";
 import AxiosHelper from "../../helper/AxiosHelper";
 
 type InsightsData = {
@@ -93,22 +92,20 @@ const BillingInsights = () => {
   }
 
   return (
-    <PageShell title="Billing Insights" description="Platform-wide billing, plan distribution, and credit metrics.">
+    <div>
       <div className="row g-3 mb-3">
         {[
           { label: "Active Plans", value: data.activePlans, icon: "ri-checkbox-circle-line", tone: "success" },
           { label: "Disabled Plans", value: data.disabledPlans, icon: "ri-close-circle-line", tone: "secondary" },
-          { label: "Add-On Purchases", value: data.totalAddonPurchases, icon: "ri-shopping-cart-line", tone: "primary" },
-          { label: "Add-On Revenue", value: data.totalAddonRevenue.toLocaleString(), icon: "ri-money-dollar-circle-line", tone: "warning" },
-          { label: "Credits Consumed", value: data.creditsConsumed.toLocaleString(), icon: "ri-fire-line", tone: "danger" },
-          { label: "Credits Purchased", value: data.creditsPurchased.toLocaleString(), icon: "ri-coin-line", tone: "info" },
-        ].map((m) => (
-          <div key={m.label} className="col-6 col-md-4 col-xl-2">
+          { label: "Addon Purchases", value: data.totalAddonPurchases, icon: "ri-shopping-cart-2-line", tone: "info" },
+          { label: "Total Revenue", value: `$${data.totalAddonRevenue.toLocaleString()}`, icon: "ri-money-dollar-circle-line", tone: "primary" },
+        ].map((stat, i) => (
+          <div key={i} className="col-6 col-md-4 col-xl-2">
             <div className="card h-100">
               <div className="card-body text-center py-3">
-                <i className={`${m.icon} fs-4 text-${m.tone} d-block mb-1`} />
-                <div className="fs-5 fw-semibold">{m.value}</div>
-                <div className="small text-body-secondary">{m.label}</div>
+                <i className={`${stat.icon} fs-4 text-${stat.tone} d-block mb-1`} />
+                <div className="fs-5 fw-semibold">{stat.value}</div>
+                <div className="small text-body-secondary">{stat.label}</div>
               </div>
             </div>
           </div>
@@ -157,7 +154,7 @@ const BillingInsights = () => {
           </div>
         </div>
       </div>
-    </PageShell>
+    </div>
   );
 };
 

@@ -77,7 +77,7 @@ const getExpiryDateLabel = (value?: string | null, planCode?: string) => {
 
 // D2: DB-driven plan row from GET /billing/plans.
 type BillingPlanRow = {
-  code: string; name: string; monthlyPrice: number; yearlyPrice: number; credits: number;
+  code: string; name: string; monthlyPrice: number; yearlyPrice: number; credits: number; discountPercentage?: number;
   trainingLimit: number | null; sessionLimit: number | null; userLimit: number | null; features: string[];
 };
 
@@ -517,8 +517,21 @@ const UpgradeBillings = () => {
       return null;
     }
 
+    // Try finding the DB plan first to respect dynamic discounts and pricing
+    const dbPlan = dbPlans.find((plan) => plan.code === selectedPlanCode);
+    if (dbPlan) {
+      const discount = dbPlan.discountPercentage || 0;
+      const discountedPrice = discount > 0 ? dbPlan.monthlyPrice * (1 - discount / 100) : dbPlan.monthlyPrice;
+      return {
+        ...dbPlan,
+        monthlyPrice: discountedPrice,
+        firstMonthPrice: discountedPrice,
+        trialDays: 0, // DB plans don't specify trials currently
+      };
+    }
+
     return billingSummary.planCatalog.find((plan) => plan.code === selectedPlanCode) ?? null;
-  }, [billingSummary, selectedPlanCode]);
+  }, [billingSummary, selectedPlanCode, dbPlans]);
 
   const selectedInvoiceModel = useMemo(
     () =>
@@ -603,34 +616,40 @@ const UpgradeBillings = () => {
 
   // D2: plan cards are DB-driven (GET /billing/plans). Fall back to the legacy
   // billingSummary.planCatalog when the DB list is empty.
-  const limitLabel = (n: number | null) => (n === null || n === undefined ? "Unlimited" : Number(n).toLocaleString());
-  const dbPlanCards = dbPlans.map((plan) => ({
-    code: plan.code,
-    monthlyPrice: plan.monthlyPrice,
-    firstMonthPrice: plan.monthlyPrice,
-    title: plan.name || planLabels[plan.code] || plan.code,
-    headlinePrice:
-      plan.code === "ENTERPRISE" && !plan.monthlyPrice
-        ? "Custom"
-        : formatCurrency(plan.monthlyPrice, billingSummary.billingCurrency),
-    recurringPrice:
-      plan.code === "ENTERPRISE" && !plan.monthlyPrice
-        ? "Custom after discussion"
-        : formatCurrency(plan.monthlyPrice, billingSummary.billingCurrency),
+  const dbPlanCards = dbPlans.map((plan) => {
+    const discount = plan.discountPercentage || 0;
+    const discountedPrice = discount > 0 ? plan.monthlyPrice * (1 - discount / 100) : plan.monthlyPrice;
+
+    return {
+      code: plan.code,
+      monthlyPrice: discountedPrice,
+      firstMonthPrice: discountedPrice,
+      originalPrice: plan.monthlyPrice,
+      discountPercentage: discount,
+      title: plan.name || planLabels[plan.code] || plan.code,
+      headlinePrice:
+        plan.code === "ENTERPRISE" && !plan.monthlyPrice
+          ? "Custom"
+          : formatCurrency(discountedPrice, billingSummary.billingCurrency),
+      recurringPrice:
+        plan.code === "ENTERPRISE" && !plan.monthlyPrice
+          ? "Custom after discussion"
+          : formatCurrency(discountedPrice, billingSummary.billingCurrency),
     unitLabel: plan.code === "ENTERPRISE" ? "" : "/month",
-    seatLabel: plan.userLimit === null ? "Custom enterprise allocation" : `${Number(plan.userLimit).toLocaleString()} Users`,
+    seatLabel: "Pure Credit Based",
     features: plan.features?.length
       ? plan.features
       : [
-          `${limitLabel(plan.trainingLimit)} trainings`,
-          `Up to ${limitLabel(plan.userLimit)} active users`,
-          `${limitLabel(plan.sessionLimit)} sessions`,
+          `Pay-as-you-go with credits`,
+          `No artificial resource limits`,
           `${Number(plan.credits).toLocaleString()} credits / month`,
         ],
-  }));
+    };
+  });
 
   const fallbackPlanCards = billingSummary.planCatalog.map((plan: BillingPlanCatalogItem) => ({
     ...plan,
+    discountPercentage: 0,
     title: planLabels[plan.code] ?? plan.code,
     headlinePrice:
       plan.code === "ENTERPRISE" && !plan.monthlyPrice
@@ -823,7 +842,9 @@ const UpgradeBillings = () => {
                     <thead>
                       <tr>
                         <th>Plan</th>
-                        <th>Credits Granted</th>
+                        <th>Total Credits</th>
+                        <th>Used</th>
+                        <th>Available</th>
                         <th>Purchased On</th>
                         <th>Expires On</th>
                       </tr>
@@ -836,6 +857,7 @@ const UpgradeBillings = () => {
                             planCode: billingSummary.currentPlan,
                             label: activePlan,
                             monthlyCredits: billingSummary.monthlyCredits,
+                            usedCredits: billingSummary.usedCredits,
                             purchasedAt: billingSummary.startedOn ?? "",
                             expiresAt: billingSummary.expiresOn ?? "",
                           }]
@@ -843,6 +865,8 @@ const UpgradeBillings = () => {
                         <tr key={p.batchId}>
                           <td className="fw-semibold">{planLabels[p.planCode] ?? p.label}</td>
                           <td>{p.monthlyCredits.toLocaleString()}</td>
+                          <td>{(p.usedCredits || 0).toLocaleString()}</td>
+                          <td>{Math.max(0, p.monthlyCredits - (p.usedCredits || 0)).toLocaleString()}</td>
                           <td>{formatDateLabel(p.purchasedAt)}</td>
                           <td>{formatDateLabel(p.expiresAt)}</td>
                         </tr>
@@ -850,53 +874,30 @@ const UpgradeBillings = () => {
                     </tbody>
                   </table>
                 </div>
-                {addonUsage ? (
-                  <div className="row g-3">
-                    {(["training", "session", "user"] as const).map((k) => {
-                      const u = addonUsage[k];
-                      const pct = u.unlimited || !u.limit ? 0 : Math.min(100, Math.round((u.used / u.limit) * 100));
-                      const tone = u.unlimited ? "success" : (u.limit && u.remaining !== null ? (u.remaining / u.limit > 0.5 ? "success" : u.remaining / u.limit > 0.2 ? "warning" : "danger") : "success");
-                      return (
-                        <div key={k} className="col-12 col-md-4">
-                          <div className="border rounded p-3 h-100">
-                            <div className="fw-semibold mb-1">{ADDON_LABEL[k]} Usage</div>
-                            <div className="d-flex justify-content-between small mb-1">
-                              <span>Used <strong>{u.used.toLocaleString()}</strong> / {u.unlimited ? <span className="badge text-bg-info">Unlimited</span> : (u.limit ?? 0).toLocaleString()}</span>
-                              <span>Remaining: <strong>{u.unlimited ? "∞" : (u.remaining ?? 0).toLocaleString()}</strong></span>
-                            </div>
-                            {!u.unlimited ? (
-                              <div className="progress" style={{ height: 6 }}>
-                                <div className={`progress-bar bg-${tone}`} style={{ width: `${pct}%` }} />
-                              </div>
-                            ) : null}
-                          </div>
-                        </div>
-                      );
-                    })}
+                <div className="row g-3">
+                  <div className="col-12 col-md-4">
+                    <div className="border rounded p-3 h-100 text-center">
+                      <div className="small text-body-secondary mb-1">Per Training Created</div>
+                      <div className="fs-5 fw-semibold">{billingSummary.costPerTraining} credits</div>
+                    </div>
                   </div>
-                ) : null}
+                  <div className="col-12 col-md-4">
+                    <div className="border rounded p-3 h-100 text-center">
+                      <div className="small text-body-secondary mb-1">Per Session Created</div>
+                      <div className="fs-5 fw-semibold">{billingSummary.costPerSession} credits</div>
+                    </div>
+                  </div>
+                  <div className="col-12 col-md-4">
+                    <div className="border rounded p-3 h-100 text-center">
+                      <div className="small text-body-secondary mb-1">Per User Added</div>
+                      <div className="fs-5 fw-semibold">{billingSummary.costPerUser} credits</div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
             ) : null}
 
-            {/* Phase E / Task 2: Purchased Capacity (add-ons only) */}
-            {addonUsage && (addonUsage.training.purchased > 0 || addonUsage.session.purchased > 0 || addonUsage.user.purchased > 0) ? (
-              <div className="card mb-3">
-                <div className="card-body">
-                  <h2 className="h5 fw-semibold mb-3">Purchased Capacity (Add-Ons)</h2>
-                  <div className="row g-3">
-                    {(["training", "session", "user"] as const).map((k) => (
-                      <div key={k} className="col-12 col-md-4">
-                        <div className="border rounded p-3 text-center">
-                          <div className="small text-body-secondary mb-1">Additional {ADDON_LABEL[k]}</div>
-                          <div className="fs-4 fw-semibold">{addonUsage[k].purchased > 0 ? `+${addonUsage[k].purchased.toLocaleString()}` : "—"}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ) : null}
 
             <div className="admin-billing-support card">
               <div className="card-body">
@@ -939,6 +940,11 @@ const UpgradeBillings = () => {
                           <strong>{plan.headlinePrice}</strong>
                           {plan.unitLabel ? <span>{plan.unitLabel}</span> : null}
                         </div>
+                        {plan.discountPercentage ? (
+                          <div className="small text-success mb-2">
+                            {plan.discountPercentage}% off
+                          </div>
+                        ) : null}
 
                         <div className="admin-billing-plan-seat">{plan.seatLabel}</div>
                         {plan.code !== "ENTERPRISE" ? (

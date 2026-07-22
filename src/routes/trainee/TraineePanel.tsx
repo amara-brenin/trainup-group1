@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { jsPDF } from "jspdf";
-import { useNavigate } from "react-router-dom";
 import AxiosHelper from "../../helper/AxiosHelper";
 import { Modal } from "../../component/common/Modal";
 import SharedNavbar from "../../component/common/SharedNavbar";
@@ -25,7 +24,6 @@ interface TraineeDashboardData extends TraineeSessionReportPayload {
 
 type TraineePanelProps = {
   sessionName?: string;
-  sessionEmail?: string;
   sessionImage?: string;
   onSignOut: () => void;
 };
@@ -182,8 +180,7 @@ const buildSessionReportPdf = (session: TraineeSessionRecord, trainee: any) => {
   return doc;
 };
 
-const TraineePanel = ({ sessionName, sessionEmail, sessionImage, onSignOut }: TraineePanelProps) => {
-  const navigate = useNavigate();
+const TraineePanel = ({ sessionName, sessionImage, onSignOut }: TraineePanelProps) => {
   const settings = useAppSelector((state) => state.settings);
   const [data, setData] = useState<TraineeDashboardData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -659,7 +656,7 @@ const TraineePanel = ({ sessionName, sessionEmail, sessionImage, onSignOut }: Tr
       {/* Launch Confirmation Modal */}
       <Modal
         show={!!confirmLaunchTrainingId}
-        onHide={() => setConfirmLaunchTrainingId(null)}
+        onClose={() => setConfirmLaunchTrainingId(null)}
         title="Start Training"
       >
         <div className="modal-body">

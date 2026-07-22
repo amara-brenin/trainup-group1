@@ -47,18 +47,34 @@ export const superAdminProtectedRoutes: RouteObject[] = [
       },
 
       {
-        path: "plans",
+        path: "upgrade-billing",
         lazy: async () => {
-          const module = await safeImport(() => import("../routes/super-admin/PlanManagement"));
+          const module = await safeImport(() => import("../routes/super-admin/UpgradeBillingHub"));
           return { Component: module.default };
         },
-      },
-      {
-        path: "billing-insights",
-        lazy: async () => {
-          const module = await safeImport(() => import("../routes/super-admin/BillingInsights"));
-          return { Component: module.default };
-        },
+        children: [
+          {
+            index: true,
+            lazy: async () => {
+              const module = await safeImport(() => import("../routes/super-admin/PlanManagement"));
+              return { Component: module.default };
+            },
+          },
+          {
+            path: "insights",
+            lazy: async () => {
+              const module = await safeImport(() => import("../routes/super-admin/BillingInsights"));
+              return { Component: module.default };
+            },
+          },
+          {
+            path: "settings",
+            lazy: async () => {
+              const module = await safeImport(() => import("../routes/super-admin/GlobalSettings"));
+              return { Component: module.default };
+            },
+          },
+        ],
       },
 
 

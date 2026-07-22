@@ -6,7 +6,7 @@ const { hashPassword } = require("../helpers/auth");
 const { issuePasswordEmail } = require("../services/authService");
 const { ok, fail } = require("../helpers/response");
 const {
-  CREDIT_COSTS, consumeClientCredits,
+  getCreditCosts, consumeClientCredits,
   ensureClientEntitlement, assertLifetimeQuota,
   assertSubscriptionActive, SUBSCRIPTION_EXPIRED_MESSAGE,
 } = require("../helpers/credits");
@@ -512,7 +512,7 @@ const create = async (req, res) => {
 
   const creditResult = await consumeClientCredits({
     clientId,
-    credits: CREDIT_COSTS.user,
+    credits: (await getCreditCosts(client)).user,
     reason: `User seat created for ${String(req.body.email || "").trim().toLowerCase()}`,
   });
 
@@ -713,7 +713,7 @@ const createTrainee = async (req, res) => {
 
   const creditResult = await consumeClientCredits({
     clientId,
-    credits: CREDIT_COSTS.user,
+    credits: (await getCreditCosts(client)).user,
     reason: `User seat created for ${String(req.body.email || "").trim().toLowerCase()}`,
   });
 
@@ -879,7 +879,7 @@ const importTrainees = async (req, res) => {
 
   const creditResult = await consumeClientCredits({
     clientId,
-    credits: CREDIT_COSTS.user * docs.length,
+    credits: (await getCreditCosts(client)).user * docs.length,
     reason: `${docs.length} user seat${docs.length === 1 ? "" : "s"} created by trainee import`,
   });
 
