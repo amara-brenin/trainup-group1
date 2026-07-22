@@ -3294,3 +3294,106 @@ html[data-bs-theme="dark"] .public-experience-actions {
     flex-direction: column;
   }
 }
+
+.avatar-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  /* min-width: 0; */
+  width: 260px;
+  padding: 14px;
+  border: 1px solid #dee2e6;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.avatar-card:hover {
+  border-color: #86b7fe;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.avatar-card-selected {
+  border-color: #0d6efd;
+  background-color: #f5f9ff;
+  box-shadow: 0 0 0 1px #0d6efd;
+}
+
+.avatar-card input[type="checkbox"] {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 17px;
+  height: 17px;
+  margin: 0;
+  cursor: pointer;
+  accent-color: #0d6efd;
+}
+
+.avatar-card-image,
+.avatar-card-placeholder {
+  width: 55px;
+  height: 55px;
+  min-width: 55px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.avatar-card-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #e9ecef;
+  color: #495057;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.avatar-card-content {
+  min-width: 0;
+  padding-right: 20px;
+}
+
+.avatar-card-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: #495057;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.avatar-card-id {
+  margin-top: 3px;
+  font-size: 12px;
+  color: #8b949e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.avatar-card-provider {
+  display: inline-block;
+  margin-top: 7px;
+  padding: 3px 7px;
+  border: 1px solid #dee2e6;
+  border-radius: 4px;
+  background: #f8f9fa;
+  color: #6c757d;
+  font-size: 10px;
+}
+
+@media (max-width: 600px) {
+  .avatar-card {
+    padding: 10px;
+  }
+
+  .avatar-card-image,
+  .avatar-card-placeholder {
+    width: 45px;
+    height: 45px;
+    min-width: 45px;
+  }
+}

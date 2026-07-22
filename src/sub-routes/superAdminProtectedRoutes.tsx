@@ -45,6 +45,13 @@ export const superAdminProtectedRoutes: RouteObject[] = [
           return { Component: module.default };
         },
       },
+      {
+        path: "avatars",
+        lazy: async () => {
+          const module = await safeImport(() => import("../routes/super-admin/Avatars"));
+          return { Component: module.default };
+        },
+      },
 
       {
         path: "upgrade-billing",

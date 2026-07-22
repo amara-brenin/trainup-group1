@@ -362,9 +362,6 @@ const SARAH_DEFAULT_AVATAR: ApiAvatarItem = {
   isShared: true,
 };
 
-const AMARA_API_BASE = "https://amara.brenin.co:3000";
-const AMARA_API_KEY = "trainup_ext_9f8c7b6a5e4d3c2b1a0f9e8d7c6b5a4";
-
 const defaultAvatarEngineConfig: TrainingAvatarEngineConfig = {
   provider: "Trulience",
   framework: "Large Language Model",
@@ -2033,16 +2030,10 @@ const TrainingBuilder = ({
   useEffect(() => {
     let cancelled = false;
     setIsLoadingApiAvatars(true);
-    fetch(`${AMARA_API_BASE}/api-v1/external/get-avatar`, {
-      method: "GET",
-      headers: {
-        "X-Api-Key": AMARA_API_KEY,
-      },
-    })
-      .then((res) => res.json())
-      .then((json: { status: boolean; data?: ApiAvatarItem[] }) => {
-        if (!cancelled && json.status && Array.isArray(json.data)) {
-          setApiAvatarList(json.data);
+    AxiosHelper.getData<ApiAvatarItem[]>("/avatars")
+      .then((res) => {
+        if (!cancelled && res.data.status && Array.isArray(res.data.data)) {
+          setApiAvatarList(res.data.data);
         }
       })
       .catch(() => {

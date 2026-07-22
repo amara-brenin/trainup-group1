@@ -276,6 +276,7 @@ const toClientRecord = async (client) => {
     xapiLrsEndpoint: client.xapiLrsEndpoint || "",
     xapiClientId: client.xapiClientId || "",
     xapiClientSecret: client.xapiClientSecret || "",
+    assignedAvatars: Array.isArray(client.assignedAvatars) ? client.assignedAvatars : [],
     emailDeliveryEnabled: Boolean(client.emailDeliveryEnabled),
     smtpHost: client.smtpHost || "",
     smtpPort: Number(client.smtpPort || 587),
@@ -685,6 +686,10 @@ const update = async (req, res) => {
     .join("")
     .toUpperCase();
 
+  if (Array.isArray(req.body.assignedAvatars)) {
+    client.assignedAvatars = req.body.assignedAvatars;
+  }
+
   await client.save();
   await User.updateMany(
     { clientId: client.appId, role: { $ne: "super_admin" } },
@@ -892,6 +897,10 @@ const updateSettings = async (req, res) => {
     clientAdminUser.useRoleDefaults = true;
 
     await clientAdminUser.save();
+  } else if (section === "avatars") {
+    if (Array.isArray(values.assignedAvatars)) {
+      client.assignedAvatars = values.assignedAvatars;
+    }
   } else if (section === "billing") {
     const previousPlan = normalizePlan(client.plan);
     const previousTotalCredits = Number(client.totalCredits || 0);

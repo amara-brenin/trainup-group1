@@ -12,7 +12,7 @@ export type DomainStatus = "verified" | "pending" | "not_configured";
 export type DeliveryTestStatus = "success" | "failed" | "pending" | "not_tested";
 export type PaymentMode = "test" | "live";
 export type ApiKeyPermission = "Read Only" | "Read / Write";
-export type ClientSettingsSection = "company" | "domain" | "whitelabel" | "integrations" | "smtp" | "clientAdmin" | "billing";
+export type ClientSettingsSection = "company" | "domain" | "whitelabel" | "integrations" | "smtp" | "clientAdmin" | "billing" | "avatars";
 export type TrainingType = "Product" | "Soft Skills" | "Technical" | "Compliance" | "Other" | (string & {});
 export type TrainingCommentRole = "trainer" | "reviewer";
 export type TrainingSessionStatus = "completed" | "in-progress" | "not-started";
@@ -129,6 +129,7 @@ export interface ClientRecord {
   id: string;
   name: string;
   industry: string;
+  assignedAvatars?: string[];
   plan: PlanType;
   monthlyCredits?: number;
   purchasedCredits?: number;
