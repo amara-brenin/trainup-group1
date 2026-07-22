@@ -9,7 +9,7 @@ import Image from "./Image";
 import SharedNavbar from "./SharedNavbar";
 import SharedSidebar from "./SharedSidebar";
 
-type WorkspaceRole = "trainer" | "reviewer";
+type WorkspaceRole = "trainer" | "reviewer" | "trainee";
 type WorkspaceNavKey = "dashboard" | "trainings" | "profile";
 
 type RoleWorkspaceShellProps = {
@@ -38,6 +38,11 @@ const roleMeta: Record<WorkspaceRole, { label: string; subtitle: string; icon: s
     label: "Reviewer",
     subtitle: "Review and approval workspace",
     icon: "ri-search-eye-line",
+  },
+  trainee: {
+    label: "Trainee",
+    subtitle: "Trainee dashboard",
+    icon: "ri-graduation-cap-line",
   },
 };
 

@@ -20,10 +20,24 @@ const recordCreditAudit = async (entry) => {
   } catch (_e) { /* audit logging is non-fatal */ }
 };
 
-const CREDIT_COSTS = {
-  training: 500,
-  user: 200,
-  session: 100,
+const getCreditCosts = async (client = null) => {
+  let costs = { training: 500, user: 200, session: 100 };
+  try {
+    const Setting = require("../models/Setting");
+    const globalCosts = await Setting.findOne({ key: "GLOBAL_CREDIT_COSTS" }).lean();
+    if (globalCosts && globalCosts.value) {
+      costs = { ...costs, ...globalCosts.value };
+    }
+  } catch (e) {
+    // Ignore error, use defaults
+  }
+  
+  if (client && client.creditCostOverrides) {
+    if (typeof client.creditCostOverrides.training === "number") costs.training = client.creditCostOverrides.training;
+    if (typeof client.creditCostOverrides.session === "number") costs.session = client.creditCostOverrides.session;
+    if (typeof client.creditCostOverrides.user === "number") costs.user = client.creditCostOverrides.user;
+  }
+  return costs;
 };
 
 const PLAN_CONFIGS = {
@@ -31,42 +45,27 @@ const PLAN_CONFIGS = {
     code: "FREE",
     label: "FREE",
     monthlyCredits: 2000,
-    monthlyPrice: 1999,
+    price: 1999,
     firstMonthPrice: 0,
     trialDays: 30,
-    limits: {
-      trainings: 1,
-      users: 3,
-      sessions: 5,
-    },
     contactSales: false,
   },
   PRO: {
     code: "PRO",
     label: "PRO",
     monthlyCredits: 40000,
-    monthlyPrice: 5000,
+    price: 5000,
     firstMonthPrice: 5000,
     trialDays: 0,
-    limits: {
-      trainings: 10,
-      users: 50,
-      sessions: 250,
-    },
     contactSales: false,
   },
   ENTERPRISE: {
     code: "ENTERPRISE",
     label: "ENTERPRISE",
     monthlyCredits: 0,
-    monthlyPrice: 0,
+    price: 0,
     firstMonthPrice: 0,
     trialDays: 0,
-    limits: {
-      trainings: null,
-      users: null,
-      sessions: null,
-    },
     contactSales: true,
   },
 };
@@ -92,18 +91,13 @@ const planRowToConfig = (row) => ({
   code: String(row.code || "").toUpperCase(),
   label: row.name || row.code,
   monthlyCredits: Number(row.credits || 0),
-  monthlyPrice: Number(row.monthlyPrice || 0),
-  yearlyPrice: Number(row.yearlyPrice || 0),
-  firstMonthPrice: Number(row.monthlyPrice || 0),
+  price: Number(row.price || 0),
+  discountPercentage: Number(row.discountPercentage || 0),
+  firstMonthPrice: Number(row.price || 0),
   trialDays: 0,
   validityDays: Number(row.validityDays || 30),
   features: Array.isArray(row.features) ? row.features : [],
-  limits: {
-    trainings: row.trainingLimit ?? null,
-    users: row.userLimit ?? null,
-    sessions: row.sessionLimit ?? null,
-  },
-  contactSales: String(row.code || "").toUpperCase() === "ENTERPRISE" && Number(row.monthlyPrice || 0) <= 0,
+  contactSales: String(row.code || "").toUpperCase() === "ENTERPRISE" && Number(row.price || 0) <= 0,
 });
 
 // Phase C: resolve a plan from the DB (active row) and fall back to the hardcoded
@@ -140,9 +134,7 @@ const buildBatchFromPlanConfig = (planCfg, { amount = 0, purchasedAt = new Date(
     planCode: planCfg.code,
     label: planCfg.label,
     monthlyCredits: Math.max(0, Number(planCfg.monthlyCredits || 0)),
-    trainingLimit: planCfg.limits.trainings ?? null,
-    sessionLimit: planCfg.limits.sessions ?? null,
-    userLimit: planCfg.limits.users ?? null,
+    usedCredits: 0,
     amount: Math.max(0, Number(amount || 0)),
     purchasedAt,
     expiresAt,
@@ -227,17 +219,12 @@ const legacyExpiryFallback = (client) => {
 const synthesizeLegacyBatch = (client) => {
   const planCode = normalizePlan(client?.plan);
   const cfg = getPlanConfig(planCode);
-  const rawTraining = client?.trainingBaseLimit;
-  const rawSession = client?.sessionBaseLimit;
-  const rawUser = client?.userBaseLimit;
   return {
     batchId: "legacy",
     planCode,
     label: cfg.label,
     monthlyCredits: Math.max(0, Number(client?.monthlyCredits ?? cfg.monthlyCredits ?? 0)),
-    trainingLimit: rawTraining === null || rawTraining === undefined ? cfg.limits.trainings : Number(rawTraining),
-    sessionLimit: rawSession === null || rawSession === undefined ? cfg.limits.sessions : Number(rawSession),
-    userLimit: rawUser === null || rawUser === undefined ? cfg.limits.users : Number(rawUser),
+    usedCredits: Math.max(0, Number(client?.usedCredits ?? 0)),
     amount: 0,
     purchasedAt: client?.entitlementSnapshotAt || getClientCreatedAt(client),
     expiresAt: legacyExpiryFallback(client),
@@ -328,61 +315,71 @@ const getPlanChargeAmount = (client, plan) => {
   return planConfig.monthlyPrice;
 };
 
-// Aggregates credits across every currently-active plan batch (Issue: buying
-// a second plan before the first expires must ADD to the total, not replace
-// it). Each batch keeps expiring on its own purchasedAt + validityDays.
 const buildClientCreditSnapshot = (client) => {
   const activeBatches = getActiveBatches(client);
   const plan = normalizePlan(client?.plan);
   const planConfig = getEffectivePlanConfig(client, plan);
 
   const planExpired = activeBatches.length === 0;
-  // Derived from the most-recently-purchased ACTIVE batch (not the client.
-  // monthlyCredits scalar mirror — that field is only refreshed AFTER this
-  // snapshot runs inside addPlanBatch, so trusting it here would show the
-  // previous plan's amount for one call).
-  const latestBatch = activeBatches.length
-    ? activeBatches.reduce((latest, b) => (new Date(b.purchasedAt).getTime() > new Date(latest.purchasedAt).getTime() ? b : latest), activeBatches[0])
-    : null;
-  const monthlyCredits = latestBatch ? Math.max(0, Number(latestBatch.monthlyCredits || 0)) : planConfig.monthlyCredits;
-  const purchasedCredits = Math.max(0, Number(client?.purchasedCredits || 0));
-  const usedCredits = Math.max(0, Number(client?.usedCredits || 0));
-  const batchCredits = activeBatches.reduce((sum, b) => sum + Math.max(0, Number(b.monthlyCredits || 0)), 0);
-  const totalCredits = batchCredits + purchasedCredits;
 
-  // Issue 1: credits are computed WITH expiry validation, never trusted from
-  // stored values alone. A client with zero active batches has ZERO credits.
-  const rawAvailableCredits = Math.max(totalCredits - usedCredits, 0);
-  const availableCredits = planExpired ? 0 : rawAvailableCredits;
+  let totalCredits = 0;
+  let batchUsedCredits = 0;
 
   // One row per active plan purchase, oldest first — feeds the "active plans"
   // table on the billing page instead of a single "current plan" label.
   const activePlans = activeBatches
     .slice()
     .sort((a, b) => new Date(a.purchasedAt).getTime() - new Date(b.purchasedAt).getTime())
-    .map((b) => ({
-      batchId: b.batchId,
-      planCode: b.planCode,
-      label: b.label,
-      monthlyCredits: Math.max(0, Number(b.monthlyCredits || 0)),
-      purchasedAt: new Date(b.purchasedAt).toISOString(),
-      expiresAt: new Date(b.expiresAt).toISOString(),
-      trainingLimit: b.trainingLimit ?? null,
-      sessionLimit: b.sessionLimit ?? null,
-      userLimit: b.userLimit ?? null,
-    }));
+    .map((b) => {
+      const bTotal = Math.max(0, Number(b.monthlyCredits || 0));
+      const bUsed = Math.max(0, Number(b.usedCredits || 0));
+      totalCredits += bTotal;
+      batchUsedCredits += bUsed;
+
+      return {
+        batchId: b.batchId,
+        planCode: b.planCode,
+        label: b.label,
+        monthlyCredits: bTotal,
+        usedCredits: bUsed,
+        availableCredits: Math.max(0, bTotal - bUsed),
+        purchasedAt: new Date(b.purchasedAt).toISOString(),
+        expiresAt: new Date(b.expiresAt).toISOString(),
+      };
+    });
+
+  // Reconcile legacy global usage: if the client's global usedCredits exceeds
+  // the sum of the batch usedCredits, distribute the untracked usage visually
+  // into the oldest batches to keep the table mathematically sound.
+  const globalUsedCredits = Math.max(0, Number(client?.usedCredits || 0));
+  let finalUsedCredits = Math.max(globalUsedCredits, batchUsedCredits);
+
+  if (finalUsedCredits > batchUsedCredits) {
+    let untrackedUsage = finalUsedCredits - batchUsedCredits;
+    for (const b of activePlans) {
+      if (untrackedUsage <= 0) break;
+      if (b.availableCredits > 0) {
+        const deduct = Math.min(b.availableCredits, untrackedUsage);
+        b.usedCredits += deduct;
+        b.availableCredits -= deduct;
+        untrackedUsage -= deduct;
+      }
+    }
+  }
+
+  const availableCredits = planExpired ? 0 : Math.max(0, totalCredits - finalUsedCredits);
 
   return {
     plan: planConfig.code,
     planConfig,
-    monthlyCredits,
-    purchasedCredits,
-    usedCredits,
+    monthlyCredits: totalCredits, // Represent the aggregated total limits as monthly
+    purchasedCredits: 0,
+    usedCredits: finalUsedCredits,
     totalCredits,
     // Effective available credits: 0 when there's no active plan batch.
     availableCredits,
     // Raw (pre-expiry) balance, retained for display/reporting if needed.
-    rawAvailableCredits,
+    rawAvailableCredits: Math.max(0, totalCredits - finalUsedCredits),
     planExpired,
     expiresOn: getSubscriptionExpiry(client).toISOString(),
     billingCycle: "monthly",
@@ -464,70 +461,13 @@ const RESOURCE_MAP = {
 // plan batch (stacking applies to limits too, not just credits), plus any
 // purchased add-on capacity. `null` base ⇒ unlimited (any active batch grants
 // unlimited for that resource). No active batches ⇒ base 0 (nothing granted).
-const getClientEntitlement = (client) => {
-  const activeBatches = getActiveBatches(client);
-  const out = {};
-  for (const [resource, { prefix }] of Object.entries(RESOURCE_MAP)) {
-    const limitKey = `${prefix}Limit`;
-    const unlimited = activeBatches.length > 0 && activeBatches.some((b) => b[limitKey] === null || b[limitKey] === undefined);
-    const base = unlimited
-      ? null
-      : activeBatches.reduce((sum, b) => sum + Math.max(0, Number(b[limitKey] || 0)), 0);
-    const purchased = Math.max(0, Number(client?.[`${prefix}PurchasedLimit`] || 0));
-    const usedLifetime = Math.max(0, Number(client?.[`${prefix}UsedLifetime`] || 0));
-    const limit = unlimited ? null : Number(base) + purchased;
-    out[resource] = {
-      base: unlimited ? null : Number(base),
-      purchased,
-      limit,
-      usedLifetime,
-      remaining: unlimited ? null : Math.max(0, limit - usedLifetime),
-      unlimited,
-    };
-  }
-  return out;
-};
-
-// One-time backfill: set base from the current plan and usedLifetime = MAX(current
-// real count, existing) so nobody is retroactively over/under counted. Mutates +
-// saves the client. `counts` = { training, session, user } current real counts.
-const ensureClientEntitlement = async (client, counts = {}) => {
-  if (client.quotaInitialized) return client;
-  const { planConfig } = buildClientCreditSnapshot(client);
-  for (const [resource, { prefix, planKey }] of Object.entries(RESOURCE_MAP)) {
-    const planLimit = planConfig.limits[planKey]; // may be null (unlimited)
-    if (client[`${prefix}BaseLimit`] === null || client[`${prefix}BaseLimit`] === undefined) {
-      client[`${prefix}BaseLimit`] = planLimit === null || planLimit === undefined ? null : Number(planLimit);
-    }
-    const current = Math.max(0, Number(counts[resource] || 0));
-    client[`${prefix}UsedLifetime`] = Math.max(Number(client[`${prefix}UsedLifetime`] || 0), current);
-  }
-  client.quotaInitialized = true;
-  await client.save();
-  return client;
-};
-
-// Returns an error string if consuming `addCount` of `resource` would exceed the
-// lifetime entitlement, else null. Unlimited always passes.
-// Phase D: add-on capacity pricing (per slot). Credits per slot + money per slot.
+const getClientEntitlement = (client) => ({});
+const ensureClientEntitlement = async (client, counts = {}) => client;
 const ADDON_CREDIT_UNIT = Object.freeze({ training: 200, session: 20, user: 5 });
-const ADDON_MONEY_UNIT = Object.freeze({ training: 500, session: 50, user: 20 }); // major currency units (e.g. INR)
-
-// Phase D: increase a client's PURCHASED quota bucket. Never touches the base
-// snapshot, so existing entitlements are unaffected; effective = base + purchased.
-const applyAddonQuota = (client, resource, quantity) => {
-  const field = `${resource}PurchasedLimit`;
-  client[field] = Math.max(0, Number(client[field] || 0)) + Math.max(0, Number(quantity || 0));
-  return client[field];
-};
-
-const assertLifetimeQuota = (client, resource, addCount = 1) => {
-  const ent = getClientEntitlement(client)[resource];
-  if (!ent || ent.unlimited) return null;
-  if (ent.usedLifetime + addCount <= ent.limit) return null;
-  const label = RESOURCE_MAP[resource]?.label || resource;
-  return `Your plan allows ${ent.limit} ${label}${ent.limit === 1 ? "" : "s"} (lifetime). ${ent.usedLifetime} already used. Upgrade your plan or buy additional ${label} capacity.`;
-};
+const ADDON_MONEY_UNIT = Object.freeze({ training: 500, session: 50, user: 20 });
+const applyAddonQuota = (client, resource, quantity) => 0;
+const assertLifetimeQuota = (client, resource, addCount = 1) => null;
+const assertUsageWithinPlan = ({ client, resource, nextCount }) => null;
 
 const assertCreditAvailability = (client, requiredCredits) => {
   const snapshot = buildClientCreditSnapshot(client);
@@ -572,6 +512,32 @@ const consumeClientCredits = async ({
 
   const snapshot = buildClientCreditSnapshot(client);
   const balanceBefore = snapshot.availableCredits;
+  
+  if (!snapshot.planConfig.contactSales && credits > 0) {
+    let remainingToDeduct = credits;
+    const activeBatchesSorted = getActiveBatches(client).sort((a, b) => new Date(a.purchasedAt).getTime() - new Date(b.purchasedAt).getTime());
+    
+    for (const batch of activeBatchesSorted) {
+      if (remainingToDeduct <= 0) break;
+      const bTotal = Math.max(0, Number(batch.monthlyCredits || 0));
+      const bUsed = Math.max(0, Number(batch.usedCredits || 0));
+      const bAvailable = Math.max(0, bTotal - bUsed);
+
+      if (bAvailable > 0) {
+        const deductAmount = Math.min(bAvailable, remainingToDeduct);
+        batch.usedCredits = bUsed + deductAmount;
+        remainingToDeduct -= deductAmount;
+      }
+    }
+    
+    if (client.activePlans) {
+      client.activePlans = client.activePlans.map(p => {
+        const updated = activeBatchesSorted.find(b => b.batchId === p.batchId);
+        return updated ? { ...p, usedCredits: updated.usedCredits } : p;
+      });
+    }
+  }
+
   client.usedCredits = snapshot.usedCredits + credits;
   client.totalCredits = snapshot.totalCredits;
   client.monthlyCredits = snapshot.monthlyCredits;
@@ -633,7 +599,7 @@ const addClientCredits = async ({
 };
 
 module.exports = {
-  CREDIT_COSTS,
+  getCreditCosts,
   PLAN_CONFIGS,
   normalizePlan,
   getPlanConfig,

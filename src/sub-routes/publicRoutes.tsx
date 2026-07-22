@@ -67,6 +67,13 @@ export const publicRoutes: RouteObject[] = [
     },
   },
   {
+    path: "trainee",
+    lazy: async () => {
+      const module = await safeImport(() => import("../routes/trainee/TraineeWorkspacePanel"));
+      return { Component: module.default };
+    },
+  },
+  {
     path: "/",
     lazy: async () => {
       const module = await safeImport(() => import("../layouts/PublicLayout"));
@@ -89,6 +96,13 @@ export const publicRoutes: RouteObject[] = [
       },
       {
         path: "reviewer/login",
+        lazy: async () => {
+          const module = await safeImport(() => import("../routes/RedirectToLogin"));
+          return { Component: module.default };
+        },
+      },
+      {
+        path: "trainee/login",
         lazy: async () => {
           const module = await safeImport(() => import("../routes/RedirectToLogin"));
           return { Component: module.default };

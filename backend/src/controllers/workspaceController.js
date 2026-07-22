@@ -5,7 +5,7 @@ const User = require("../models/User");
 const { ok, fail } = require("../helpers/response");
 const { getTenantClientId, syncClientMetrics } = require("../helpers/tenant");
 const {
-  CREDIT_COSTS, consumeClientCredits,
+  getCreditCosts, assertUsageWithinPlan, consumeClientCredits,
   ensureClientEntitlement, assertLifetimeQuota, getClientEntitlement,
   assertSubscriptionActive,
 } = require("../helpers/credits");
@@ -43,6 +43,7 @@ const toTrainingListRecord = (record) => {
     trainingType: payload.trainingType,
     avatarName: payload.avatarName || "",
     avatarId: payload.avatarId || "",
+    lastLaunchLink: payload.lastLaunchLink || null,
     ttsMode: payload.ttsMode,
     ttsProvider: payload.ttsProvider || "",
     voiceName: payload.voiceName || "",
@@ -401,7 +402,7 @@ const sync = async (req, res) => {
   if (nextTrainingCreateCount > 0) {
     const creditResult = await consumeClientCredits({
       clientId,
-      credits: CREDIT_COSTS.training * nextTrainingCreateCount,
+      credits: (await getCreditCosts(client)).training * nextTrainingCreateCount,
       reason: `${nextTrainingCreateCount} training${nextTrainingCreateCount === 1 ? "" : "s"} created`,
       actionType: "training_created",
       entityType: "training",

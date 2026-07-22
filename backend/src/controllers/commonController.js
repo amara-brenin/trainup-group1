@@ -20,6 +20,7 @@ const {
   PLAN_CONFIGS,
   addPlanBatch,
   resolvePlan,
+  getCreditCosts,
   buildClientCreditSnapshot,
   createTransactionEntry,
   getFreeTrialMeta,
@@ -196,12 +197,13 @@ const buildPlanCatalog = (client) =>
     limits: plan.limits,
     contactSales: plan.contactSales,
     monthlyPrice:
-      plan.code === "ENTERPRISE" ? Math.max(0, Number(client?.enterpriseMonthlyPrice || 0)) : plan.monthlyPrice,
+      plan.code === "ENTERPRISE" ? Math.max(0, Number(client?.enterpriseMonthlyPrice || 0)) : plan.price,
     firstMonthPrice: plan.firstMonthPrice,
     trialDays: plan.trialDays,
   }));
 
-const buildBillingSummaryResponse = (client, metrics = null) => {
+const buildBillingSummaryResponse = async (client, metrics = null) => {
+  const creditCosts = await getCreditCosts(client);
   const snapshot = buildClientCreditSnapshot(client);
   const billingDates = buildMonthlyBillingDates(client);
   const storedUsage = buildPlanUsage(client, billingDates);
@@ -237,9 +239,9 @@ const buildBillingSummaryResponse = (client, metrics = null) => {
     // One row per active plan batch — feeds the "Current Subscription" table
     // instead of a single ambiguous "current plan" label.
     activePlans: snapshot.activePlans,
-    costPerTraining: CREDIT_COSTS.training,
-    costPerUser: CREDIT_COSTS.user,
-    costPerSession: CREDIT_COSTS.session,
+    costPerTraining: creditCosts.training,
+    costPerUser: creditCosts.user,
+    costPerSession: creditCosts.session,
     paymentProvider: client.paymentProvider || "razorpay",
     paymentMode: client.paymentMode || "test",
     billingCurrency: client.billingCurrency || "INR",
@@ -634,7 +636,7 @@ const getBillingSummary = async (req, res) => {
     return fail(res, 404, "Client billing profile not found.");
   }
 
-  return ok(res, "Billing summary loaded.", buildBillingSummaryResponse(client));
+  return ok(res, "Billing summary loaded.", await buildBillingSummaryResponse(client));
 };
 
 const purchaseCredits = async (req, res) => {
@@ -708,7 +710,7 @@ const purchaseCredits = async (req, res) => {
       },
     });
 
-    return ok(res, "Razorpay sandbox checkout completed successfully.", buildBillingSummaryResponse(client));
+    return ok(res, "Razorpay sandbox checkout completed successfully.", await buildBillingSummaryResponse(client));
   }
 
   if (!credits) {
@@ -763,7 +765,7 @@ const purchaseCredits = async (req, res) => {
     },
   });
 
-  return ok(res, "Razorpay sandbox purchase completed successfully.", buildBillingSummaryResponse(client));
+  return ok(res, "Razorpay sandbox purchase completed successfully.", await buildBillingSummaryResponse(client));
 };
 
 const requestEnterprisePlan = async (req, res) => {
@@ -825,7 +827,7 @@ const requestEnterprisePlan = async (req, res) => {
     }),
   ]);
 
-  return ok(res, "Enterprise support query submitted successfully.", buildBillingSummaryResponse(client));
+  return ok(res, "Enterprise support query submitted successfully.", await buildBillingSummaryResponse(client));
 };
 
 const testSmtp = async (req, res) => {
@@ -915,18 +917,19 @@ const verifyDomain = async (req, res) => {
 // Phase C: plan catalog for the Upgrade & Billing cards — DB-driven, falls back
 // to PLAN_CONFIGS when the Plan collection is empty (no hardcoded values once seeded).
 const getBillingPlans = async (_req, res) => {
-  let rows = await Plan.find({ active: true }).sort({ monthlyPrice: 1 }).lean();
+  let rows = await Plan.find({ active: true }).sort({ price: 1 }).lean();
   if (!rows.length) {
     rows = Object.values(PLAN_CONFIGS).map((cfg) => ({
-      code: cfg.code, name: cfg.label, monthlyPrice: cfg.monthlyPrice, yearlyPrice: cfg.monthlyPrice * 10,
-      credits: cfg.monthlyCredits, trainingLimit: cfg.limits.trainings ?? null,
-      sessionLimit: cfg.limits.sessions ?? null, userLimit: cfg.limits.users ?? null,
+      code: cfg.code, name: cfg.label, price: cfg.price, discountPercentage: 0,
+      credits: cfg.monthlyCredits, trainingLimit: cfg.limits?.trainings ?? null,
+      sessionLimit: cfg.limits?.sessions ?? null, userLimit: cfg.limits?.users ?? null,
       features: [],
     }));
   }
   return ok(res, "Plans loaded.", {
     record: rows.map((r) => ({
-      code: r.code, name: r.name, monthlyPrice: r.monthlyPrice, yearlyPrice: r.yearlyPrice,
+      code: r.code, name: r.name, monthlyPrice: r.price, yearlyPrice: Math.round(r.price * 10),
+      discountPercentage: r.discountPercentage || 0,
       credits: r.credits, trainingLimit: r.trainingLimit, sessionLimit: r.sessionLimit,
       userLimit: r.userLimit, features: r.features || [],
     })),
@@ -935,13 +938,12 @@ const getBillingPlans = async (_req, res) => {
 
 // Phase D: usage panel shape from the entitlement (base + purchased − used).
 const usageView = (client) => {
-  const ent = getClientEntitlement(client);
   const r = (k) => ({
-    limit: ent[k].unlimited ? null : ent[k].limit,
-    used: ent[k].usedLifetime,
-    remaining: ent[k].unlimited ? null : ent[k].remaining,
-    unlimited: ent[k].unlimited,
-    purchased: ent[k].purchased,
+    limit: null,
+    used: 0,
+    remaining: null,
+    unlimited: true,
+    purchased: 0,
   });
   return { training: r("training"), session: r("session"), user: r("user") };
 };

@@ -2,12 +2,13 @@ import { useCallback, useEffect, useState } from "react";
 import { toast } from "react-toastify";
 import AxiosHelper from "../../helper/AxiosHelper";
 import { Modal } from "../../component/common/Modal";
+import ActionDropdown from "../../component/common/ActionDropdown";
 
 type Plan = {
   id: string; code: string; name: string;
   monthlyPrice: number; yearlyPrice: number; credits: number;
   trainingLimit: number | null; sessionLimit: number | null; userLimit: number | null;
-  validityDays: number; features: string[]; active: boolean;
+  validityDays: number; active: boolean; discountPercentage?: number;
 };
 type PlanChange = {
   id: string; action: string; changedBy: string; changedAt: string;
@@ -16,80 +17,92 @@ type PlanChange = {
 
 const blankForm = (): Partial<Plan> => ({
   code: "", name: "", monthlyPrice: 0, yearlyPrice: 0, credits: 0,
-  trainingLimit: 0, sessionLimit: 0, userLimit: 0, validityDays: 30, features: [],
+  trainingLimit: null, sessionLimit: null, userLimit: null, validityDays: 30, discountPercentage: 0
 });
-const numOrNull = (v: number | null) => (v === null ? "Unlimited" : v.toLocaleString());
+
+const numOrNull = (val: number | null) => (val === null || val === undefined ? "∞" : val.toLocaleString());
 
 const PlanManagement = () => {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState<Plan | null>(null);
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState<Partial<Plan>>(blankForm());
-  const [saving, setSaving] = useState(false);
+  const [editing, setEditing] = useState<Plan | null>(null);
+  const [form, setForm] = useState<Partial<Plan>>({});
   const [historyFor, setHistoryFor] = useState<Plan | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [history, setHistory] = useState<PlanChange[]>([]);
+  const [saving, setSaving] = useState(false);
 
-  const load = useCallback(async () => {
+  const fetchPlans = useCallback(async () => {
     setLoading(true);
     const res = await AxiosHelper.getData<{ record: Plan[] }>("/plans");
     setLoading(false);
-    if (res.data.status) setPlans(res.data.data.record);
-    else toast.error(res.data.message);
-  }, []);
-
-  useEffect(() => { void load(); }, [load]);
-
-  const openCreate = () => { setForm(blankForm()); setCreating(true); setEditing(null); };
-  const openEdit = (p: Plan) => { setForm({ ...p }); setEditing(p); setCreating(false); };
-  const closeForm = () => { setCreating(false); setEditing(null); };
-
-  const setField = (k: keyof Plan, v: string) => {
-    const numeric: (keyof Plan)[] = ["monthlyPrice", "yearlyPrice", "credits", "trainingLimit", "sessionLimit", "userLimit", "validityDays"];
-    setForm((f) => ({ ...f, [k]: numeric.includes(k) ? (v === "" ? null : Number(v)) : v }));
-  };
-
-  const save = async () => {
-    setSaving(true);
-    const payload = { ...form };
-    const res = editing
-      ? await AxiosHelper.putData<{ plan: Plan }, typeof payload>(`/plans/${editing.id}`, payload)
-      : await AxiosHelper.postData<{ plan: Plan }, typeof payload>("/plans", payload);
-    setSaving(false);
     if (res.data.status) {
-      toast.success(editing ? "Plan updated. Existing subscribers keep their snapshot." : "Plan created.");
-      closeForm();
-      void load();
+      // Handle both "record" and "records" key variations from backend, with fallback
+      setPlans(res.data.data.record || (res.data.data as any).records || []);
     } else {
       toast.error(res.data.message);
     }
+  }, []);
+
+  useEffect(() => {
+    void fetchPlans();
+  }, [fetchPlans]);
+
+  const openCreate = () => { setForm(blankForm()); setCreating(true); };
+  const openEdit = (plan: Plan) => { setForm({ ...plan }); setEditing(plan); };
+  const closeForm = () => { setCreating(false); setEditing(null); setForm({}); };
+
+  const setField = <K extends keyof Plan>(field: K, val: string) => {
+    const numeric: (keyof Plan)[] = ["monthlyPrice", "yearlyPrice", "credits", "trainingLimit", "sessionLimit", "userLimit", "validityDays", "discountPercentage"];
+    setForm((prev) => ({
+      ...prev,
+      [field]: numeric.includes(field) ? (val === "" ? null : Number(val)) : val,
+    }));
   };
 
-  const toggleActive = async (p: Plan) => {
-    const res = await AxiosHelper.putData<{ plan: Plan }, { active: boolean }>(`/plans/${p.id}`, { active: !p.active });
-    if (res.data.status) { toast.success(`Plan ${!p.active ? "activated" : "deactivated"}.`); void load(); }
+  const savePlan = async () => {
+    if (!form.code || !form.name) return toast.error("Code and Name are required.");
+    setSaving(true);
+    try {
+      if (editing) {
+        const res = await AxiosHelper.putData<{ record: Plan }, Partial<Plan>>(`/plans/${editing.id}`, form);
+        if (res.data.status) { toast.success("Plan updated."); closeForm(); await fetchPlans(); }
+        else toast.error(res.data.message);
+      } else {
+        const res = await AxiosHelper.postData<{ record: Plan }, Partial<Plan>>("/plans", form);
+        if (res.data.status) { toast.success("Plan created."); closeForm(); await fetchPlans(); }
+        else toast.error(res.data.message);
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleActive = async (plan: Plan) => {
+    const res = await AxiosHelper.putData(`/plans/${plan.id}`, { active: !plan.active });
+    if (res.data.status) { toast.success(`Plan ${plan.active ? "disabled" : "activated"}.`); await fetchPlans(); }
     else toast.error(res.data.message);
   };
 
-  const openHistory = async (p: Plan) => {
-    setHistoryFor(p);
-    const res = await AxiosHelper.getData<{ record: PlanChange[] }>(`/plans/${p.id}/history`);
+  const openHistory = async (plan: Plan) => {
+    setHistoryFor(plan);
+    setHistoryLoading(true);
+    const res = await AxiosHelper.getData<{ record: PlanChange[] }>(`/plans/${plan.id}/history`);
+    setHistoryLoading(false);
     if (res.data.status) setHistory(res.data.data.record);
+    else toast.error(res.data.message);
   };
 
   return (
-    <div className="container-fluid py-3">
-      <div className="d-flex align-items-center justify-content-between mb-3">
-        <div>
-          <h1 className="h4 fw-semibold mb-1">Plan Management</h1>
-          <p className="text-body-secondary mb-0">Edit plan pricing & limits without a deployment. Existing subscribers keep the entitlement they purchased.</p>
-        </div>
+    <div>
+      <div className="d-flex align-items-center justify-content-end mb-3">
         <button className="btn btn-primary" onClick={openCreate}><i className="bi bi-plus-lg me-1" />Create Plan</button>
       </div>
 
-      <div className="card">
-        <div className="table-responsive">
-          <table className="table table-hover align-middle mb-0">
+      <div className="card admin-reference-table-card">
+        <div className="admin-reference-table-wrapper">
+          <table className="table table-bordered align-middle admin-reference-table mb-0">
             <thead>
               <tr>
                 <th>Plan</th><th>Monthly</th><th>Yearly</th><th>Credits</th>
@@ -111,9 +124,24 @@ const PlanManagement = () => {
                     <td>{numOrNull(p.userLimit)}</td>
                     <td><span className={`badge ${p.active ? "text-bg-success" : "text-bg-secondary"}`}>{p.active ? "Active" : "Disabled"}</span></td>
                     <td className="text-end">
-                      <button className="btn btn-sm btn-outline-primary me-1" onClick={() => openEdit(p)}>Edit</button>
-                      <button className="btn btn-sm btn-outline-secondary me-1" onClick={() => void toggleActive(p)}>{p.active ? "Disable" : "Activate"}</button>
-                      <button className="btn btn-sm btn-outline-info" onClick={() => void openHistory(p)}>History</button>
+                      <ActionDropdown label={`Open actions for ${p.name}`}>
+                        {({ close }) => (
+                          <>
+                            <button className="dropdown-item" onClick={() => { close(); openEdit(p); }}>
+                              <i className="bi bi-pencil" />
+                              <span>Edit</span>
+                            </button>
+                            <button className="dropdown-item" onClick={() => { close(); void toggleActive(p); }}>
+                              <i className={p.active ? "bi bi-slash-circle" : "bi bi-check-circle"} />
+                              <span>{p.active ? "Disable" : "Activate"}</span>
+                            </button>
+                            <button className="dropdown-item" onClick={() => { close(); void openHistory(p); }}>
+                              <i className="bi bi-clock-history" />
+                              <span>History</span>
+                            </button>
+                          </>
+                        )}
+                      </ActionDropdown>
                     </td>
                   </tr>
                 ))
@@ -125,7 +153,7 @@ const PlanManagement = () => {
         </div>
       </div>
 
-      {creating || editing ? (
+      {(creating || editing) && (
         <Modal show title={editing ? `Edit ${editing.name}` : "Create Plan"} onClose={closeForm}>
           <div className="row g-2">
             <div className="col-6"><label className="form-label small">Code</label>
@@ -149,14 +177,16 @@ const PlanManagement = () => {
           </div>
           <div className="d-flex justify-content-end gap-2 mt-3">
             <button className="btn btn-light" onClick={closeForm}>Cancel</button>
-            <button className="btn btn-primary" disabled={saving || !form.code || !form.name} onClick={() => void save()}>{saving ? "Saving…" : "Save"}</button>
+            <button className="btn btn-primary" disabled={saving || !form.code || !form.name} onClick={() => void savePlan()}>{saving ? "Saving…" : "Save"}</button>
           </div>
         </Modal>
-      ) : null}
+      )}
 
-      {historyFor ? (
+      {historyFor && (
         <Modal show title={`${historyFor.name} — Change History`} onClose={() => setHistoryFor(null)}>
-          {history.length ? (
+          {historyLoading ? (
+            <div className="text-body-secondary py-3">Loading history...</div>
+          ) : history.length ? (
             <ul className="list-group">
               {history.map((h) => (
                 <li key={h.id} className="list-group-item">
@@ -170,7 +200,7 @@ const PlanManagement = () => {
             </ul>
           ) : <div className="text-body-secondary">No changes recorded.</div>}
         </Modal>
-      ) : null}
+      )}
     </div>
   );
 };

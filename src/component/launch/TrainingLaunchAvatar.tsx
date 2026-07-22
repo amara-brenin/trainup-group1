@@ -174,6 +174,19 @@ const TrainingLaunchAvatar = (
   const readyNotifiedRef = useRef(false);
   const reconnectTimerRef = useRef<number | null>(null);
   const mutedRef = useRef(false);
+  // Trulience's connection drops and reconnects periodically (their own SDK
+  // logs show frequent websocket timeouts every 20-40s in practice). If
+  // speakText() is called during one of those brief gaps, getAvatarObject()
+  // returns null and the utterance used to just vanish silently — nothing
+  // ever retried it, leaving the avatar mute from that slide onward (Ask
+  // mode included, since it goes through the same speakText path). Queue the
+  // most recent dropped utterance here and replay it once markReady() fires
+  // again on reconnect.
+  const pendingSpeechRef = useRef<{
+    text: string;
+    trainingId?: string;
+    currentSlideId?: string | null;
+  } | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [avatarRenderKey, setAvatarRenderKey] = useState(0);
@@ -320,6 +333,13 @@ const TrainingLaunchAvatar = (
       attachAudioElement(audioElementRef.current);
     }
 
+    const queuedSpeech = pendingSpeechRef.current;
+
+    if (queuedSpeech) {
+      pendingSpeechRef.current = null;
+      getAvatarObject()?.sendMessageToAvatar?.(queuedSpeech.text);
+    }
+
     if (readyNotifiedRef.current) {
       return;
     }
@@ -426,9 +446,14 @@ const TrainingLaunchAvatar = (
         const avatar = getAvatarObject();
 
         if (!avatar) {
+          // Mid-reconnect: queue this utterance so markReady() can replay it
+          // the moment the connection comes back, instead of it silently
+          // never being spoken.
+          pendingSpeechRef.current = { text: normalizedText, trainingId, currentSlideId };
           return false;
         }
 
+        pendingSpeechRef.current = null;
         primeAudio();
         silenceAvatar();
 

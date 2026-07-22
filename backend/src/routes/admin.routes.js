@@ -45,6 +45,7 @@ router.post("/users/:id/password-email", allowAccess("users.edit", "users"), use
 router.delete("/users/:id", allowAccess("users.delete", "users"), userController.remove);
 // FEATURE 2: Client Admin (or SA-as-CA) → User impersonation.
 router.post("/users/impersonate/:userId", allowAccess("users.view", "users"), impersonationController.impersonateUser);
+router.get("/trainee/dashboard", allowRoles("trainee"), userController.getDashboardSessions);
 router.get("/trainees", allowAccess("trainees.view", "trainees"), userController.listTrainees);
 router.get("/trainees/:id/sessions", allowAccess("trainees.report", "trainees"), userController.getTraineeSessions);
 router.post("/trainees/:id/sessions/:trainingId/:sessionId/reopen", allowAccess("trainees.edit", "trainees"), userController.reopenTraineeSessionAttempt);

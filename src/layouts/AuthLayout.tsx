@@ -24,8 +24,8 @@ const AuthLayout = () => {
       const response = await AxiosHelper.getData<AdminUser>("/profile");
       if (response.data.status) {
         const user = response.data.data;
-        if (user.role === "trainer" || user.role === "reviewer") {
-          const publicRole = user.role === "trainer" ? "trainer" : "reviewer";
+        if (user.role === "trainer" || user.role === "reviewer" || user.role === "trainee") {
+          const publicRole = user.role as "trainer" | "reviewer" | "trainee";
           setPublicRoleSession(publicRole, buildPublicRoleSessionFromAdmin(publicRole, user));
         }
         dispatch(updateAdmin(user));
@@ -46,8 +46,8 @@ const AuthLayout = () => {
   }
 
   if (admin._id) {
-    if (admin.role === "trainer" || admin.role === "reviewer") {
-      return <Navigate to={getPublicRoleRedirectPath(admin.role as "trainer" | "reviewer")} replace />;
+    if (admin.role === "trainer" || admin.role === "reviewer" || admin.role === "trainee") {
+      return <Navigate to={getPublicRoleRedirectPath(admin.role as "trainer" | "reviewer" | "trainee")} replace />;
     }
     return <Navigate to={getLastAppRoute() || getAdminHomePath(admin.allowed)} replace />;
   }

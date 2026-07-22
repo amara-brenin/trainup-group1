@@ -13,12 +13,9 @@ const planView = (row) => ({
   id: row.appId,
   code: row.code,
   name: row.name,
-  monthlyPrice: row.monthlyPrice,
-  yearlyPrice: row.yearlyPrice,
+  price: row.price,
+  discountPercentage: row.discountPercentage,
   credits: row.credits,
-  trainingLimit: row.trainingLimit,
-  sessionLimit: row.sessionLimit,
-  userLimit: row.userLimit,
   validityDays: row.validityDays,
   features: row.features || [],
   active: row.active,
@@ -26,8 +23,8 @@ const planView = (row) => ({
 });
 
 const PLAN_FIELDS = [
-  "name", "monthlyPrice", "yearlyPrice", "credits",
-  "trainingLimit", "sessionLimit", "userLimit", "validityDays", "features", "active",
+  "name", "price", "discountPercentage", "credits",
+  "validityDays", "features", "active",
 ];
 const pickFields = (body) => {
   const out = {};
@@ -38,25 +35,22 @@ const pickFields = (body) => {
 // GET /plans — list DB plans, seeding from PLAN_CONFIGS on first call so the
 // panel is never empty (no hardcoded values thereafter).
 const list = async (_req, res) => {
-  let rows = await Plan.find({}).sort({ monthlyPrice: 1 }).lean();
+  let rows = await Plan.find({}).sort({ price: 1 }).lean();
   if (!rows.length) {
     const seeds = Object.values(PLAN_CONFIGS).map((cfg) => ({
       appId: `plan-${cfg.code.toLowerCase()}-${Date.now()}`,
       code: cfg.code,
       name: cfg.label,
-      monthlyPrice: cfg.monthlyPrice,
-      yearlyPrice: cfg.monthlyPrice * 10,
+      price: cfg.price,
+      discountPercentage: 0,
       credits: cfg.monthlyCredits,
-      trainingLimit: cfg.limits.trainings ?? null,
-      sessionLimit: cfg.limits.sessions ?? null,
-      userLimit: cfg.limits.users ?? null,
       validityDays: 30,
       features: [],
       active: true,
       createdBy: "system-seed",
     }));
     await Plan.insertMany(seeds);
-    rows = await Plan.find({}).sort({ monthlyPrice: 1 }).lean();
+    rows = await Plan.find({}).sort({ price: 1 }).lean();
   }
   return ok(res, "Plans loaded.", { record: rows.map(planView) });
 };

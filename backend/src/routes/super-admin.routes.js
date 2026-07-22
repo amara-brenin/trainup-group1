@@ -6,10 +6,15 @@ const planController = require("../controllers/super-admin/planController");
 const impersonationController = require("../controllers/impersonationController");
 const { authTokenAdmin, allowRoles } = require("../middelwares");
 
+const settingController = require("../controllers/super-admin/settingController");
+
 const router = express.Router();
 
 router.use(authTokenAdmin);
 router.use(allowRoles("super_admin"));
+
+router.get("/settings/billing", settingController.getGlobalSettings);
+router.put("/settings/billing", settingController.updateGlobalSettings);
 
 // Phase C: dynamic plan management.
 router.get("/plans", planController.list);

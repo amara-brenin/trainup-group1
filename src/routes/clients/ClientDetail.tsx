@@ -31,7 +31,7 @@ const planLabels: Record<string, string> = {
   ENTERPRISE: "Enterprise",
 };
 const overviewMetricColors = ["#3e60d5", "#16a7e9", "#47ad77", "#a020f0", "#ffbc00", "#0acf97"];
-const formatLimitValue = (value: number | null | undefined) => (value === null || value === undefined ? "Unlimited" : value);
+// Removed formatLimitValue
 
 const ClientDetail = () => {
   const { clientId = "" } = useParams();
@@ -1088,6 +1088,11 @@ const ClientDetail = () => {
                     enterpriseMonthlyPrice: client.enterpriseMonthlyPrice || 0,
                     enterpriseMonthlyCredits: client.enterpriseMonthlyCredits || 40000,
                     enterpriseSupportNotes: client.enterpriseSupportNotes || "",
+                    creditCostOverrides: {
+                      training: client.creditCostOverrides?.training ?? "",
+                      session: client.creditCostOverrides?.session ?? "",
+                      user: client.creditCostOverrides?.user ?? "",
+                    },
                   }}
                   enableReinitialize
                   validationSchema={Yup.object({
@@ -1108,6 +1113,7 @@ const ClientDetail = () => {
                         enterpriseMonthlyPrice: values.enterpriseMonthlyPrice,
                         enterpriseMonthlyCredits: values.enterpriseMonthlyCredits,
                         enterpriseSupportNotes: values.enterpriseSupportNotes,
+                        creditCostOverrides: values.creditCostOverrides,
                       },
                     });
                   }}
@@ -1233,18 +1239,6 @@ const ClientDetail = () => {
                 <div className="admin-settings-item d-flex align-items-center justify-content-between">
                   <span className="small text-body-secondary">Enterprise monthly price</span>
                   <span className="fw-semibold">{Number(client.enterpriseMonthlyPrice ?? 0) ? `Rs. ${Number(client.enterpriseMonthlyPrice ?? 0).toLocaleString()}` : "Custom"}</span>
-                </div>
-                <div className="admin-settings-item d-flex align-items-center justify-content-between">
-                  <span className="small text-body-secondary">Training limit</span>
-                  <span className="fw-semibold">{formatLimitValue(client.planLimits?.trainings)}</span>
-                </div>
-                <div className="admin-settings-item d-flex align-items-center justify-content-between">
-                  <span className="small text-body-secondary">User limit</span>
-                  <span className="fw-semibold">{formatLimitValue(client.planLimits?.users)}</span>
-                </div>
-                <div className="admin-settings-item d-flex align-items-center justify-content-between">
-                  <span className="small text-body-secondary">Session limit</span>
-                  <span className="fw-semibold">{formatLimitValue(client.planLimits?.sessions)}</span>
                 </div>
                 <div className="admin-settings-item d-flex align-items-center justify-content-between">
                   <span className="small text-body-secondary">Per training create</span>

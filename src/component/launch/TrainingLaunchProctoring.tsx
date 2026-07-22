@@ -11,6 +11,9 @@ import type { TrainingProctoringReport } from "../../constant/interfaces";
 
 const PROCTORING_APP_URL = "https://interview-proctoring-02o3.onrender.com";
 const FRAME_INTERVAL_MS = 125;
+const SOCKET_CONNECT_TIMEOUT_MS = 15000;
+const INITIAL_CONNECT_RETRIES = 2;
+const INITIAL_CONNECT_RETRY_DELAY_MS = 4000;
 const MAX_EVENT_LOGS = 36;
 const MAX_TIMELINE_POINTS = 180;
 const MAX_RECONNECT_ATTEMPTS = 6;
@@ -303,6 +306,11 @@ const TrainingLaunchProctoring = (
   useEffect(() => {
     onStatusChangeRef.current = onStatusChange;
   }, [onStatusChange]);
+
+  useEffect(() => {
+    // Wake up the proctoring service (Render free tier) as early as possible
+    fetch(PROCTORING_APP_URL, { mode: "no-cors" }).catch(() => undefined);
+  }, []);
 
   const commitReport = useCallback(
     (
@@ -834,12 +842,42 @@ const TrainingLaunchProctoring = (
     manualStopRef.current = false;
 
     await new Promise<void>((resolve, reject) => {
+      let settled = false;
+
+      // Render's free tier spins the proctoring service down when idle, so a
+      // cold start can leave this socket neither open nor errored for a long
+      // time. Without an explicit timeout the "Preparing Training" screen can
+      // hang indefinitely waiting on this promise.
+      const timeoutId = window.setTimeout(() => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        socket.removeEventListener("open", handleOpen);
+        socket.removeEventListener("error", handleError);
+        socket.close();
+        reject(new Error("Proctoring service is taking too long to respond."));
+      }, SOCKET_CONNECT_TIMEOUT_MS);
+
       const handleOpen = () => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        window.clearTimeout(timeoutId);
         socket.removeEventListener("error", handleError);
         resolve();
       };
 
       const handleError = () => {
+        if (settled) {
+          return;
+        }
+
+        settled = true;
+        window.clearTimeout(timeoutId);
         socket.removeEventListener("open", handleOpen);
         reject(new Error("Proctoring service is not reachable."));
       };
@@ -853,6 +891,30 @@ const TrainingLaunchProctoring = (
     socket.addEventListener("error", handleUnexpectedDisconnect);
     socket.send(JSON.stringify({ event: "connected" }));
   }, [handleSocketMessage, handleUnexpectedDisconnect]);
+
+  // Wraps connectSocket with a few retries so a cold Render dyno (which can
+  // take longer than one SOCKET_CONNECT_TIMEOUT_MS window to wake up) gets a
+  // couple more chances before startSession gives up and reports an error.
+  const connectSocketWithRetry = useCallback(async () => {
+    let attempt = 0;
+
+    for (;;) {
+      try {
+        await connectSocket();
+        return;
+      } catch (error) {
+        if (attempt >= INITIAL_CONNECT_RETRIES) {
+          throw error;
+        }
+
+        attempt += 1;
+        pushLogWithCooldown("Proctoring service is waking up, retrying...", 1000);
+        await new Promise((resolve) => {
+          window.setTimeout(resolve, INITIAL_CONNECT_RETRY_DELAY_MS);
+        });
+      }
+    }
+  }, [connectSocket, pushLogWithCooldown]);
 
   const reconnectSession = useCallback(async () => {
     await connectSocket();
@@ -1016,8 +1078,18 @@ const TrainingLaunchProctoring = (
     pushLog("Initializing camera...");
 
     try {
-      await Promise.all([initCamera(), connectSocket()]);
+      // Previously camera and the proctoring socket were started together via
+      // Promise.all, which rejects as soon as either promise rejects. A fast
+      // proctoring-socket failure (e.g. connection refused rather than a slow
+      // cold start) could therefore abort this whole try block before the
+      // learner had even responded to the camera permission prompt, which is
+      // what let the "Preparing Training" screen disappear before camera
+      // access was resolved and before the avatar had finished loading.
+      // Resolving the camera prompt first guarantees it always completes
+      // before anything else can short-circuit the flow.
+      await initCamera();
       pushLog("Camera connected.");
+      await connectSocketWithRetry();
       commitReport((current) => ({
         ...current,
         status: "monitoring",
@@ -1056,7 +1128,7 @@ const TrainingLaunchProctoring = (
     clearVisionOverlay,
     clearReconnectTimeout,
     commitReport,
-    connectSocket,
+    connectSocketWithRetry,
     initCamera,
     pushLog,
     resetSession,

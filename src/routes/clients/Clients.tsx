@@ -19,6 +19,12 @@ import { sanitizePhoneInput } from "../../helper/validation";
 import { useDebounce } from "../../hooks/useDebounce";
 import { useAppSelector } from "../../app/hooks";
 
+type Plan = {
+  id: string; code: string; name: string;
+  price: number; discountPercentage: number; credits: number;
+  validityDays: number; features: string[]; active: boolean;
+};
+
 const adminDefaults = fixedRoleDefinitions.find((role) => role.id === "admin");
 
 const defaultValues: ClientFormValues = {
@@ -101,6 +107,7 @@ const Clients = () => {
   const [param, setParam] = useState<PageParamState>({ limit: 10, pageNo: 1, query: "" });
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "trial" | "inactive">("all");
   const [planFilter, setPlanFilter] = useState<"all" | ClientRecord["plan"]>("all");
+  const [availablePlans, setAvailablePlans] = useState<Plan[]>([]);
   const [sortBy, setSortBy] = useState<"name" | "industry" | "users" | "trainings">("name");
   const debouncedQuery = useDebounce(param.query);
 
@@ -122,6 +129,14 @@ const Clients = () => {
   useEffect(() => {
     void fetchRecords();
   }, [fetchRecords]);
+
+  useEffect(() => {
+    AxiosHelper.getData<{ record: Plan[] }>("/plans").then(res => {
+      if (res.data.status && res.data.data?.record) {
+        setAvailablePlans(res.data.data.record.filter(p => p.active));
+      }
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (location.pathname === "/clients/create") {
@@ -327,9 +342,9 @@ const Clients = () => {
                       <div>
                         <label htmlFor="plan" className="form-label">Plan <span className="text-danger">*</span></label>
                         <Field as="select" name="plan" id="plan" className="form-select">
-                          <option value="FREE">Free</option>
-                          <option value="PRO">Pro</option>
-                          <option value="ENTERPRISE">Enterprise</option>
+                          {availablePlans.map((p) => (
+                            <option key={p.code} value={p.code}>{p.name}</option>
+                          ))}
                         </Field>
                         <ErrorMessage name="plan" component="small" className="text-danger" />
                       </div>
@@ -632,9 +647,9 @@ const Clients = () => {
                   }}
                 >
                   <option value="all">All plans</option>
-                  <option value="FREE">Free</option>
-                  <option value="PRO">Pro</option>
-                  <option value="ENTERPRISE">Enterprise</option>
+                  {availablePlans.map((p) => (
+                    <option key={p.code} value={p.code}>{p.name}</option>
+                  ))}
                 </select>
                 <select
                   className="form-select"

@@ -22,6 +22,7 @@ const isTrustedVercelPreviewOrigin = (origin) =>
   /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin || "");
 
 const { findClientByHostname } = require("./src/helpers/tenant");
+const Client = require("./src/models/Client");
 
 const corsDelegate = async (req, callback) => {
   const requestOrigin = req.header("Origin");
@@ -37,6 +38,11 @@ const corsDelegate = async (req, callback) => {
       const client = await findClientByHostname(requestOrigin);
       if (client) {
         isAllowed = true;
+      } else {
+        const clientWithOrigin = await Client.findOne({ allowedOrigins: requestOrigin }).lean();
+        if (clientWithOrigin) {
+          isAllowed = true;
+        }
       }
     } catch (error) {
       // Ignore DB errors in CORS resolution

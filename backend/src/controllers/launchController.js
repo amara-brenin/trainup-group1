@@ -5,7 +5,7 @@ const Client = require("../models/Client");
 const User = require("../models/User");
 const { createReadUrl, isStorageConfigured } = require("../helpers/storage");
 const {
-  CREDIT_COSTS,
+  getCreditCosts,
   consumeClientCredits,
   ensureClientEntitlement,
   assertLifetimeQuota,
@@ -1150,7 +1150,7 @@ const upsertLaunchSession = async (req, res) => {
 
     const creditResult = await consumeClientCredits({
       clientId: training.clientId,
-      credits: CREDIT_COSTS.session,
+      credits: (await getCreditCosts(client)).session,
       reason: `Training session completed by ${viewerIdentity.learnerEmail || viewerIdentity.learnerName || "learner"}`,
     });
 
@@ -1585,6 +1585,23 @@ const createSecureLaunchUrl = async (req, res) => {
     : origin || `https://${client?.subdomain || "app"}.trainup.ai`;
   const launchUrl = buildPublicUrl(resolvedOrigin, `/secure-launch/${token}`, req.headers["x-app-base-path"]);
 
+  // Save this link information in the database so it survives page reloads
+  await Training.updateOne(
+    { appId: trainingId, clientId },
+    {
+      $set: {
+        "payload.lastLaunchLink": {
+          launchUrl,
+          token,
+          expiresInMinutes,
+          learnerName: normalizeValue(req.body?.learnerName),
+          learnerEmail: normalizeValue(req.body?.learnerEmail),
+          generatedAt: new Date().toISOString()
+        }
+      }
+    }
+  );
+
   return ok(res, "Secure launch link generated.", {
     trainingId: training.appId,
     token,
@@ -1804,7 +1821,7 @@ const upsertDemoSession = async (req, res) => {
 
     const creditResult = await consumeClientCredits({
       clientId: training.clientId,
-      credits: CREDIT_COSTS.session,
+      credits: (await getCreditCosts(client)).session,
       reason: `LMS launch session completed by ${guestEmail || guestName || "learner"}`,
     });
     if (!creditResult.ok) return fail(res, 400, creditResult.message);

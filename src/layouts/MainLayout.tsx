@@ -10,6 +10,7 @@ import { CheckPermission } from "../component/common/PermissionBlock";
 import type { AdminUser } from "../constant/interfaces";
 import AxiosHelper from "../helper/AxiosHelper";
 import { clearAuthToken, setLastAppRoute } from "../helper/authSession";
+import { useForceLogoutWatcher } from "../hooks/useForceLogoutWatcher";
 import { AllowedKeys } from "../constant/permissions";
 import { getScopedAppPath, isSuperAdminRole, stripSuperAdminPrefix } from "../helper/appShell";
 import { getRequiredAppUrlForRole, isAdminApp, isRoleAllowedInCurrentApp } from "../helper/appVariant";
@@ -54,6 +55,10 @@ const MainLayout = () => {
   useEffect(() => {
     void updateProfile();
   }, [updateProfile]);
+
+  // Immediately sign the user out if a super-admin deletes/deactivates this
+  // account while they're still on the page (socket push + polling fallback).
+  useForceLogoutWatcher({ enabled: Boolean(admin._id) });
 
   useEffect(() => {
     if (!admin._id) {
