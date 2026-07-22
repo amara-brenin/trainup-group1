@@ -16,7 +16,6 @@ const { sanitizeUserForClient } = require("../helpers/auth");
 const { buildXapiStatement, sendXapiStatement } = require("../helpers/xapi");
 const crypto = require("crypto");
 const {
-  CREDIT_COSTS,
   PLAN_CONFIGS,
   addPlanBatch,
   resolvePlan,
@@ -26,11 +25,8 @@ const {
   getFreeTrialMeta,
   getPlanChargeAmount,
   consumeClientCredits,
-  getClientEntitlement,
-  ensureClientEntitlement,
   ADDON_CREDIT_UNIT,
   ADDON_MONEY_UNIT,
-  applyAddonQuota,
 } = require("../helpers/credits");
 const Plan = require("../models/Plan");
 const AddonPurchaseLog = require("../models/AddonPurchaseLog");
@@ -246,7 +242,15 @@ const buildBillingSummaryResponse = async (client, metrics = null) => {
     billingCurrency: client.billingCurrency || "INR",
     razorpayKeyId: client.razorpayKeyId || "",
     gatewayReady: Boolean(client.razorpayKeyId && client.razorpayKeySecret),
-    planLimits: snapshot.planConfig.limits,
+    // Lifetime per-resource limits (trainingBaseLimit/trainingUsedLifetime/...)
+    // were retired in favor of a single credit pool (see credits.js) — every
+    // resource is now uncapped in count, gated only by available credits
+    // (see availableCredits/costPerTraining/costPerUser/costPerSession above).
+    planLimits: {
+      trainings: null,
+      users: null,
+      sessions: null,
+    },
     planPrice: getPlanChargeAmount(client, snapshot.plan),
     freeTrialActive: freeTrial.active,
     freeTrialEndsOn: freeTrial.endsAt,
@@ -255,10 +259,17 @@ const buildBillingSummaryResponse = async (client, metrics = null) => {
     pendingEnterpriseRequests: Array.isArray(client.enterpriseRequests)
       ? client.enterpriseRequests.filter((item) => item?.status === "pending").length
       : 0,
+    // Lets the client's own Upgrade & Billing page show a "pay now" banner
+    // once a super admin has sent a custom Enterprise offer (see
+    // planController.sendEnterpriseOffer / commonController.payEnterpriseOffer).
+    enterpriseRequests: Array.isArray(client.enterpriseRequests) ? client.enterpriseRequests : [],
     planCatalog: buildPlanCatalog(client),
+    // Every transaction still on record (creditTransactions itself is already
+    // capped to a rolling window of 25 in consumeClientCredits/addClientCredits)
+    // — no longer sliced further down to 8, so admins aren't missing activity.
     recentTransactions:
       Array.isArray(client.creditTransactions) && client.creditTransactions.length
-        ? client.creditTransactions.slice(0, 8)
+        ? client.creditTransactions
         : buildDemoBillingTransactions(client),
   };
 };
@@ -772,10 +783,21 @@ const requestEnterprisePlan = async (req, res) => {
   }
 
   const message = String(req.body.message || "").trim();
+  // All of these are approximate/optional — the point is to let a client send
+  // a quick structured request without being forced to write a paragraph, or
+  // vice versa (a free-text message alone is also a valid submission).
+  const toOptionalNumber = (value) => {
+    const num = Number(value);
+    return Number.isFinite(num) && num > 0 ? num : null;
+  };
+  const approxUsers = toOptionalNumber(req.body.approxUsers);
+  const approxTrainings = toOptionalNumber(req.body.approxTrainings);
+  const approxSessions = toOptionalNumber(req.body.approxSessions);
+  const approxBudget = toOptionalNumber(req.body.approxBudget);
 
-  if (!message) {
-    return fail(res, 400, "Please add your support request details.", {
-      message: "Support query is required.",
+  if (!message && !approxUsers && !approxTrainings && !approxSessions && !approxBudget) {
+    return fail(res, 400, "Share at least one detail — an approximate requirement or a message.", {
+      message: "Add at least one field or a message.",
     });
   }
 
@@ -786,6 +808,10 @@ const requestEnterprisePlan = async (req, res) => {
     requestedByName: req.user.fullname || req.user.name,
     requestedByEmail: req.user.email,
     message,
+    approxUsers,
+    approxTrainings,
+    approxSessions,
+    approxBudget,
     status: "pending",
   });
   client.enterpriseRequests = client.enterpriseRequests.slice(0, 25);
@@ -809,7 +835,7 @@ const requestEnterprisePlan = async (req, res) => {
       message: `${client.name} requested enterprise pricing support.`,
       category: "billing",
       severity: "warning",
-      link: `/clients/${client.appId}`,
+      link: "/upgrade-billing/queries",
       actorName: req.user?.fullname || req.user?.name || "",
       metadata: {
         clientId: client.appId,
@@ -818,6 +844,99 @@ const requestEnterprisePlan = async (req, res) => {
   ]);
 
   return ok(res, "Enterprise support query submitted successfully.", await buildBillingSummaryResponse(client));
+};
+
+// POST /billing/enterprise-request/:requestId/pay — client-side confirmation
+// once a super-admin has sent a custom Enterprise offer (see
+// planController.sendEnterpriseOffer). Simulated/sandbox, same as the regular
+// plan checkout above (purchaseCredits) — there is no real payment gateway
+// wired into this app yet, only a client-confirms-then-provisions flow.
+const payEnterpriseOffer = async (req, res) => {
+  const clientId = getTenantClientId(req.user);
+
+  if (!clientId) {
+    return fail(res, 403, "Only tenant admins can complete this purchase.");
+  }
+
+  const client = await Client.findOne({ appId: clientId });
+
+  if (!client) {
+    return fail(res, 404, "Client billing profile not found.");
+  }
+
+  if (String(client.paymentMode || "test") !== "test") {
+    return fail(res, 400, "Live billing is disabled in this environment. Switch the client back to test mode first.");
+  }
+
+  const requests = Array.isArray(client.enterpriseRequests) ? client.enterpriseRequests : [];
+  const request = requests.find((item) => item.id === req.params.requestId);
+
+  if (!request) {
+    return fail(res, 404, "Enterprise offer not found.");
+  }
+
+  if (request.status !== "offer_sent") {
+    return fail(
+      res,
+      400,
+      request.status === "paid" ? "This offer has already been paid." : "This offer is not ready to pay yet.",
+    );
+  }
+
+  const credits = Math.max(0, Number(request.offerCredits || 0));
+  const price = Math.max(0, Number(request.offerPrice || 0));
+  const validityDays = Math.max(1, Number(request.offerValidityDays || 30));
+  const snapshot = buildClientCreditSnapshot(client);
+  const orderId = `order_test_${Date.now()}`;
+  const invoiceId = `INV-ENT-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
+
+  const customPlanCfg = { code: "ENTERPRISE", label: "Enterprise (Custom)", monthlyCredits: credits, price, validityDays };
+  addPlanBatch(client, customPlanCfg, { amount: price });
+  client.enterpriseMonthlyCredits = credits;
+  client.enterpriseMonthlyPrice = price;
+
+  client.creditTransactions = Array.isArray(client.creditTransactions) ? client.creditTransactions : [];
+  client.creditTransactions.unshift({
+    ...createTransactionEntry("plan_purchase", credits, "Enterprise custom plan — sandbox checkout completed"),
+    amount: price,
+    currency: client.billingCurrency || "INR",
+    status: "captured",
+    invoiceId,
+    orderId,
+    planCode: "ENTERPRISE",
+  });
+  client.creditTransactions = client.creditTransactions.slice(0, 25);
+
+  request.status = "paid";
+  request.resolvedAt = new Date().toISOString();
+  client.markModified("enterpriseRequests");
+
+  await client.save();
+
+  await CreditAuditLog.create({
+    clientId,
+    actionType: "plan_assignment",
+    entityType: "plan",
+    entityId: orderId,
+    creditChange: credits,
+    balanceBefore: snapshot.availableCredits,
+    balanceAfter: buildClientCreditSnapshot(client).availableCredits,
+    performedBy: req.user?.fullname || req.user?.name || req.user?.email || "",
+    reason: "Custom Enterprise plan activated",
+    reference: invoiceId,
+  }).catch(() => undefined);
+
+  await notifySuperAdmins({
+    title: "Enterprise plan activated",
+    message: `${client.name} paid for their custom Enterprise plan (${credits.toLocaleString()} credits).`,
+    category: "billing",
+    severity: "success",
+    link: "/upgrade-billing/queries",
+    actorName: req.user?.fullname || req.user?.name || "",
+    metadata: { clientId: client.appId },
+  });
+
+  return ok(res, "Enterprise plan activated successfully.", await buildBillingSummaryResponse(client));
 };
 
 const testSmtp = async (req, res) => {
@@ -910,11 +1029,41 @@ const getBillingPlans = async (_req, res) => {
   let rows = await Plan.find({ active: true }).sort({ price: 1 }).lean();
   if (!rows.length) {
     rows = Object.values(PLAN_CONFIGS).map((cfg) => ({
-      code: cfg.code, name: cfg.label, price: cfg.price, discountPercentage: 0,
+      code: cfg.code, name: cfg.label === "ENTERPRISE" ? "Enterprise" : cfg.label, price: cfg.price, discountPercentage: 0,
       credits: cfg.monthlyCredits, trainingLimit: cfg.limits?.trainings ?? null,
       sessionLimit: cfg.limits?.sessions ?? null, userLimit: cfg.limits?.users ?? null,
-      features: [],
+      features: cfg.label === "ENTERPRISE" ? [
+        "Custom pricing and credit allocation",
+        "Dedicated onboarding support",
+        "Priority enterprise support",
+        "Assigned manually by super admin after discussion"
+      ] : [],
     }));
+  } else {
+    // Check if an ENTERPRISE plan exists in the DB (whether active or inactive)
+    const allPlans = await Plan.find({}).lean();
+    const hasEnterprise = allPlans.some((r) => r.code === "ENTERPRISE");
+    if (!hasEnterprise) {
+      const enterpriseSeed = {
+        appId: `plan-enterprise-${Date.now()}`,
+        code: "ENTERPRISE",
+        name: "Enterprise",
+        price: 0,
+        discountPercentage: 0,
+        credits: 0,
+        validityDays: 30,
+        features: [
+          "Custom pricing and credit allocation",
+          "Dedicated onboarding support",
+          "Priority enterprise support",
+          "Assigned manually by super admin after discussion"
+        ],
+        active: true,
+        createdBy: "system-seed",
+      };
+      await Plan.create(enterpriseSeed);
+      rows = await Plan.find({ active: true }).sort({ price: 1 }).lean();
+    }
   }
   return ok(res, "Plans loaded.", {
     record: rows.map((r) => ({
@@ -953,146 +1102,22 @@ const purchaseAddon = async (req, res) => {
   if (!ADDON_TYPES.includes(type)) return fail(res, 400, "Invalid add-on type.");
   const quantity = Math.max(0, Math.floor(Number(req.body.quantity || 0)));
   if (!quantity) return fail(res, 400, "Quantity must be greater than zero.");
-  const method = String(req.body.purchaseMethod || "credits").toLowerCase();
-  const performedBy = req.user?.fullname || req.user?.name || req.user?.email || "";
 
-  if (!client.quotaInitialized) {
-    const publishedCount = await Training.countDocuments({ clientId, "payload.status": "approved" });
-    await ensureClientEntitlement(client, {
-      training: publishedCount, session: Number(client.sessions || 0), user: Number(client.activeUsers || 0),
-    });
-  }
-
-  if (method === "credits") {
-    const idempotencyKey = String(req.body.idempotencyKey || "").trim();
-    if (idempotencyKey) {
-      const existing = await AddonPurchaseLog.findOne({ idempotencyKey }).lean();
-      if (existing) {
-        const freshClient = await Client.findOne({ appId: clientId });
-        return ok(res, `Added +${existing.quantity} ${existing.type} capacity using credits.`, { usage: usageView(freshClient || client) });
-      }
-    }
-
-    const unit = ADDON_CREDIT_UNIT[type];
-    const total = unit * quantity;
-    const result = await consumeClientCredits({
-      clientId, credits: total, reason: `Add-on: +${quantity} ${type} capacity`,
-      actionType: "addon_purchase", entityType: type, performedBy,
-    });
-    if (!result.ok) return fail(res, 400, result.message);
-    const fresh = await Client.findOne({ appId: clientId });
-    applyAddonQuota(fresh, type, quantity);
-    await fresh.save();
-    await AddonPurchaseLog.create({
-      appId: `addon-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`,
-      clientId, type, quantity, purchaseMethod: "credits", unitCost: unit, totalCost: total,
-      currency: "credits", status: "completed", performedBy,
-      idempotencyKey: idempotencyKey || "",
-    });
-    return ok(res, `Added +${quantity} ${type} capacity using credits.`, { usage: usageView(fresh) });
-  }
-
-  if (method !== "razorpay") return fail(res, 400, "Unsupported purchase method.");
-
-  const keyId = String(client.razorpayKeyId || "").trim();
-  const keySecret = String(client.razorpayKeySecret || "").trim();
-  if (!keyId || !keySecret) {
-    return ok(res, "Razorpay is not configured for this account.", { razorpayConfigured: false });
-  }
-  const unit = ADDON_MONEY_UNIT[type];
-  const total = unit * quantity;
-  const currency = client.billingCurrency || "INR";
-  const action = String(req.body.action || "create-order");
-
-  if (action === "create-order") {
-    try {
-      const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
-      const r = await fetch("https://api.razorpay.com/v1/orders", {
-        method: "POST",
-        headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          amount: total * 100, currency,
-          receipt: `addon_${type}_${Date.now()}`,
-          notes: { type, quantity: String(quantity), clientId },
-        }),
-      });
-      if (!r.ok) return fail(res, 502, "Could not create the Razorpay order.");
-      const order = await r.json();
-      return ok(res, "Razorpay order created.", {
-        razorpayConfigured: true,
-        order: { id: order.id, amount: order.amount, currency: order.currency, keyId },
-      });
-    } catch (_e) {
-      return fail(res, 502, "Razorpay order creation failed.");
-    }
-  }
-
-  if (action === "verify") {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body || {};
-    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
-      return fail(res, 400, "Missing Razorpay verification fields.");
-    }
-
-    const alreadyProcessed = await AddonPurchaseLog.findOne({ orderId: razorpay_order_id }).lean();
-    if (alreadyProcessed) {
-      return ok(res, `Added +${alreadyProcessed.quantity} ${alreadyProcessed.type} capacity via Razorpay.`, { usage: usageView(client) });
-    }
-
-    const expected = crypto.createHmac("sha256", keySecret).update(`${razorpay_order_id}|${razorpay_payment_id}`).digest("hex");
-    if (expected !== razorpay_signature) return fail(res, 400, "Payment signature verification failed.");
-
-    let rzpOrder;
-    try {
-      const auth = Buffer.from(`${keyId}:${keySecret}`).toString("base64");
-      const r = await fetch(`https://api.razorpay.com/v1/orders/${razorpay_order_id}`, {
-        headers: { Authorization: `Basic ${auth}` },
-      });
-      if (!r.ok) return fail(res, 502, "Could not fetch the Razorpay order for verification.");
-      rzpOrder = await r.json();
-    } catch (_e) {
-      return fail(res, 502, "Razorpay order fetch failed during verification.");
-    }
-
-    if (String(rzpOrder.notes?.clientId || "") !== clientId) {
-      return fail(res, 403, "Order does not belong to this account.");
-    }
-    const orderType = String(rzpOrder.notes?.type || "").toLowerCase();
-    const orderQty = Math.max(0, Math.floor(Number(rzpOrder.notes?.quantity || 0)));
-    if (orderType !== type || orderQty !== quantity) {
-      return fail(res, 400, "Order type/quantity does not match the request.");
-    }
-    const expectedAmount = ADDON_MONEY_UNIT[orderType] * orderQty * 100;
-    if (Number(rzpOrder.amount) !== expectedAmount) {
-      return fail(res, 400, "Order amount mismatch.");
-    }
-
-    applyAddonQuota(client, orderType, orderQty);
-    await client.save();
-    await AddonPurchaseLog.create({
-      appId: `addon-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`,
-      clientId, type: orderType, quantity: orderQty, purchaseMethod: "razorpay",
-      unitCost: ADDON_MONEY_UNIT[orderType], totalCost: ADDON_MONEY_UNIT[orderType] * orderQty,
-      currency, orderId: razorpay_order_id, paymentId: razorpay_payment_id, status: "captured", performedBy,
-    });
-    return ok(res, `Added +${orderQty} ${orderType} capacity via Razorpay.`, { usage: usageView(client) });
-  }
-
-  return fail(res, 400, "Unknown add-on action.");
+  // Add-on purchases used to grant extra lifetime resource capacity
+  // (trainingLimit/sessionLimit/userLimit via applyAddonQuota). That capacity
+  // model was fully retired when billing moved to a single credit pool (see
+  // credits.js / Client.js in commit ae5d3ea) — applyAddonQuota is now a
+  // no-op, so this endpoint would otherwise charge real credits/money and
+  // grant nothing in return. Blocked here until add-ons are redesigned for
+  // the credit-only model — do not remove this guard without that redesign.
+  return fail(res, 503, "Add-on capacity purchases are temporarily unavailable while billing is being updated. Please contact support if you need additional capacity.");
 };
 
 // GET /billing/addons/history — history + current usage + pricing (one call).
 const getAddonHistory = async (req, res) => {
   const clientId = getTenantClientId(req.user);
-  let client = await Client.findOne({ appId: clientId }, CLIENT_HEAVY_EXCLUSION).lean();
+  const client = await Client.findOne({ appId: clientId }, CLIENT_HEAVY_EXCLUSION).lean();
   if (!client) return fail(res, 404, "Client not found.");
-  if (!client.quotaInitialized) {
-    const fullClient = await Client.findOne({ appId: clientId });
-    const publishedCount = await Training.countDocuments({ clientId, "payload.status": "approved" });
-    await ensureClientEntitlement(fullClient, {
-      training: publishedCount, session: Number(fullClient.sessions || 0), user: Number(fullClient.activeUsers || 0),
-    });
-    client = fullClient.toObject();
-  }
   const pageNo = Math.max(1, Number(req.query.pageNo) || 1);
   const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 25));
   const skip = (pageNo - 1) * limit;
@@ -1177,6 +1202,7 @@ module.exports = {
   getAddonHistory,
   purchaseCredits,
   requestEnterprisePlan,
+  payEnterpriseOffer,
   testSmtp,
   verifyDomain,
   buildBillingSummaryResponse,

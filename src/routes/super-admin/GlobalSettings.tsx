@@ -48,68 +48,66 @@ const GlobalSettings = () => {
 
   if (loading) {
     return (
-      <div className="container-fluid py-3">
-        <div className="text-center text-body-secondary py-5">Loading settings...</div>
+      <div className="card">
+        <div className="card-body text-center text-body-secondary py-5">Loading settings...</div>
       </div>
     );
   }
 
   return (
-    <div>
-
-      <div className="card max-w-2xl">
-        <div className="card-header bg-white border-bottom-0 pt-4 pb-0">
-          <h5 className="card-title fw-semibold mb-0">Global Credit Costs</h5>
-          <p className="small text-body-secondary mb-0 mt-1">
-            Set the default credit deduction amounts for core platform actions. These apply to all clients unless overridden.
-          </p>
-        </div>
-        <div className="card-body">
-          <div className="row g-4">
-            <div className="col-12">
-              <label className="form-label fw-medium text-body-secondary small">Training Creation</label>
-              <div className="input-group">
-                <input
-                  type="number"
-                  className="form-control"
-                  value={costs.training}
-                  onChange={(e) => setField("training", e.target.value)}
-                />
-                <span className="input-group-text bg-light text-body-secondary">credits</span>
-              </div>
-              <div className="form-text">Deducted when a client creates a new training program.</div>
+    <div className="card">
+      <div className="card-header bg-transparent border-0 pb-0">
+        <h2 className="h5 fw-semibold mb-1">Global Credit Costs</h2>
+        <p className="small text-body-secondary mb-0">
+          Set the default credit deduction amounts for core platform actions. These apply to all clients unless overridden.
+        </p>
+      </div>
+      <div className="card-body">
+        <div className="row g-3">
+          <div className="col-12 col-md-4">
+            <label className="form-label fw-medium text-body-secondary small">Training Creation</label>
+            <div className="input-group">
+              <input
+                type="number"
+                className="form-control"
+                value={costs.training}
+                onChange={(e) => setField("training", e.target.value)}
+              />
+              <span className="input-group-text bg-light text-body-secondary">credits</span>
             </div>
+            <div className="form-text">Deducted when a client creates a new training program.</div>
+          </div>
 
-            <div className="col-12">
-              <label className="form-label fw-medium text-body-secondary small">Session Creation</label>
-              <div className="input-group">
-                <input
-                  type="number"
-                  className="form-control"
-                  value={costs.session}
-                  onChange={(e) => setField("session", e.target.value)}
-                />
-                <span className="input-group-text bg-light text-body-secondary">credits</span>
-              </div>
-              <div className="form-text">Deducted when a client schedules a new session.</div>
+          <div className="col-12 col-md-4">
+            <label className="form-label fw-medium text-body-secondary small">Session Creation</label>
+            <div className="input-group">
+              <input
+                type="number"
+                className="form-control"
+                value={costs.session}
+                onChange={(e) => setField("session", e.target.value)}
+              />
+              <span className="input-group-text bg-light text-body-secondary">credits</span>
             </div>
+            <div className="form-text">Deducted when a client schedules a new session.</div>
+          </div>
 
-            <div className="col-12">
-              <label className="form-label fw-medium text-body-secondary small">User Invitation</label>
-              <div className="input-group">
-                <input
-                  type="number"
-                  className="form-control"
-                  value={costs.user}
-                  onChange={(e) => setField("user", e.target.value)}
-                />
-                <span className="input-group-text bg-light text-body-secondary">credits</span>
-              </div>
-              <div className="form-text">Deducted when a client adds or invites a new user to their tenant.</div>
+          <div className="col-12 col-md-4">
+            <label className="form-label fw-medium text-body-secondary small">User Invitation</label>
+            <div className="input-group">
+              <input
+                type="number"
+                className="form-control"
+                value={costs.user}
+                onChange={(e) => setField("user", e.target.value)}
+              />
+              <span className="input-group-text bg-light text-body-secondary">credits</span>
             </div>
+            <div className="form-text">Deducted when a client adds or invites a new user to their tenant.</div>
           </div>
         </div>
-        <div className="card-footer bg-light border-top text-end">
+
+        <div className="d-flex justify-content-end pt-3">
           <button className="btn btn-primary" disabled={saving} onClick={() => void save()}>
             {saving ? "Saving..." : "Save Settings"}
           </button>

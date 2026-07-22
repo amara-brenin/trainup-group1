@@ -244,8 +244,16 @@ export interface ClientRecord {
     requestedByName: string;
     requestedByEmail: string;
     message: string;
+    approxUsers?: number | null;
+    approxTrainings?: number | null;
+    approxSessions?: number | null;
+    approxBudget?: number | null;
     status: string;
     resolvedAt?: string;
+    offerPrice?: number | null;
+    offerCredits?: number | null;
+    offerValidityDays?: number | null;
+    rejectReason?: string;
   }>;
   clientAdminUserId?: string;
   firstUserName?: string;
@@ -415,6 +423,16 @@ export interface BillingSummary {
   enterpriseMonthlyPrice?: number;
   enterpriseMonthlyCredits?: number;
   pendingEnterpriseRequests?: number;
+  enterpriseRequests?: Array<{
+    id: string;
+    requestedAt: string;
+    status: string;
+    message?: string;
+    offerPrice?: number | null;
+    offerCredits?: number | null;
+    offerValidityDays?: number | null;
+    rejectReason?: string;
+  }>;
   planLimits: {
     trainings: number | null;
     users: number | null;

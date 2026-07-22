@@ -39,6 +39,7 @@ router.post("/billing/addons/purchase", allowAccess("billing.manage", "billing")
 router.get("/billing/addons/history", allowAccess("billing.view", "billing"), commonController.getAddonHistory);
 router.post("/billing/purchase", allowAccess("billing.manage", "billing"), commonController.purchaseCredits);
 router.post("/billing/enterprise-request", allowAccess("billing.view", "billing"), commonController.requestEnterprisePlan);
+router.post("/billing/enterprise-request/:requestId/pay", allowAccess("billing.manage", "billing"), commonController.payEnterpriseOffer);
 
 router.get("/users", allowAccess("users.view", "users"), userController.list);
 router.post("/users", allowAccess("users.add", "users"), userController.create);
