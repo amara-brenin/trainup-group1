@@ -755,6 +755,7 @@ export interface TrainingSlideRecord {
   settings?: TrainingSlideSettings;
   removedMedia?: TrainingRemovedMedia | null;
   comments: TrainingSlideComment[];
+  unselected?: boolean;
 }
 
 export interface TrainingKnowledgeDocument {

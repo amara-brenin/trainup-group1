@@ -1948,7 +1948,9 @@ const TrainingBuilder = ({
   // Slides selected to receive narration on this pass. Defaults to "all slides" so
   // existing behavior is unchanged unless the trainer narrows the selection in Step 2/4.
   const [selectedNarrationSlideIds, setSelectedNarrationSlideIds] = useState<string[]>(
-    (initialTraining ? cloneSlides(initialTraining.slides) : [buildBlankSlide(0)]).map((slide) => slide.id),
+    (initialTraining ? cloneSlides(initialTraining.slides) : [buildBlankSlide(0)])
+      .filter((slide) => !slide.unselected)
+      .map((slide) => slide.id),
   );
   const [slideRangeInput, setSlideRangeInput] = useState("");
   const [knowledgeDocuments, setKnowledgeDocuments] = useState<TrainingKnowledgeDocument[]>(
@@ -4467,7 +4469,18 @@ const TrainingBuilder = ({
   const persistTrainingRecord = async (values: TrainingSetupValues, status: TrainingStatus) => {
     try {
       const todayLabel = getTodayLabel();
-      const resolvedSlides = await ensureVoiceNarrationAssets(values);
+      const resolvedSelectedSlides = await ensureVoiceNarrationAssets(values);
+      const resolvedSelectedSlidesMap = new Map(resolvedSelectedSlides.map((s) => [s.id, s]));
+      const allResolvedSlides = slidesDraft.map((slide) => {
+        const isSelected = selectedNarrationSlideIds.includes(slide.id);
+        const resolvedSelected = resolvedSelectedSlidesMap.get(slide.id);
+        return {
+          ...(resolvedSelected || slide),
+          unselected: !isSelected,
+        };
+      });
+      const firstSelectedSlide = allResolvedSlides.find((slide) => !slide.unselected) || allResolvedSlides[0];
+
       const nextQuestionReviewStatus: TrainingQuestionCheckpoint["reviewStatus"] =
         status === "review" ? "review" : status === "approved" ? "approved" : "draft";
       const fallbackQuestionSet =
@@ -4478,12 +4491,12 @@ const TrainingBuilder = ({
               label:
                 activeQuestionSet?.label ||
                 buildQuestionSetLabel(
-                  activeQuestionSet?.slideTitle || resolvedSlides[0]?.title || "Training Slide",
+                  activeQuestionSet?.slideTitle || firstSelectedSlide?.title || "Training Slide",
                   1,
                 ),
               placementMode: activeQuestionSet?.placementMode || "after_slide",
-              slideId: activeQuestionSet?.slideId ?? resolvedSlides[0]?.id ?? null,
-              slideTitle: activeQuestionSet?.slideTitle || resolvedSlides[0]?.title || "",
+              slideId: activeQuestionSet?.slideId ?? firstSelectedSlide?.id ?? null,
+              slideTitle: activeQuestionSet?.slideTitle || firstSelectedSlide?.title || "",
               difficultyLevel: activeQuestionSet?.difficultyLevel ?? questionGeneratorConfig.difficultyLevel,
               topicTags: activeQuestionSet?.topicTags ?? questionGeneratorConfig.topicTags,
               checkpoints: questionCheckpoints,
@@ -4556,8 +4569,8 @@ const TrainingBuilder = ({
         scriptPrompt,
         previewSlideId:
           previewSlideId &&
-          previewSlideId !== resolvedSlides[0]?.id &&
-          resolvedSlides.some((slide) => slide.id === previewSlideId)
+          previewSlideId !== firstSelectedSlide?.id &&
+          allResolvedSlides.some((slide) => slide.id === previewSlideId && !slide.unselected)
             ? previewSlideId
             : null,
         previewThumbnailAssetId: previewThumbnailAssetId || null,
@@ -4624,7 +4637,7 @@ const TrainingBuilder = ({
               }
             : null,
         avatarEngine: buildAvatarEngineFromValues(values),
-        slides: resolvedSlides.map((slide, index) => ({
+        slides: allResolvedSlides.map((slide, index) => ({
           ...slide,
           color: slideColorCycle[index % slideColorCycle.length],
         })),
