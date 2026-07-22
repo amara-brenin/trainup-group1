@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import PageShell from "../../component/common/PageShell";
-import ActionDropdown from "../../component/common/ActionDropdown";
 import AxiosHelper from "../../helper/AxiosHelper";
-import { Modal } from "../../component/common/Modal";
-import { toast } from "react-toastify";
-import type { ClientRecord } from "../../constant/interfaces";
 
 type ApiAvatarItem = {
   _id: string;
@@ -18,74 +14,25 @@ type ApiAvatarItem = {
 
 const Avatars = () => {
   const [avatars, setAvatars] = useState<ApiAvatarItem[]>([]);
-  const [clients, setClients] = useState<ClientRecord[]>([]);
   const [loading, setLoading] = useState(false);
-  const [assignModalOpen, setAssignModalOpen] = useState(false);
-  const [selectedAvatar, setSelectedAvatar] = useState<ApiAvatarItem | null>(null);
-  const [assigningClients, setAssigningClients] = useState<string[]>([]);
-  const [assignLoading, setAssignLoading] = useState(false);
 
   const fetchAvatars = useCallback(async () => {
     setLoading(true);
-    const { data: response } = await AxiosHelper.getData<{ data: ApiAvatarItem[] }>("/avatars");
-    if (response.status && Array.isArray(response.data)) {
-      setAvatars(response.data);
-    }
-    setLoading(false);
-  }, []);
-
-  const fetchClients = useCallback(async () => {
-    // Limit to 1000 for simplicity in dropdown
-    const { data: response } = await AxiosHelper.getData<any>("/clients", { limit: 1000, pageNo: 1 });
-    if (response.status && response.data?.record) {
-      setClients(response.data.record);
+    try {
+      const { data: response } = await AxiosHelper.getData<{ data: ApiAvatarItem[] }>("/avatars");
+      if (response.status && Array.isArray(response.data)) {
+        setAvatars(response.data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch avatars", err);
+    } finally {
+      setLoading(false);
     }
   }, []);
 
   useEffect(() => {
     void fetchAvatars();
-    void fetchClients();
-  }, [fetchAvatars, fetchClients]);
-
-  const handleOpenAssignModal = (avatar: ApiAvatarItem) => {
-    setSelectedAvatar(avatar);
-    setAssigningClients([]);
-    setAssignModalOpen(true);
-  };
-
-  const handleAssignSubmit = async () => {
-    if (!selectedAvatar) return;
-    setAssignLoading(true);
-
-    try {
-      for (const clientId of assigningClients) {
-        const { data: clientData } = await AxiosHelper.getData<{ data: any }>(`/clients/${clientId}`);
-        if (clientData.status && clientData.data) {
-          const client = clientData.data;
-          const currentAvatars = Array.isArray(client.assignedAvatars) ? client.assignedAvatars : [];
-          if (!currentAvatars.includes(selectedAvatar.avatarId)) {
-            const nextAvatars = [...currentAvatars, selectedAvatar.avatarId];
-            await AxiosHelper.putData(`/clients/${clientId}`, {
-              ...client,
-              assignedAvatars: nextAvatars,
-            });
-          }
-        }
-      }
-      toast.success("Avatar assigned successfully");
-      setAssignModalOpen(false);
-    } catch (err) {
-      toast.error("Failed to assign avatar");
-    } finally {
-      setAssignLoading(false);
-    }
-  };
-
-  const toggleClientSelection = (clientId: string) => {
-    setAssigningClients((prev) =>
-      prev.includes(clientId) ? prev.filter((id) => id !== clientId) : [...prev, clientId]
-    );
-  };
+  }, [fetchAvatars]);
 
   return (
     <PageShell title="Avatar Management" description="View available avatars on the platform.">
