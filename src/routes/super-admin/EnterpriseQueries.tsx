@@ -41,7 +41,8 @@ const STATUS_LABEL: Record<string, string> = {
 const EnterpriseQueries = () => {
   const [rows, setRows] = useState<EnterpriseRequestRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [offerFor, setOfferFor] = useState<EnterpriseRequestRow | null>(null);
+  const [viewingQuery, setViewingQuery] = useState<EnterpriseRequestRow | null>(null);
+  const [showOfferForm, setShowOfferForm] = useState(false);
   const [offerPrice, setOfferPrice] = useState(0);
   const [offerCredits, setOfferCredits] = useState(0);
   const [offerValidityDays, setOfferValidityDays] = useState(30);
@@ -62,17 +63,23 @@ const EnterpriseQueries = () => {
     void fetchRows();
   }, [fetchRows]);
 
-  const openOffer = (row: EnterpriseRequestRow) => {
-    setOfferFor(row);
+  const handleOpenView = (row: EnterpriseRequestRow) => {
+    setViewingQuery(row);
+    setShowOfferForm(false);
     setOfferPrice(row.approxBudget || 0);
     setOfferCredits(0);
     setOfferValidityDays(30);
   };
 
-  const closeOffer = () => setOfferFor(null);
+
+
+  const closeView = () => {
+    setViewingQuery(null);
+    setShowOfferForm(false);
+  };
 
   const sendOffer = async () => {
-    if (!offerFor) return;
+    if (!viewingQuery) return;
     if (!offerCredits) {
       toast.error("Enter the custom credits to grant.");
       return;
@@ -80,14 +87,14 @@ const EnterpriseQueries = () => {
 
     setSubmittingOffer(true);
     const res = await AxiosHelper.postData(
-      `/enterprise-requests/${offerFor.clientId}/${offerFor.requestId}/offer`,
+      `/enterprise-requests/${viewingQuery.clientId}/${viewingQuery.requestId}/offer`,
       { price: offerPrice, credits: offerCredits, validityDays: offerValidityDays },
     );
     setSubmittingOffer(false);
 
     if (res.data.status) {
       toast.success("Offer sent to the client.");
-      closeOffer();
+      closeView();
       await fetchRows();
     } else {
       toast.error(res.data.message);
@@ -97,12 +104,14 @@ const EnterpriseQueries = () => {
   const rejectRequest = async (row: EnterpriseRequestRow) => {
     const result = await Swal.fire({
       title: `Decline ${row.clientName}'s request?`,
+      text: "Are you sure you want to decline this enterprise query? This action cannot be easily undone.",
       input: "text",
       inputPlaceholder: "Optional reason (shared with the client)",
       icon: "warning",
       showCancelButton: true,
       confirmButtonText: "Decline",
       confirmButtonColor: "#f15776",
+      cancelButtonText: "Cancel",
     });
 
     if (!result.isConfirmed) return;
@@ -114,20 +123,14 @@ const EnterpriseQueries = () => {
 
     if (res.data.status) {
       toast.success("Request declined.");
+      closeView();
       await fetchRows();
     } else {
       toast.error(res.data.message);
     }
   };
 
-  const approxSummary = (row: EnterpriseRequestRow) => {
-    const parts: string[] = [];
-    if (row.approxUsers) parts.push(`${row.approxUsers.toLocaleString()} users`);
-    if (row.approxTrainings) parts.push(`${row.approxTrainings.toLocaleString()} trainings/mo`);
-    if (row.approxSessions) parts.push(`${row.approxSessions.toLocaleString()} sessions/mo`);
-    if (row.approxBudget) parts.push(`budget ${row.approxBudget.toLocaleString()}`);
-    return parts.length ? parts.join(", ") : "—";
-  };
+
 
   return (
     <div>
@@ -145,8 +148,6 @@ const EnterpriseQueries = () => {
               <tr>
                 <th>Company</th>
                 <th>Requested By</th>
-                <th>Approx. requirement</th>
-                <th>Message</th>
                 <th>Status</th>
                 <th>Requested</th>
                 <th className="text-end">Actions</th>
@@ -154,7 +155,7 @@ const EnterpriseQueries = () => {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={7} className="text-center py-4 text-body-secondary">Loading queries…</td></tr>
+                <tr><td colSpan={5} className="text-center py-4 text-body-secondary">Loading queries…</td></tr>
               ) : rows.length ? (
                 rows.map((row) => (
                   <tr key={`${row.clientId}-${row.requestId}`}>
@@ -162,10 +163,6 @@ const EnterpriseQueries = () => {
                     <td>
                       <div>{row.requestedByName}</div>
                       <div className="small text-body-secondary">{row.requestedByEmail}</div>
-                    </td>
-                    <td>{approxSummary(row)}</td>
-                    <td style={{ maxWidth: 260 }}>
-                      <div className="small text-truncate" title={row.message}>{row.message || "—"}</div>
                     </td>
                     <td>
                       <span className={`badge ${STATUS_BADGE[row.status] || "text-bg-secondary"}`}>
@@ -179,77 +176,183 @@ const EnterpriseQueries = () => {
                     </td>
                     <td>{new Date(row.requestedAt).toLocaleDateString()}</td>
                     <td className="text-end">
-                      {row.status === "pending" ? (
-                        <div className="d-flex justify-content-end gap-2">
-                          <button type="button" className="btn btn-sm btn-primary" onClick={() => openOffer(row)}>
-                            Send Offer
-                          </button>
-                          <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => void rejectRequest(row)}>
-                            Decline
-                          </button>
-                        </div>
-                      ) : row.status === "offer_sent" ? (
-                        <div className="d-flex justify-content-end gap-2">
-                          <span className="small text-body-secondary align-self-center">Awaiting payment</span>
-                          <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => void rejectRequest(row)}>
-                            Decline
-                          </button>
-                        </div>
-                      ) : (
-                        <span className="small text-body-secondary">
-                          {row.status === "rejected" && row.rejectReason ? row.rejectReason : "—"}
-                        </span>
-                      )}
+                      <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => handleOpenView(row)}>
+                        <i className="bi bi-eye me-1" /> View
+                      </button>
                     </td>
                   </tr>
                 ))
               ) : (
-                <tr><td colSpan={7} className="text-center py-4 text-body-secondary">No enterprise queries yet.</td></tr>
+                <tr><td colSpan={5} className="text-center py-4 text-body-secondary">No enterprise queries yet.</td></tr>
               )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {offerFor && (
-        <Modal show title={`Send Offer — ${offerFor.clientName}`} onClose={closeOffer}>
-          <p className="small text-body-secondary">
-            This sends a payable offer to the client. Credits are granted only once they confirm payment on their own Upgrade &amp; Billing page.
-          </p>
-          <div className="row g-2">
-            <div className="col-6">
-              <label className="form-label small">Price</label>
-              <input
-                type="number"
-                className="form-control"
-                value={offerPrice}
-                onChange={(e) => setOfferPrice(Number(e.target.value))}
-              />
+      {viewingQuery && (
+        <Modal show title={`Enterprise Query — ${viewingQuery.clientName}`} onClose={closeView} size="lg">
+          <div className="p-1">
+            {/* Top Compact Split Grid */}
+            <div className="row g-3 mb-3">
+              {/* Left Column: Client Details */}
+              <div className="col-12 col-md-5 border-end">
+                <div className="pe-md-2">
+                  <h6 className="fw-bold text-uppercase small text-body-secondary mb-2" style={{ letterSpacing: "0.5px" }}>Request Details</h6>
+                  <ul className="list-group list-group-flush small" style={{ fontSize: "13px" }}>
+                    <li className="list-group-item px-0 py-1.5 d-flex justify-content-between align-items-center bg-transparent">
+                      <span className="text-body-secondary">Company:</span>
+                      <strong className="text-end text-dark">{viewingQuery.clientName}</strong>
+                    </li>
+                    <li className="list-group-item px-0 py-1.5 d-flex justify-content-between align-items-center bg-transparent">
+                      <span className="text-body-secondary">Contact Name:</span>
+                      <span className="text-end fw-semibold text-dark">{viewingQuery.requestedByName}</span>
+                    </li>
+                    <li className="list-group-item px-0 py-1.5 d-flex justify-content-between align-items-center bg-transparent">
+                      <span className="text-body-secondary">Contact Email:</span>
+                      <a href={`mailto:${viewingQuery.requestedByEmail}`} className="text-decoration-none fw-semibold">{viewingQuery.requestedByEmail}</a>
+                    </li>
+                    <li className="list-group-item px-0 py-1.5 d-flex justify-content-between align-items-center bg-transparent">
+                      <span className="text-body-secondary">Requested On:</span>
+                      <span className="text-dark">{new Date(viewingQuery.requestedAt).toLocaleDateString()}</span>
+                    </li>
+                    <li className="list-group-item px-0 py-1.5 d-flex justify-content-between align-items-center bg-transparent">
+                      <span className="text-body-secondary">Current Status:</span>
+                      <span className={`badge ${STATUS_BADGE[viewingQuery.status] || "text-bg-secondary"}`}>
+                        {STATUS_LABEL[viewingQuery.status] || viewingQuery.status}
+                      </span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+
+              {/* Right Column: Requirements & Message */}
+              <div className="col-12 col-md-7">
+                <div className="ps-md-2">
+                  <h6 className="fw-bold text-uppercase small text-body-secondary mb-2" style={{ letterSpacing: "0.5px" }}>Approximate Requirements</h6>
+                  <div className="row g-2 mb-3 text-center">
+                    <div className="col-3">
+                      <div className="border rounded py-2 bg-light px-1">
+                        <span className="d-block text-body-secondary text-uppercase font-monospace mb-1" style={{ fontSize: "9px" }}>Users</span>
+                        <strong className="small text-dark">{viewingQuery.approxUsers?.toLocaleString() || "—"}</strong>
+                      </div>
+                    </div>
+                    <div className="col-3">
+                      <div className="border rounded py-2 bg-light px-1">
+                        <span className="d-block text-body-secondary text-uppercase font-monospace mb-1" style={{ fontSize: "9px" }}>Trainings/mo</span>
+                        <strong className="small text-dark">{viewingQuery.approxTrainings?.toLocaleString() || "—"}</strong>
+                      </div>
+                    </div>
+                    <div className="col-3">
+                      <div className="border rounded py-2 bg-light px-1">
+                        <span className="d-block text-body-secondary text-uppercase font-monospace mb-1" style={{ fontSize: "9px" }}>Sessions/mo</span>
+                        <strong className="small text-dark">{viewingQuery.approxSessions?.toLocaleString() || "—"}</strong>
+                      </div>
+                    </div>
+                    <div className="col-3">
+                      <div className="border rounded py-2 bg-light px-1">
+                        <span className="d-block text-body-secondary text-uppercase font-monospace mb-1" style={{ fontSize: "9px" }}>Budget</span>
+                        <strong className="small text-dark">{viewingQuery.approxBudget ? `₹${viewingQuery.approxBudget.toLocaleString()}` : "—"}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <h6 className="fw-bold text-uppercase small text-body-secondary mb-1" style={{ letterSpacing: "0.5px" }}>Message</h6>
+                  <div className="bg-light p-2 rounded border small text-start" style={{ whiteSpace: "pre-wrap", minHeight: "80px", maxHeight: "140px", overflowY: "auto", fontSize: "13px" }}>
+                    {viewingQuery.message || <em className="text-body-secondary">No message provided.</em>}
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className="col-6">
-              <label className="form-label small">Credits</label>
-              <input
-                type="number"
-                className="form-control"
-                value={offerCredits}
-                onChange={(e) => setOfferCredits(Number(e.target.value))}
-              />
-            </div>
-            <div className="col-6">
-              <label className="form-label small">Validity (days)</label>
-              <input
-                type="number"
-                className="form-control"
-                value={offerValidityDays}
-                onChange={(e) => setOfferValidityDays(Number(e.target.value))}
-              />
-            </div>
+
+            {/* Offer details if already resolved */}
+            {viewingQuery.status === "offer_sent" && viewingQuery.offerCredits ? (
+              <div className="alert alert-warning py-2 px-3 d-flex align-items-center my-3 mb-1 small">
+                <i className="bi bi-info-circle-fill me-2 fs-6" />
+                <div>
+                  <strong>Active Offer Sent:</strong> {viewingQuery.offerCredits.toLocaleString()} credits for <strong>₹{viewingQuery.offerPrice?.toLocaleString()}</strong> with validity of {viewingQuery.offerValidityDays || 30} days. Awaiting client payment.
+                </div>
+              </div>
+            ) : viewingQuery.status === "rejected" ? (
+              <div className="alert alert-danger py-2 px-3 d-flex align-items-center my-3 mb-1 small">
+                <i className="bi bi-x-circle-fill me-2 fs-6" />
+                <div>
+                  <strong>Declined:</strong> {viewingQuery.rejectReason ? `Reason given: "${viewingQuery.rejectReason}"` : "This query was declined."}
+                </div>
+              </div>
+            ) : null}
+
+            {/* Custom Offer Send Form Section */}
+            {showOfferForm && (
+              <div className="border rounded p-3 bg-light-subtle my-3 mb-1 animate-fade-in">
+                <h5 className="h6 fw-bold mb-2 text-primary"><i className="bi bi-gift-fill me-1" /> Prepare Custom Offer</h5>
+                <p className="small text-body-secondary mb-3" style={{ fontSize: "12px" }}>
+                  This sends a payable custom offer directly to the client. Credits are granted only once they confirm and pay on their Upgrade &amp; Billing page.
+                </p>
+                <div className="row g-2">
+                  <div className="col-12 col-md-4">
+                    <label className="form-label small mb-1">Price (INR)</label>
+                    <input
+                      type="number"
+                      className="form-control form-control-sm"
+                      value={offerPrice}
+                      onChange={(e) => setOfferPrice(Number(e.target.value))}
+                    />
+                  </div>
+                  <div className="col-12 col-md-4">
+                    <label className="form-label small mb-1">Credits to Grant</label>
+                    <input
+                      type="number"
+                      className="form-control form-control-sm"
+                      value={offerCredits}
+                      onChange={(e) => setOfferCredits(Number(e.target.value))}
+                    />
+                  </div>
+                  <div className="col-12 col-md-4">
+                    <label className="form-label small mb-1">Validity (days)</label>
+                    <input
+                      type="number"
+                      className="form-control form-control-sm"
+                      value={offerValidityDays}
+                      onChange={(e) => setOfferValidityDays(Number(e.target.value))}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-          <div className="d-flex justify-content-end gap-2 mt-3">
-            <button className="btn btn-light" onClick={closeOffer}>Cancel</button>
-            <button className="btn btn-primary" disabled={submittingOffer} onClick={() => void sendOffer()}>
-              {submittingOffer ? "Sending…" : "Send Offer"}
-            </button>
+
+          {/* Modal Actions Footer */}
+          <div className="d-flex justify-content-end gap-2 mt-3 pt-2 border-top">
+            {showOfferForm ? (
+              <>
+                <button type="button" className="btn btn-sm btn-light" onClick={() => setShowOfferForm(false)}>
+                  <i className="bi bi-arrow-left me-1" /> Back to Details
+                </button>
+                <button type="button" className="btn btn-sm btn-primary" disabled={submittingOffer} onClick={() => void sendOffer()}>
+                  {submittingOffer ? "Sending Offer…" : "Send Offer Now"}
+                </button>
+              </>
+            ) : (
+              <>
+                <button type="button" className="btn btn-sm btn-light" onClick={closeView}>Close</button>
+                {viewingQuery.status === "pending" && (
+                  <>
+                    <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => void rejectRequest(viewingQuery)}>
+                      <i className="bi bi-x-circle me-1" /> Decline Query
+                    </button>
+                    <button type="button" className="btn btn-sm btn-primary" onClick={() => setShowOfferForm(true)}>
+                      <i className="bi bi-send-fill me-1" /> Prepare Offer
+                    </button>
+                  </>
+                )}
+                {viewingQuery.status === "offer_sent" && (
+                  <button type="button" className="btn btn-sm btn-outline-danger" onClick={() => void rejectRequest(viewingQuery)}>
+                    <i className="bi bi-x-circle me-1" /> Decline Query
+                  </button>
+                )}
+              </>
+            )}
           </div>
         </Modal>
       )}

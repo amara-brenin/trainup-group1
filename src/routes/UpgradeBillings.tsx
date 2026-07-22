@@ -610,11 +610,18 @@ const UpgradeBillings = () => {
     seatLabel: "Pure Credit Based",
     features: plan.features?.length
       ? plan.features
-      : [
-          `Pay-as-you-go with credits`,
-          `No artificial resource limits`,
-          `${Number(plan.credits).toLocaleString()} credits / month`,
-        ],
+      : plan.code === "ENTERPRISE"
+        ? [
+            "Custom pricing and credit allocation",
+            "Dedicated onboarding support",
+            "Priority enterprise support",
+            "Assigned manually by super admin after discussion"
+          ]
+        : [
+            `Pay-as-you-go with credits`,
+            `No artificial resource limits`,
+            `${Number(plan.credits).toLocaleString()} credits / month`,
+          ],
     };
   });
 
@@ -870,24 +877,6 @@ const UpgradeBillings = () => {
             </div>
             ) : null}
 
-
-            <div className="admin-billing-support card">
-              <div className="card-body">
-                <div className="admin-billing-support-copy">
-                  <span className="admin-billing-support-icon">
-                    <i className="ri-customer-service-2-line" />
-                  </span>
-                  <div>
-                    <h2 className="h5 fw-semibold mb-1">Need Help?</h2>
-                    <p className="text-body-secondary mb-1">Contact our support team for any questions about your plan.</p>
-                    <a href="mailto:info@brenin.co">info@brenin.co</a>
-                  </div>
-                </div>
-                <button type="button" className="btn btn-outline-primary" onClick={() => setSupportOpen(true)}>
-                  Contact Support
-                </button>
-              </div>
-            </div>
 
             <div className="admin-billing-plan-section">
               <div className="mb-3">

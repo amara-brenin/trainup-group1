@@ -41,17 +41,46 @@ const list = async (_req, res) => {
     const seeds = Object.values(PLAN_CONFIGS).map((cfg) => ({
       appId: `plan-${cfg.code.toLowerCase()}-${Date.now()}`,
       code: cfg.code,
-      name: cfg.label,
+      name: cfg.label === "ENTERPRISE" ? "Enterprise" : cfg.label,
       price: cfg.price,
       discountPercentage: 0,
       credits: cfg.monthlyCredits,
       validityDays: 30,
-      features: [],
+      features: cfg.label === "ENTERPRISE" ? [
+        "Custom pricing and credit allocation",
+        "Dedicated onboarding support",
+        "Priority enterprise support",
+        "Assigned manually by super admin after discussion"
+      ] : [],
       active: true,
       createdBy: "system-seed",
     }));
     await Plan.insertMany(seeds);
     rows = await Plan.find({}).sort({ price: 1 }).lean();
+  } else {
+    // Check if ENTERPRISE plan is missing and auto-create it
+    const hasEnterprise = rows.some((r) => r.code === "ENTERPRISE");
+    if (!hasEnterprise) {
+      const enterpriseSeed = {
+        appId: `plan-enterprise-${Date.now()}`,
+        code: "ENTERPRISE",
+        name: "Enterprise",
+        price: 0,
+        discountPercentage: 0,
+        credits: 0,
+        validityDays: 30,
+        features: [
+          "Custom pricing and credit allocation",
+          "Dedicated onboarding support",
+          "Priority enterprise support",
+          "Assigned manually by super admin after discussion"
+        ],
+        active: true,
+        createdBy: "system-seed",
+      };
+      await Plan.create(enterpriseSeed);
+      rows = await Plan.find({}).sort({ price: 1 }).lean();
+    }
   }
   return ok(res, "Plans loaded.", { record: rows.map(planView) });
 };
@@ -59,7 +88,7 @@ const list = async (_req, res) => {
 // The Enterprise tier is priced per-client via the Queries/custom-offer flow
 // (see enterprise request accept/pay endpoints), not a fixed catalog price —
 // so its code is reserved: only one row may ever hold it, and that row's
-// name/price stay locked (see update() below).
+// name/price stay editable (see update() below).
 const RESERVED_PLAN_CODE = "ENTERPRISE";
 
 const create = async (req, res) => {
@@ -84,14 +113,7 @@ const update = async (req, res) => {
   const before = planView(row);
   const fields = pickFields(req.body);
 
-  // Enterprise pricing is set per-client (custom offers), and its name is the
-  // fixed catalog label clients see — both stay locked regardless of what a
-  // request submits, rather than rejecting the whole update.
-  if (row.code === RESERVED_PLAN_CODE) {
-    fields.name = "Enterprise";
-    fields.price = 0;
-  }
-
+  // Enterprise details can now be fully changed by the super admin from the dashboard.
   Object.assign(row, fields, { updatedBy: actorOf(req) });
   await row.save();
   await PlanChangeLog.create({ planId: row.appId, code: row.code, action: "updated", previousValues: before, newValues: planView(row), changedBy: actorOf(req) });

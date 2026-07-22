@@ -13,6 +13,7 @@ type Plan = {
   id: string; code: string; name: string;
   price: number; discountPercentage?: number; credits: number;
   validityDays: number; active: boolean;
+  features?: string[];
 };
 type PlanChange = {
   id: string; action: string; changedBy: string; changedAt: string;
@@ -20,7 +21,7 @@ type PlanChange = {
 };
 
 const blankForm = (): Partial<Plan> => ({
-  name: "", price: 0, discountPercentage: 0, credits: 0, validityDays: 30,
+  name: "", price: 0, discountPercentage: 0, credits: 0, validityDays: 30, features: [],
 });
 
 // The backend still requires a "code" (internal identifier, kept immutable
@@ -207,24 +208,16 @@ const PlanManagement = () => {
               <input
                 className="form-control"
                 value={form.name || ""}
-                disabled={editing?.code === "ENTERPRISE"}
                 onChange={(e) => setField("name", e.target.value)}
               />
-              {editing?.code === "ENTERPRISE" ? (
-                <div className="form-text">The Enterprise plan's name is fixed since it's the catalog entry point for custom pricing.</div>
-              ) : null}
             </div>
             <div className="col-6"><label className="form-label small">Price</label>
               <input
                 type="number"
                 className="form-control"
-                value={editing?.code === "ENTERPRISE" ? 0 : form.price ?? 0}
-                disabled={editing?.code === "ENTERPRISE"}
+                value={form.price ?? 0}
                 onChange={(e) => setField("price", e.target.value)}
               />
-              {editing?.code === "ENTERPRISE" ? (
-                <div className="form-text">Enterprise pricing is set per-client via the Queries tab, not a fixed catalog price.</div>
-              ) : null}
             </div>
             <div className="col-6"><label className="form-label small">Discount %</label>
               <input type="number" className="form-control" value={form.discountPercentage ?? 0} onChange={(e) => setField("discountPercentage", e.target.value)} /></div>
@@ -232,6 +225,15 @@ const PlanManagement = () => {
               <input type="number" className="form-control" value={form.credits ?? 0} onChange={(e) => setField("credits", e.target.value)} /></div>
             <div className="col-6"><label className="form-label small">Validity (days)</label>
               <input type="number" className="form-control" value={form.validityDays ?? 30} onChange={(e) => setField("validityDays", e.target.value)} /></div>
+            <div className="col-12"><label className="form-label small">Features (one per line)</label>
+              <textarea
+                className="form-control"
+                rows={3}
+                value={Array.isArray(form.features) ? form.features.join("\n") : ""}
+                onChange={(e) => setForm((prev) => ({ ...prev, features: e.target.value.split("\n") }))}
+                placeholder="Example:&#10;Pay-as-you-go with credits&#10;Dedicated onboarding support"
+              />
+            </div>
           </div>
           <div className="d-flex justify-content-end gap-2 mt-3">
             <button className="btn btn-light" onClick={closeForm}>Cancel</button>

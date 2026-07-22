@@ -1029,11 +1029,41 @@ const getBillingPlans = async (_req, res) => {
   let rows = await Plan.find({ active: true }).sort({ price: 1 }).lean();
   if (!rows.length) {
     rows = Object.values(PLAN_CONFIGS).map((cfg) => ({
-      code: cfg.code, name: cfg.label, price: cfg.price, discountPercentage: 0,
+      code: cfg.code, name: cfg.label === "ENTERPRISE" ? "Enterprise" : cfg.label, price: cfg.price, discountPercentage: 0,
       credits: cfg.monthlyCredits, trainingLimit: cfg.limits?.trainings ?? null,
       sessionLimit: cfg.limits?.sessions ?? null, userLimit: cfg.limits?.users ?? null,
-      features: [],
+      features: cfg.label === "ENTERPRISE" ? [
+        "Custom pricing and credit allocation",
+        "Dedicated onboarding support",
+        "Priority enterprise support",
+        "Assigned manually by super admin after discussion"
+      ] : [],
     }));
+  } else {
+    // Check if an ENTERPRISE plan exists in the DB (whether active or inactive)
+    const allPlans = await Plan.find({}).lean();
+    const hasEnterprise = allPlans.some((r) => r.code === "ENTERPRISE");
+    if (!hasEnterprise) {
+      const enterpriseSeed = {
+        appId: `plan-enterprise-${Date.now()}`,
+        code: "ENTERPRISE",
+        name: "Enterprise",
+        price: 0,
+        discountPercentage: 0,
+        credits: 0,
+        validityDays: 30,
+        features: [
+          "Custom pricing and credit allocation",
+          "Dedicated onboarding support",
+          "Priority enterprise support",
+          "Assigned manually by super admin after discussion"
+        ],
+        active: true,
+        createdBy: "system-seed",
+      };
+      await Plan.create(enterpriseSeed);
+      rows = await Plan.find({ active: true }).sort({ price: 1 }).lean();
+    }
   }
   return ok(res, "Plans loaded.", {
     record: rows.map((r) => ({
