@@ -28,7 +28,7 @@ const deriveEndTime = (startTime, training, config) => {
   let minutes = Number(payload.durationMins || payload.maxDurationMins || 0);
 
   if (!minutes || minutes <= 0) {
-    const slideCount = Array.isArray(payload.slides) ? payload.slides.length : 0;
+    const slideCount = Array.isArray(payload.slides) ? payload.slides.filter((slide) => !slide.unselected).length : 0;
     minutes = slideCount > 0 ? Math.ceil((slideCount * 45 + 300) / 60) : 60;
   }
   return new Date(start + minutes * 60 * 1000);

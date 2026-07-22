@@ -133,7 +133,7 @@ const sanitizeLaunchScript = ({ script, trainingTitle, slideTitle, index }) => {
 };
 
 const buildAskKnowledgeBase = (trainingPayload) => {
-  const slides = Array.isArray(trainingPayload?.slides) ? trainingPayload.slides : [];
+  const slides = (Array.isArray(trainingPayload?.slides) ? trainingPayload.slides : []).filter((slide) => !slide.unselected);
   const knowledgeDocuments = Array.isArray(trainingPayload?.knowledgeDocuments)
     ? trainingPayload.knowledgeDocuments
     : [];
@@ -855,9 +855,11 @@ const buildLaunchPayload = async ({ training, viewer, preview }) => {
   const branding = await buildLaunchBrandingPayload(training);
 
   const slides = await Promise.all(
-    (Array.isArray(training.payload?.slides) ? training.payload.slides : []).map((slide, index) =>
-      buildResolvedSlide(slide, training.clientId, index),
-    ),
+    (Array.isArray(training.payload?.slides) ? training.payload.slides : [])
+      .filter((slide) => !slide.unselected)
+      .map((slide, index) =>
+        buildResolvedSlide(slide, training.clientId, index),
+      ),
   );
   const previewThumbnailUrl = await buildResolvedPreviewThumbnailUrl(
     training.payload?.previewThumbnailAssetId,
