@@ -352,15 +352,15 @@ type ApiAvatarItem = {
   isShared?: boolean;
 };
 
-const SARAH_DEFAULT_AVATAR: ApiAvatarItem = {
-  _id: "sarah-westpac-default",
-  avatarId: "1647619895205577317",
-  avatarName: "Sarah (Westpac demo)",
-  avatarType: "2D",
-  avatarEngine: "Unity",
-  image: "",
-  isShared: true,
-};
+// const SARAH_DEFAULT_AVATAR: ApiAvatarItem = {
+//   _id: "sarah-westpac-default",
+//   avatarId: "1647619895205577317",
+//   avatarName: "Sarah (Westpac demo)",
+//   avatarType: "2D",
+//   avatarEngine: "Unity",
+//   image: "",
+//   isShared: true,
+// };
 
 const defaultAvatarEngineConfig: TrainingAvatarEngineConfig = {
   provider: "Trulience",
