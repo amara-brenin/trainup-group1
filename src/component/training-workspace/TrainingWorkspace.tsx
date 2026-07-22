@@ -2049,8 +2049,8 @@ const TrainingBuilder = ({
 
   // All selectable avatar options: Sarah default + API avatars
   const avatarOptions = useMemo<ApiAvatarItem[]>(
-    () => [SARAH_DEFAULT_AVATAR, ...apiAvatarList],
-    [apiAvatarList],
+    () => apiAvatarList,
+    [apiAvatarList]
   );
   const builderInitialValues = useMemo(
     () => buildDefaultSetupValues(initialTraining, avatarOptions),
@@ -4569,8 +4569,8 @@ const TrainingBuilder = ({
         scriptPrompt,
         previewSlideId:
           previewSlideId &&
-          previewSlideId !== firstSelectedSlide?.id &&
-          allResolvedSlides.some((slide) => slide.id === previewSlideId && !slide.unselected)
+            previewSlideId !== firstSelectedSlide?.id &&
+            allResolvedSlides.some((slide) => slide.id === previewSlideId && !slide.unselected)
             ? previewSlideId
             : null,
         previewThumbnailAssetId: previewThumbnailAssetId || null,
@@ -4611,30 +4611,30 @@ const TrainingBuilder = ({
         groupConfig:
           values.deliveryType === "group"
             ? {
-                capacity: Number(values.groupCapacity || 50),
-                startTime: localInputToIso(values.groupStartTime),
-                endTime: localInputToIso(values.groupEndTime),
-                autoStart: {
-                  mode: "scheduled",
-                  minParticipants: Number(values.groupMinParticipants || 1),
-                  graceMins: Number(values.groupGraceMins || 15),
-                },
-                attendanceRules: {
-                  minAttendancePct: Number(values.groupMinAttendancePct || 75),
-                  activeConfirmIntervalMins: 10,
-                },
-                qaRules: {
-                  maxSpeakSecs: Number(values.groupMaxSpeakSecs || 90),
-                  silenceTimeoutSecs: 20,
-                  maxQuestionsPerTrainee: Number(values.groupMaxQuestionsPerTrainee || 3),
-                  handRaiseCooldownSecs: 30,
-                },
-                completionRules: {
-                  minAttendancePct: Number(values.groupMinAttendancePct || 75),
-                  requireAssessmentPass: false,
-                },
-                assessment: { passPct: 60, scoring: "both" },
-              }
+              capacity: Number(values.groupCapacity || 50),
+              startTime: localInputToIso(values.groupStartTime),
+              endTime: localInputToIso(values.groupEndTime),
+              autoStart: {
+                mode: "scheduled",
+                minParticipants: Number(values.groupMinParticipants || 1),
+                graceMins: Number(values.groupGraceMins || 15),
+              },
+              attendanceRules: {
+                minAttendancePct: Number(values.groupMinAttendancePct || 75),
+                activeConfirmIntervalMins: 10,
+              },
+              qaRules: {
+                maxSpeakSecs: Number(values.groupMaxSpeakSecs || 90),
+                silenceTimeoutSecs: 20,
+                maxQuestionsPerTrainee: Number(values.groupMaxQuestionsPerTrainee || 3),
+                handRaiseCooldownSecs: 30,
+              },
+              completionRules: {
+                minAttendancePct: Number(values.groupMinAttendancePct || 75),
+                requireAssessmentPass: false,
+              },
+              assessment: { passPct: 60, scoring: "both" },
+            }
             : null,
         avatarEngine: buildAvatarEngineFromValues(values),
         slides: allResolvedSlides.map((slide, index) => ({
@@ -5660,87 +5660,87 @@ const TrainingBuilder = ({
 
                     {mode === "upload" ? (
                       <>
-                      <div className="row g-4">
-                        <div className="col-12 col-xl-7">
-                          <div className="training-upload-panel">
-                            <button
-                              type="button"
-                              className="training-upload-dropzone"
-                              onClick={() => uploadInputRef.current?.click()}
-                              disabled={isImportingMedia}
-                            >
-                              {isImportingMedia ? (
-                                <>
-                                  <span className="spinner-border text-primary" aria-hidden="true" />
-                                  <strong>Preparing slides...</strong>
-                                  <small>Deck pages are being converted into slide previews.</small>
-                                </>
-                              ) : (
-                                <>
-                                  <i className="bi bi-file-earmark-slides display-6" aria-hidden="true" />
-                                  <strong>Click to upload or drag & drop</strong>
-                                  <small>PDF or PPTX | Max 50MB</small>
-                                </>
-                              )}
-                            </button>
+                        <div className="row g-4">
+                          <div className="col-12 col-xl-7">
+                            <div className="training-upload-panel">
+                              <button
+                                type="button"
+                                className="training-upload-dropzone"
+                                onClick={() => uploadInputRef.current?.click()}
+                                disabled={isImportingMedia}
+                              >
+                                {isImportingMedia ? (
+                                  <>
+                                    <span className="spinner-border text-primary" aria-hidden="true" />
+                                    <strong>Preparing slides...</strong>
+                                    <small>Deck pages are being converted into slide previews.</small>
+                                  </>
+                                ) : (
+                                  <>
+                                    <i className="bi bi-file-earmark-slides display-6" aria-hidden="true" />
+                                    <strong>Click to upload or drag & drop</strong>
+                                    <small>PDF or PPTX | Max 50MB</small>
+                                  </>
+                                )}
+                              </button>
 
-                            {uploadedFiles.length ? (
-                              <div className="experience-list">
-                                {uploadedFiles.map((file) => (
-                                  <div key={file.id} className="experience-list-item">
-                                    <div className="d-flex align-items-center justify-content-between gap-3">
-                                      <div>
-                                        <div className="fw-semibold">{file.fileName}</div>
-                                        <div className="small text-body-secondary">
-                                          {file.kind === "ppt" ? "PPTX slides converted into slide previews" : "PDF pages extracted as slide previews"} |{" "}
-                                          {file.slideCount} slide{file.slideCount === 1 ? "" : "s"}
+                              {uploadedFiles.length ? (
+                                <div className="experience-list">
+                                  {uploadedFiles.map((file) => (
+                                    <div key={file.id} className="experience-list-item">
+                                      <div className="d-flex align-items-center justify-content-between gap-3">
+                                        <div>
+                                          <div className="fw-semibold">{file.fileName}</div>
+                                          <div className="small text-body-secondary">
+                                            {file.kind === "ppt" ? "PPTX slides converted into slide previews" : "PDF pages extracted as slide previews"} |{" "}
+                                            {file.slideCount} slide{file.slideCount === 1 ? "" : "s"}
+                                          </div>
                                         </div>
+                                        <button
+                                          type="button"
+                                          className="btn btn-sm btn-outline-danger"
+                                          onClick={() => {
+                                            void removeImportedBatch(file.id);
+                                          }}
+                                        >
+                                          Remove
+                                        </button>
                                       </div>
-                                      <button
-                                        type="button"
-                                        className="btn btn-sm btn-outline-danger"
-                                        onClick={() => {
-                                          void removeImportedBatch(file.id);
-                                        }}
-                                      >
-                                        Remove
-                                      </button>
                                     </div>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : null}
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
                           </div>
-                        </div>
 
-                        <div className="col-12 col-xl-5">
-                          <div className="card h-100 border">
-                            <div className="card-body">
-                              <label htmlFor="scriptPrompt" className="form-label">
-                                Script Generation Prompt
-                              </label>
-                              <textarea
-                                id="scriptPrompt"
-                                className="form-control"
-                                rows={7}
-                                value={scriptPrompt}
-                                onChange={(event) => setScriptPrompt(event.target.value)}
-                              />
-                              <p className="small text-muted mt-3 mb-0">
-                                OCR reads each imported slide, and this prompt is applied when you continue to Step 3.
-                              </p>
+                          <div className="col-12 col-xl-5">
+                            <div className="card h-100 border">
+                              <div className="card-body">
+                                <label htmlFor="scriptPrompt" className="form-label">
+                                  Script Generation Prompt
+                                </label>
+                                <textarea
+                                  id="scriptPrompt"
+                                  className="form-control"
+                                  rows={7}
+                                  value={scriptPrompt}
+                                  onChange={(event) => setScriptPrompt(event.target.value)}
+                                />
+                                <p className="small text-muted mt-3 mb-0">
+                                  OCR reads each imported slide, and this prompt is applied when you continue to Step 3.
+                                </p>
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
 
-                      {slidesDraft.length && uploadedFiles.length ? (
-                        <div className="mt-4">
-                          {renderSlideSelectionPicker(
-                            "Narration is generated only for the slides you select below, like choosing a page range to print. You can revisit this selection later in Step 4 (Manage Slides).",
-                          )}
-                        </div>
-                      ) : null}
+                        {slidesDraft.length && uploadedFiles.length ? (
+                          <div className="mt-4">
+                            {renderSlideSelectionPicker(
+                              "Narration is generated only for the slides you select below, like choosing a page range to print. You can revisit this selection later in Step 4 (Manage Slides).",
+                            )}
+                          </div>
+                        ) : null}
                       </>
                     ) : (
                       <div className="experience-list">
