@@ -1993,10 +1993,10 @@ const TrainingBuilder = ({
   useEffect(() => {
     let cancelled = false;
     setIsLoadingApiAvatars(true);
-    fetch(`${AMARA_API_BASE}/api-v1/external/get-avatar`, {
+    fetch(getRequestUrl("/avatars"), {
       method: "GET",
       headers: {
-        "X-Api-Key": AMARA_API_KEY,
+        Authorization: `Bearer ${auth.token}`,
       },
     })
       .then((res) => res.json())

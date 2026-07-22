@@ -11,6 +11,15 @@ import type { ActionResponse, ClientRecord, ClientSettingsSection } from "../../
 import AxiosHelper from "../../helper/AxiosHelper";
 import { validateBrandAssetSource } from "../../helper/brandingAssets";
 import { sanitizePhoneInput } from "../../helper/validation";
+import { Modal } from "../../component/common/Modal";
+
+interface ApiAvatarItem {
+  avatarId: string;
+  avatarName: string;
+  image: string;
+  provider: string;
+  templateId: string;
+}
 
 const tabOptions: Array<{ id: ClientSettingsSection | "overview"; label: string }> = [
   { id: "overview", label: "Overview" },
@@ -18,6 +27,7 @@ const tabOptions: Array<{ id: ClientSettingsSection | "overview"; label: string 
   { id: "clientAdmin", label: "Client Admin" },
   { id: "domain", label: "Domain" },
   { id: "whitelabel", label: "White-labeling" },
+  { id: "avatars", label: "Avatars" },
   { id: "integrations", label: "Integrations" },
   { id: "smtp", label: "SMTP" },
   { id: "billing", label: "Billing" },
@@ -41,6 +51,13 @@ const ClientDetail = () => {
   const [actionLoading, setActionLoading] = useState<"" | "domain" | "webhook" | "smtp" | "clientAdminEmail">("");
   const [selectedMethod, setSelectedMethod] = useState<string>("all");
 
+  // Avatar assignment states
+  const [allAvatars, setAllAvatars] = useState<ApiAvatarItem[]>([]);
+  const [avatarsLoading, setAvatarsLoading] = useState(false);
+  const [assignModalOpen, setAssignModalOpen] = useState(false);
+  const [selectedAvatars, setSelectedAvatars] = useState<string[]>([]);
+  const [assignLoading, setAssignLoading] = useState(false);
+
   const fetchClient = useCallback(async () => {
     const { data } = await AxiosHelper.getData<ClientRecord>(`/clients/${clientId}`);
     if (data.status) {
@@ -50,9 +67,24 @@ const ClientDetail = () => {
     }
   }, [clientId]);
 
+  const fetchAllAvatars = useCallback(async () => {
+    setAvatarsLoading(true);
+    try {
+      const response = await AxiosHelper.getData<ApiAvatarItem[]>("/avatars");
+      if (response.data.status) {
+        setAllAvatars(response.data.data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch avatars", err);
+    } finally {
+      setAvatarsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void fetchClient();
-  }, [fetchClient]);
+    void fetchAllAvatars();
+  }, [fetchClient, fetchAllAvatars]);
 
   const overviewMetrics = useMemo(() => {
     if (!client) {
@@ -118,6 +150,39 @@ const ClientDetail = () => {
     }
 
     setActionLoading("");
+  };
+
+  const handleOpenAssignModal = () => {
+    setSelectedAvatars(client?.assignedAvatars || []);
+    setAssignModalOpen(true);
+  };
+
+  const toggleAvatarSelection = (avatarId: string) => {
+    setSelectedAvatars((prev) =>
+      prev.includes(avatarId) ? prev.filter((id) => id !== avatarId) : [...prev, avatarId]
+    );
+  };
+
+  const handleAssignSubmit = async () => {
+    if (!client) return;
+    setAssignLoading(true);
+    try {
+      const response = await AxiosHelper.putData<ClientRecord, { section: string; values: any }>(`/clients/${clientId}/settings`, {
+        section: "avatars",
+        values: { assignedAvatars: selectedAvatars },
+      });
+      if (response.data.status) {
+        setClient(response.data.data);
+        toast.success("Avatars assigned successfully");
+        setAssignModalOpen(false);
+      } else {
+        toast.error(response.data.message);
+      }
+    } catch (err) {
+      toast.error("Failed to assign avatars");
+    } finally {
+      setAssignLoading(false);
+    }
   };
 
   if (!client) {
@@ -276,60 +341,60 @@ const ClientDetail = () => {
               onSubmit={async (values, { setErrors }) => saveSection("company", values, setErrors)}
             >
               {({ values, setFieldValue }) => (
-              <Form>
-                <div className="admin-form-grid">
-                  <div>
-                    <label htmlFor="company-name" className="form-label">Company name</label>
-                    <Field name="name" id="company-name" className="form-control" />
-                    <ErrorMessage name="name" component="small" className="text-danger" />
+                <Form>
+                  <div className="admin-form-grid">
+                    <div>
+                      <label htmlFor="company-name" className="form-label">Company name</label>
+                      <Field name="name" id="company-name" className="form-control" />
+                      <ErrorMessage name="name" component="small" className="text-danger" />
+                    </div>
+                    <div>
+                      <label htmlFor="company-industry" className="form-label">Industry</label>
+                      <Field name="industry" id="company-industry" className="form-control" />
+                      <ErrorMessage name="industry" component="small" className="text-danger" />
+                    </div>
+                    <div>
+                      <label htmlFor="company-supportEmail" className="form-label">Support email</label>
+                      <Field name="supportEmail" id="company-supportEmail" className="form-control" />
+                      <ErrorMessage name="supportEmail" component="small" className="text-danger" />
+                    </div>
+                    <div>
+                      <label htmlFor="company-phone" className="form-label">Company phone</label>
+                      <Field
+                        name="companyPhone"
+                        id="company-phone"
+                        className="form-control"
+                        inputMode="numeric"
+                        value={values.companyPhone}
+                        onChange={(e: ChangeEvent<HTMLInputElement>) =>
+                          void setFieldValue("companyPhone", sanitizePhoneInput(e.target.value))
+                        }
+                      />
+                      <ErrorMessage name="companyPhone" component="small" className="text-danger" />
+                    </div>
+                    <div>
+                      <label htmlFor="company-address" className="form-label">Company address</label>
+                      <Field name="companyAddress" id="company-address" className="form-control" />
+                    </div>
+                    <div>
+                      <label htmlFor="company-status" className="form-label">Status</label>
+                      <Field as="select" name="status" id="company-status" className="form-select">
+                        <option value="active">Active</option>
+                        <option value="trial">Trial</option>
+                        <option value="inactive">Inactive</option>
+                      </Field>
+                    </div>
+                    <div>
+                      <label htmlFor="company-csm" className="form-label">CSM</label>
+                      <Field name="csm" id="company-csm" className="form-control" />
+                    </div>
                   </div>
-                  <div>
-                    <label htmlFor="company-industry" className="form-label">Industry</label>
-                    <Field name="industry" id="company-industry" className="form-control" />
-                    <ErrorMessage name="industry" component="small" className="text-danger" />
+                  <div className="d-flex justify-content-end pt-3">
+                    <button type="submit" className="btn btn-primary" disabled={savingSection === "company"}>
+                      {savingSection === "company" ? "Saving..." : "Save company settings"}
+                    </button>
                   </div>
-                  <div>
-                    <label htmlFor="company-supportEmail" className="form-label">Support email</label>
-                    <Field name="supportEmail" id="company-supportEmail" className="form-control" />
-                    <ErrorMessage name="supportEmail" component="small" className="text-danger" />
-                  </div>
-                  <div>
-                    <label htmlFor="company-phone" className="form-label">Company phone</label>
-                    <Field
-                      name="companyPhone"
-                      id="company-phone"
-                      className="form-control"
-                      inputMode="numeric"
-                      value={values.companyPhone}
-                      onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                        void setFieldValue("companyPhone", sanitizePhoneInput(e.target.value))
-                      }
-                    />
-                    <ErrorMessage name="companyPhone" component="small" className="text-danger" />
-                  </div>
-                  <div>
-                    <label htmlFor="company-address" className="form-label">Company address</label>
-                    <Field name="companyAddress" id="company-address" className="form-control" />
-                  </div>
-                  <div>
-                    <label htmlFor="company-status" className="form-label">Status</label>
-                    <Field as="select" name="status" id="company-status" className="form-select">
-                      <option value="active">Active</option>
-                      <option value="trial">Trial</option>
-                      <option value="inactive">Inactive</option>
-                    </Field>
-                  </div>
-                  <div>
-                    <label htmlFor="company-csm" className="form-label">CSM</label>
-                    <Field name="csm" id="company-csm" className="form-control" />
-                  </div>
-                </div>
-                <div className="d-flex justify-content-end pt-3">
-                  <button type="submit" className="btn btn-primary" disabled={savingSection === "company"}>
-                    {savingSection === "company" ? "Saving..." : "Save company settings"}
-                  </button>
-                </div>
-              </Form>
+                </Form>
               )}
             </Formik>
           </div>
@@ -634,257 +699,257 @@ const ClientDetail = () => {
               enableReinitialize
               onSubmit={async (values, { setErrors }) => saveSection("integrations", values, setErrors)}
             >
-               <Form>
-                  {/* Method selector dropdown */}
-                  <div className="mb-4">
-                    <label htmlFor="selectedMethod" className="form-label fw-semibold text-primary">
-                      <i className="ri-list-settings-line me-1"></i>Please select integration method:
-                    </label>
-                    <select
-                      id="selectedMethod"
-                      className="form-select border-primary"
-                      style={{ maxWidth: "400px" }}
-                      value={selectedMethod}
-                      onChange={(e) => setSelectedMethod(e.target.value)}
-                    >
-                      <option value="all">Show All Methods</option>
-                      <option value="method_a">Method A: Embed / iFrame Settings</option>
-                      <option value="method_b">Method B: LTI 1.3 Tool Configuration</option>
-                      <option value="method_c">Method C: SCORM Delivery Settings</option>
-                      <option value="method_d">Method D: xAPI (Tin Can) / LRS Delivery</option>
-                      <option value="method_e">Method E: REST API, Webhooks & SSO</option>
-                    </select>
+              <Form>
+                {/* Method selector dropdown */}
+                <div className="mb-4">
+                  <label htmlFor="selectedMethod" className="form-label fw-semibold text-primary">
+                    <i className="ri-list-settings-line me-1"></i>Please select integration method:
+                  </label>
+                  <select
+                    id="selectedMethod"
+                    className="form-select border-primary"
+                    style={{ maxWidth: "400px" }}
+                    value={selectedMethod}
+                    onChange={(e) => setSelectedMethod(e.target.value)}
+                  >
+                    <option value="all">Show All Methods</option>
+                    <option value="method_a">Method A: Embed / iFrame Settings</option>
+                    <option value="method_b">Method B: LTI 1.3 Tool Configuration</option>
+                    <option value="method_c">Method C: SCORM Delivery Settings</option>
+                    <option value="method_d">Method D: xAPI (Tin Can) / LRS Delivery</option>
+                    <option value="method_e">Method E: REST API, Webhooks & SSO</option>
+                  </select>
+                </div>
+
+                {/* Method A: Embed / iFrame Settings */}
+                {(selectedMethod === "all" || selectedMethod === "method_a") && (
+                  <div className="card mb-4 border-light-subtle">
+                    <div className="card-header bg-light-subtle py-2">
+                      <h3 className="h6 mb-0 fw-semibold text-primary">
+                        <i className="ri-window-line me-2"></i>Method A: Embed / iFrame Settings
+                      </h3>
+                    </div>
+                    <div className="card-body p-3">
+                      <p className="small text-body-secondary mb-3">
+                        Configure who can securely frame your TrainUp tenant and which domains are allowed origins.
+                      </p>
+                      <div className="form-check form-switch mb-3">
+                        <Field type="checkbox" name="iframeEnabled" id="detail-iframeEnabled" className="form-check-input" />
+                        <label htmlFor="detail-iframeEnabled" className="form-check-label fw-medium">
+                          Enable iframe delivery
+                        </label>
+                      </div>
+                      <div className="admin-form-grid">
+                        <div>
+                          <label htmlFor="detail-iframeBaseUrl" className="form-label">iFrame base URL</label>
+                          <Field name="iframeBaseUrl" id="detail-iframeBaseUrl" className="form-control" placeholder="https://..." />
+                          <ErrorMessage name="iframeBaseUrl" component="small" className="text-danger" />
+                        </div>
+                        <div>
+                          <label htmlFor="detail-iframeAllowedParentDomains" className="form-label">Allowed parent domains (one per line)</label>
+                          <Field as="textarea" rows={3} name="iframeAllowedParentDomains" id="detail-iframeAllowedParentDomains" className="form-control" placeholder="example.com&#10;another.com" />
+                        </div>
+                        <div className="admin-form-grid-full">
+                          <label htmlFor="detail-allowedOrigins" className="form-label">Allowed origins (CORS, one per line)</label>
+                          <Field as="textarea" rows={2} name="allowedOrigins" id="detail-allowedOrigins" className="form-control" placeholder="https://example.com" />
+                        </div>
+                      </div>
+                    </div>
                   </div>
+                )}
 
-                  {/* Method A: Embed / iFrame Settings */}
-                  {(selectedMethod === "all" || selectedMethod === "method_a") && (
-                    <div className="card mb-4 border-light-subtle">
-                      <div className="card-header bg-light-subtle py-2">
-                        <h3 className="h6 mb-0 fw-semibold text-primary">
-                          <i className="ri-window-line me-2"></i>Method A: Embed / iFrame Settings
-                        </h3>
-                      </div>
-                      <div className="card-body p-3">
-                        <p className="small text-body-secondary mb-3">
-                          Configure who can securely frame your TrainUp tenant and which domains are allowed origins.
-                        </p>
-                        <div className="form-check form-switch mb-3">
-                          <Field type="checkbox" name="iframeEnabled" id="detail-iframeEnabled" className="form-check-input" />
-                          <label htmlFor="detail-iframeEnabled" className="form-check-label fw-medium">
-                            Enable iframe delivery
-                          </label>
+                {/* Method B: LTI 1.3 Tool Registration */}
+                {(selectedMethod === "all" || selectedMethod === "method_b") && (
+                  <div className="card mb-4 border-light-subtle">
+                    <div className="card-header bg-light-subtle py-2">
+                      <h3 className="h6 mb-0 fw-semibold text-primary">
+                        <i className="ri-shield-user-line me-2"></i>Method B: LTI 1.3 Tool Configuration
+                      </h3>
+                    </div>
+                    <div className="card-body p-3">
+                      <p className="small text-body-secondary mb-3">
+                        Register TrainUp as an LTI 1.3 Tool inside Canvas, Moodle, Blackboard, etc.
+                      </p>
+                      <div className="admin-form-grid">
+                        <div>
+                          <label htmlFor="detail-ltiClientId" className="form-label">LTI Client ID</label>
+                          <Field name="ltiClientId" id="detail-ltiClientId" className="form-control" />
                         </div>
-                        <div className="admin-form-grid">
-                          <div>
-                            <label htmlFor="detail-iframeBaseUrl" className="form-label">iFrame base URL</label>
-                            <Field name="iframeBaseUrl" id="detail-iframeBaseUrl" className="form-control" placeholder="https://..." />
-                            <ErrorMessage name="iframeBaseUrl" component="small" className="text-danger" />
-                          </div>
-                          <div>
-                            <label htmlFor="detail-iframeAllowedParentDomains" className="form-label">Allowed parent domains (one per line)</label>
-                            <Field as="textarea" rows={3} name="iframeAllowedParentDomains" id="detail-iframeAllowedParentDomains" className="form-control" placeholder="example.com&#10;another.com" />
-                          </div>
-                          <div className="admin-form-grid-full">
-                            <label htmlFor="detail-allowedOrigins" className="form-label">Allowed origins (CORS, one per line)</label>
-                            <Field as="textarea" rows={2} name="allowedOrigins" id="detail-allowedOrigins" className="form-control" placeholder="https://example.com" />
-                          </div>
+                        <div>
+                          <label htmlFor="detail-ltiDeploymentId" className="form-label">LTI Deployment ID</label>
+                          <Field name="ltiDeploymentId" id="detail-ltiDeploymentId" className="form-control" />
+                        </div>
+                        <div className="admin-form-grid-full">
+                          <label htmlFor="detail-ltiPlatformKeysetUrl" className="form-label">Platform Keyset URL</label>
+                          <Field name="ltiPlatformKeysetUrl" id="detail-ltiPlatformKeysetUrl" className="form-control" placeholder="https://..." />
+                        </div>
+                        <div>
+                          <label htmlFor="detail-ltiOidcAuthUrl" className="form-label">OIDC Auth URL</label>
+                          <Field name="ltiOidcAuthUrl" id="detail-ltiOidcAuthUrl" className="form-control" placeholder="https://..." />
+                        </div>
+                        <div>
+                          <label htmlFor="detail-ltiAccessTokenUrl" className="form-label">Access Token URL</label>
+                          <Field name="ltiAccessTokenUrl" id="detail-ltiAccessTokenUrl" className="form-control" placeholder="https://..." />
                         </div>
                       </div>
                     </div>
-                  )}
+                  </div>
+                )}
 
-                  {/* Method B: LTI 1.3 Tool Registration */}
-                  {(selectedMethod === "all" || selectedMethod === "method_b") && (
-                    <div className="card mb-4 border-light-subtle">
-                      <div className="card-header bg-light-subtle py-2">
-                        <h3 className="h6 mb-0 fw-semibold text-primary">
-                          <i className="ri-shield-user-line me-2"></i>Method B: LTI 1.3 Tool Configuration
-                        </h3>
+                {/* Method C: SCORM Settings */}
+                {(selectedMethod === "all" || selectedMethod === "method_c") && (
+                  <div className="card mb-4 border-light-subtle">
+                    <div className="card-header bg-light-subtle py-2">
+                      <h3 className="h6 mb-0 fw-semibold text-primary">
+                        <i className="ri-archive-line me-2"></i>Method C: SCORM Delivery Settings
+                      </h3>
+                    </div>
+                    <div className="card-body p-3">
+                      <p className="small text-body-secondary mb-3">
+                        Allow downloading light SCORM wrappers that run TrainUp inside the LMS while streaming analytics back.
+                      </p>
+                      <div className="form-check form-switch">
+                        <Field type="checkbox" name="scormEnabled" id="detail-scormEnabled" className="form-check-input" />
+                        <label htmlFor="detail-scormEnabled" className="form-check-label fw-medium">
+                          Enable SCORM wrapper generation and packaging
+                        </label>
                       </div>
-                      <div className="card-body p-3">
-                        <p className="small text-body-secondary mb-3">
-                          Register TrainUp as an LTI 1.3 Tool inside Canvas, Moodle, Blackboard, etc.
-                        </p>
-                        <div className="admin-form-grid">
-                          <div>
-                            <label htmlFor="detail-ltiClientId" className="form-label">LTI Client ID</label>
-                            <Field name="ltiClientId" id="detail-ltiClientId" className="form-control" />
-                          </div>
-                          <div>
-                            <label htmlFor="detail-ltiDeploymentId" className="form-label">LTI Deployment ID</label>
-                            <Field name="ltiDeploymentId" id="detail-ltiDeploymentId" className="form-control" />
-                          </div>
-                          <div className="admin-form-grid-full">
-                            <label htmlFor="detail-ltiPlatformKeysetUrl" className="form-label">Platform Keyset URL</label>
-                            <Field name="ltiPlatformKeysetUrl" id="detail-ltiPlatformKeysetUrl" className="form-control" placeholder="https://..." />
-                          </div>
-                          <div>
-                            <label htmlFor="detail-ltiOidcAuthUrl" className="form-label">OIDC Auth URL</label>
-                            <Field name="ltiOidcAuthUrl" id="detail-ltiOidcAuthUrl" className="form-control" placeholder="https://..." />
-                          </div>
-                          <div>
-                            <label htmlFor="detail-ltiAccessTokenUrl" className="form-label">Access Token URL</label>
-                            <Field name="ltiAccessTokenUrl" id="detail-ltiAccessTokenUrl" className="form-control" placeholder="https://..." />
-                          </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Method D: xAPI / LRS Analytics */}
+                {(selectedMethod === "all" || selectedMethod === "method_d") && (
+                  <div className="card mb-4 border-light-subtle">
+                    <div className="card-header bg-light-subtle py-2">
+                      <h3 className="h6 mb-0 fw-semibold text-primary">
+                        <i className="ri-bubble-chart-line me-2"></i>Method D: xAPI (Tin Can) / LRS Delivery
+                      </h3>
+                    </div>
+                    <div className="card-body p-3">
+                      <p className="small text-body-secondary mb-3">
+                        Push detailed proctoring, AI Ask interactions, and completion statements to an external Learning Record Store (LRS).
+                      </p>
+                      <div className="form-check form-switch mb-3">
+                        <Field type="checkbox" name="xapiEnabled" id="detail-xapiEnabled" className="form-check-input" />
+                        <label htmlFor="detail-xapiEnabled" className="form-check-label fw-medium">
+                          Enable xAPI statement delivery
+                        </label>
+                      </div>
+                      <div className="admin-form-grid">
+                        <div className="admin-form-grid-full">
+                          <label htmlFor="detail-xapiLrsEndpoint" className="form-label">LRS Endpoint URL</label>
+                          <Field name="xapiLrsEndpoint" id="detail-xapiLrsEndpoint" className="form-control" placeholder="https://..." />
+                        </div>
+                        <div>
+                          <label htmlFor="detail-xapiClientId" className="form-label">LRS Auth Client ID / Username</label>
+                          <Field name="xapiClientId" id="detail-xapiClientId" className="form-control" />
+                        </div>
+                        <div>
+                          <label htmlFor="detail-xapiClientSecret" className="form-label">LRS Auth Client Secret / Password</label>
+                          <Field name="xapiClientSecret" id="detail-xapiClientSecret" className="form-control" type="password" />
                         </div>
                       </div>
                     </div>
-                  )}
+                  </div>
+                )}
 
-                  {/* Method C: SCORM Settings */}
-                  {(selectedMethod === "all" || selectedMethod === "method_c") && (
-                    <div className="card mb-4 border-light-subtle">
-                      <div className="card-header bg-light-subtle py-2">
-                        <h3 className="h6 mb-0 fw-semibold text-primary">
-                          <i className="ri-archive-line me-2"></i>Method C: SCORM Delivery Settings
-                        </h3>
-                      </div>
-                      <div className="card-body p-3">
-                        <p className="small text-body-secondary mb-3">
-                          Allow downloading light SCORM wrappers that run TrainUp inside the LMS while streaming analytics back.
-                        </p>
-                        <div className="form-check form-switch">
-                          <Field type="checkbox" name="scormEnabled" id="detail-scormEnabled" className="form-check-input" />
-                          <label htmlFor="detail-scormEnabled" className="form-check-label fw-medium">
-                            Enable SCORM wrapper generation and packaging
-                          </label>
+                {/* Method E: REST API, Webhooks & Identity */}
+                {(selectedMethod === "all" || selectedMethod === "method_e") && (
+                  <div className="card mb-4 border-light-subtle">
+                    <div className="card-header bg-light-subtle py-2">
+                      <h3 className="h6 mb-0 fw-semibold text-primary">
+                        <i className="ri-plug-line me-2"></i>Method E: REST API, Webhooks & SSO
+                      </h3>
+                    </div>
+                    <div className="card-body p-3">
+                      <p className="small text-body-secondary mb-3">
+                        Bespoke integration for custom/personal LMS portals using standard developer keys, webhooks, and federated SSO.
+                      </p>
+                      <h4 className="h6 text-primary fw-semibold border-bottom pb-1 mb-3">API & Webhooks</h4>
+                      <div className="admin-form-grid mb-4">
+                        <div>
+                          <label htmlFor="detail-webhookUrl" className="form-label">Webhook URL</label>
+                          <Field name="webhookUrl" id="detail-webhookUrl" className="form-control" placeholder="https://..." />
+                          <ErrorMessage name="webhookUrl" component="small" className="text-danger" />
                         </div>
+                        <div>
+                          <label htmlFor="detail-apiScope" className="form-label">API Scope</label>
+                          <Field name="apiScope" id="detail-apiScope" className="form-control" />
+                        </div>
+                        <div className="admin-form-grid-full">
+                          <label htmlFor="detail-webhookSigningSecret" className="form-label">Signing secret</label>
+                          <Field name="webhookSigningSecret" id="detail-webhookSigningSecret" className="form-control" placeholder="whsec_..." />
+                          <small className="text-body-secondary">Used to HMAC-sign result webhooks (x-trainup-signature) so the receiver can verify them.</small>
+                        </div>
+                      </div>
+
+                      <h4 className="h6 text-primary fw-semibold border-bottom pb-1 mb-3">SSO Identity Configuration</h4>
+                      <div className="admin-form-grid">
+                        <div>
+                          <label htmlFor="detail-ssoType" className="form-label">SSO type</label>
+                          <Field as="select" name="ssoType" id="detail-ssoType" className="form-select">
+                            <option value="Trainup IAM">Trainup IAM</option>
+                            <option value="Azure AD">Azure AD</option>
+                            <option value="Google Workspace">Google Workspace</option>
+                            <option value="Okta">Okta</option>
+                            <option value="None">None</option>
+                          </Field>
+                        </div>
+                        <div>
+                          <label htmlFor="detail-ssoProviderType" className="form-label">SSO provider type</label>
+                          <Field as="select" name="ssoProviderType" id="detail-ssoProviderType" className="form-select">
+                            <option value="none">None</option>
+                            <option value="oidc">OIDC / OAuth</option>
+                            <option value="saml">SAML</option>
+                          </Field>
+                        </div>
+                        <div>
+                          <label htmlFor="detail-ssoClientId" className="form-label">SSO client ID</label>
+                          <Field name="ssoClientId" id="detail-ssoClientId" className="form-control" />
+                        </div>
+                        <div>
+                          <label htmlFor="detail-ssoClientSecret" className="form-label">SSO client secret</label>
+                          <Field name="ssoClientSecret" id="detail-ssoClientSecret" className="form-control" />
+                        </div>
+                        <div>
+                          <label htmlFor="detail-ssoTenantId" className="form-label">SSO tenant / directory ID</label>
+                          <Field name="ssoTenantId" id="detail-ssoTenantId" className="form-control" />
+                        </div>
+                        <div>
+                          <label htmlFor="detail-ssoIssuerUrl" className="form-label">Issuer URL</label>
+                          <Field name="ssoIssuerUrl" id="detail-ssoIssuerUrl" className="form-control" />
+                        </div>
+                        <div>
+                          <label htmlFor="detail-ssoEntryPoint" className="form-label">Entry point / login URL</label>
+                          <Field name="ssoEntryPoint" id="detail-ssoEntryPoint" className="form-control" />
+                        </div>
+                        <div>
+                          <label htmlFor="detail-ssoAudience" className="form-label">Audience / entity ID</label>
+                          <Field name="ssoAudience" id="detail-ssoAudience" className="form-control" />
+                        </div>
+                        <div>
+                          <label htmlFor="detail-ssoRedirectUri" className="form-label">Redirect URI</label>
+                          <Field name="ssoRedirectUri" id="detail-ssoRedirectUri" className="form-control" />
+                        </div>
+                        <div>
+                          <label htmlFor="detail-ssoButtonLabel" className="form-label">SSO button label</label>
+                          <Field name="ssoButtonLabel" id="detail-ssoButtonLabel" className="form-control" />
+                        </div>
+                        <div className="admin-form-grid-full">
+                          <label htmlFor="detail-ssoAllowedDomains" className="form-label">Allowed SSO email domains (one per line)</label>
+                          <Field as="textarea" rows={2} name="ssoAllowedDomains" id="detail-ssoAllowedDomains" className="form-control" />
+                        </div>
+                      </div>
+                      <div className="form-check mt-3">
+                        <Field type="checkbox" name="ssoAutoProvisionUsers" id="detail-ssoAutoProvisionUsers" className="form-check-input" />
+                        <label htmlFor="detail-ssoAutoProvisionUsers" className="form-check-label fw-medium">
+                          Auto-create learner accounts after successful SSO
+                        </label>
                       </div>
                     </div>
-                  )}
-
-                  {/* Method D: xAPI / LRS Analytics */}
-                  {(selectedMethod === "all" || selectedMethod === "method_d") && (
-                    <div className="card mb-4 border-light-subtle">
-                      <div className="card-header bg-light-subtle py-2">
-                        <h3 className="h6 mb-0 fw-semibold text-primary">
-                          <i className="ri-bubble-chart-line me-2"></i>Method D: xAPI (Tin Can) / LRS Delivery
-                        </h3>
-                      </div>
-                      <div className="card-body p-3">
-                        <p className="small text-body-secondary mb-3">
-                          Push detailed proctoring, AI Ask interactions, and completion statements to an external Learning Record Store (LRS).
-                        </p>
-                        <div className="form-check form-switch mb-3">
-                          <Field type="checkbox" name="xapiEnabled" id="detail-xapiEnabled" className="form-check-input" />
-                          <label htmlFor="detail-xapiEnabled" className="form-check-label fw-medium">
-                            Enable xAPI statement delivery
-                          </label>
-                        </div>
-                        <div className="admin-form-grid">
-                          <div className="admin-form-grid-full">
-                            <label htmlFor="detail-xapiLrsEndpoint" className="form-label">LRS Endpoint URL</label>
-                            <Field name="xapiLrsEndpoint" id="detail-xapiLrsEndpoint" className="form-control" placeholder="https://..." />
-                          </div>
-                          <div>
-                            <label htmlFor="detail-xapiClientId" className="form-label">LRS Auth Client ID / Username</label>
-                            <Field name="xapiClientId" id="detail-xapiClientId" className="form-control" />
-                          </div>
-                          <div>
-                            <label htmlFor="detail-xapiClientSecret" className="form-label">LRS Auth Client Secret / Password</label>
-                            <Field name="xapiClientSecret" id="detail-xapiClientSecret" className="form-control" type="password" />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Method E: REST API, Webhooks & Identity */}
-                  {(selectedMethod === "all" || selectedMethod === "method_e") && (
-                    <div className="card mb-4 border-light-subtle">
-                      <div className="card-header bg-light-subtle py-2">
-                        <h3 className="h6 mb-0 fw-semibold text-primary">
-                          <i className="ri-plug-line me-2"></i>Method E: REST API, Webhooks & SSO
-                        </h3>
-                      </div>
-                      <div className="card-body p-3">
-                        <p className="small text-body-secondary mb-3">
-                          Bespoke integration for custom/personal LMS portals using standard developer keys, webhooks, and federated SSO.
-                        </p>
-                        <h4 className="h6 text-primary fw-semibold border-bottom pb-1 mb-3">API & Webhooks</h4>
-                        <div className="admin-form-grid mb-4">
-                          <div>
-                            <label htmlFor="detail-webhookUrl" className="form-label">Webhook URL</label>
-                            <Field name="webhookUrl" id="detail-webhookUrl" className="form-control" placeholder="https://..." />
-                            <ErrorMessage name="webhookUrl" component="small" className="text-danger" />
-                          </div>
-                          <div>
-                            <label htmlFor="detail-apiScope" className="form-label">API Scope</label>
-                            <Field name="apiScope" id="detail-apiScope" className="form-control" />
-                          </div>
-                          <div className="admin-form-grid-full">
-                            <label htmlFor="detail-webhookSigningSecret" className="form-label">Signing secret</label>
-                            <Field name="webhookSigningSecret" id="detail-webhookSigningSecret" className="form-control" placeholder="whsec_..." />
-                            <small className="text-body-secondary">Used to HMAC-sign result webhooks (x-trainup-signature) so the receiver can verify them.</small>
-                          </div>
-                        </div>
-
-                        <h4 className="h6 text-primary fw-semibold border-bottom pb-1 mb-3">SSO Identity Configuration</h4>
-                        <div className="admin-form-grid">
-                          <div>
-                            <label htmlFor="detail-ssoType" className="form-label">SSO type</label>
-                            <Field as="select" name="ssoType" id="detail-ssoType" className="form-select">
-                              <option value="Trainup IAM">Trainup IAM</option>
-                              <option value="Azure AD">Azure AD</option>
-                              <option value="Google Workspace">Google Workspace</option>
-                              <option value="Okta">Okta</option>
-                              <option value="None">None</option>
-                            </Field>
-                          </div>
-                          <div>
-                            <label htmlFor="detail-ssoProviderType" className="form-label">SSO provider type</label>
-                            <Field as="select" name="ssoProviderType" id="detail-ssoProviderType" className="form-select">
-                              <option value="none">None</option>
-                              <option value="oidc">OIDC / OAuth</option>
-                              <option value="saml">SAML</option>
-                            </Field>
-                          </div>
-                          <div>
-                            <label htmlFor="detail-ssoClientId" className="form-label">SSO client ID</label>
-                            <Field name="ssoClientId" id="detail-ssoClientId" className="form-control" />
-                          </div>
-                          <div>
-                            <label htmlFor="detail-ssoClientSecret" className="form-label">SSO client secret</label>
-                            <Field name="ssoClientSecret" id="detail-ssoClientSecret" className="form-control" />
-                          </div>
-                          <div>
-                            <label htmlFor="detail-ssoTenantId" className="form-label">SSO tenant / directory ID</label>
-                            <Field name="ssoTenantId" id="detail-ssoTenantId" className="form-control" />
-                          </div>
-                          <div>
-                            <label htmlFor="detail-ssoIssuerUrl" className="form-label">Issuer URL</label>
-                            <Field name="ssoIssuerUrl" id="detail-ssoIssuerUrl" className="form-control" />
-                          </div>
-                          <div>
-                            <label htmlFor="detail-ssoEntryPoint" className="form-label">Entry point / login URL</label>
-                            <Field name="ssoEntryPoint" id="detail-ssoEntryPoint" className="form-control" />
-                          </div>
-                          <div>
-                            <label htmlFor="detail-ssoAudience" className="form-label">Audience / entity ID</label>
-                            <Field name="ssoAudience" id="detail-ssoAudience" className="form-control" />
-                          </div>
-                          <div>
-                            <label htmlFor="detail-ssoRedirectUri" className="form-label">Redirect URI</label>
-                            <Field name="ssoRedirectUri" id="detail-ssoRedirectUri" className="form-control" />
-                          </div>
-                          <div>
-                            <label htmlFor="detail-ssoButtonLabel" className="form-label">SSO button label</label>
-                            <Field name="ssoButtonLabel" id="detail-ssoButtonLabel" className="form-control" />
-                          </div>
-                          <div className="admin-form-grid-full">
-                            <label htmlFor="detail-ssoAllowedDomains" className="form-label">Allowed SSO email domains (one per line)</label>
-                            <Field as="textarea" rows={2} name="ssoAllowedDomains" id="detail-ssoAllowedDomains" className="form-control" />
-                          </div>
-                        </div>
-                        <div className="form-check mt-3">
-                          <Field type="checkbox" name="ssoAutoProvisionUsers" id="detail-ssoAutoProvisionUsers" className="form-check-input" />
-                          <label htmlFor="detail-ssoAutoProvisionUsers" className="form-check-label fw-medium">
-                            Auto-create learner accounts after successful SSO
-                          </label>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                  </div>
+                )}
                 <div className="small text-body-secondary mt-3">{client.lastWebhookTestMessage || "No webhook test has been run yet."}</div>
                 <div className="d-flex justify-content-between gap-2 pt-3 flex-wrap">
                   <button
@@ -1274,6 +1339,168 @@ const ClientDetail = () => {
           </div>
         </div>
       ) : null}
+
+      {activeTab === "avatars" ? (
+        <div className="card">
+          <div className="card-header bg-transparent border-0 pb-0 d-flex justify-content-between align-items-center">
+            <div>
+              <h2 className="h5 fw-semibold mb-1">Assigned Avatars</h2>
+              <p className="small text-body-secondary mb-0">Avatars available for this client.</p>
+            </div>
+            <button className="btn btn-primary" onClick={handleOpenAssignModal}>Update Avatars</button>
+          </div>
+          <div className="card-body mt-3">
+            {avatarsLoading ? (
+              <div className="d-flex justify-content-center py-4">
+                <div className="spinner-border text-primary" role="status"></div>
+              </div>
+            ) : client.assignedAvatars && client.assignedAvatars.length > 0 ? (
+              <div className="row row-cols-1 row-cols-sm-2 row-cols-md-3 row-cols-lg-4 g-3">
+                {allAvatars.filter(a => client.assignedAvatars?.includes(a.avatarId)).map((avatar) => (
+                  <div className="col" key={avatar.avatarId}>
+                    <div className="card h-100 shadow-sm border" style={{ borderRadius: "12px", overflow: "hidden" }}>
+                      <div className="card-body text-center p-3 d-flex flex-column align-items-center bg-white">
+                        <div
+                          style={{
+                            width: "100%",
+                            height: "120px",
+                            marginBottom: "1rem",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            backgroundColor: avatar.image ? "transparent" : "#f8f9fa",
+                            borderRadius: "8px"
+                          }}
+                        >
+                          {avatar.image ? (
+                            <img src={avatar.image} alt={avatar.avatarName} style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }} />
+                          ) : (
+                            <div className="text-muted opacity-50">
+                              <i className="ri-user-line" style={{ fontSize: "2rem" }}></i>
+                            </div>
+                          )}
+                        </div>
+                        <h6 className="mb-1 fw-bold text-truncate w-100" title={avatar.avatarName}>{avatar.avatarName}</h6>
+                        <div className="text-muted small" style={{ fontSize: "0.75rem" }}>{avatar.avatarId}</div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center text-muted py-5">
+                <p>No avatars assigned to this client yet.</p>
+                <p className="small">If none are assigned, the client will have access to all avatars by default.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      <Modal
+        show={assignModalOpen}
+        onClose={() => setAssignModalOpen(false)}
+        title="Assign Avatars"
+        size="xl"
+      >
+        <div className="">
+          {/* Avatar List */}
+          <div
+            style={{
+              maxHeight: "450px",
+              overflowY: "auto",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                gap: "15px",
+                flexWrap: "wrap",
+                justifyContent: 'center'
+              }}
+            >
+              {allAvatars.map((avatar) => {
+                const isSelected = selectedAvatars.includes(avatar.avatarId);
+
+                return (
+                  <div
+                    key={avatar.avatarId}
+                    onClick={() => toggleAvatarSelection(avatar.avatarId)}
+                    className={`avatar-card ${isSelected ? "avatar-card-selected" : ""
+                      }`}
+                  >
+                    {/* Checkbox */}
+                    <input
+                      type="checkbox"
+                      id={`avatar-${avatar.avatarId}`}
+                      checked={isSelected}
+                      onChange={() => toggleAvatarSelection(avatar.avatarId)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+
+                    {/* Avatar Image */}
+                    {avatar.image ? (
+                      <img
+                        src={avatar.image}
+                        alt={avatar.avatarName}
+                        className="avatar-card-image"
+                      />
+                    ) : (
+                      <div className="avatar-card-placeholder">
+                        {avatar.avatarName?.charAt(0)?.toUpperCase()}
+                      </div>
+                    )}
+
+                    {/* Avatar Details */}
+                    <div className="avatar-card-content">
+                      <div className="avatar-card-name">
+                        {avatar.avatarName}
+                      </div>
+
+                      <div className="avatar-card-id">
+                        {avatar.avatarId}
+                      </div>
+
+                      {avatar.provider && (
+                        <span className="avatar-card-provider">
+                          {avatar.provider}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {allAvatars.length === 0 && (
+              <div className="text-center text-muted py-3 small">
+                No avatars found
+              </div>
+            )}
+          </div>
+
+          {/* Buttons */}
+          <div className="d-flex justify-content-end gap-2 mt-3">
+            <button
+              className="btn btn-light"
+              onClick={() => setAssignModalOpen(false)}
+            >
+              Cancel
+            </button>
+
+            <button
+              className="btn btn-primary"
+              onClick={() => {
+                void handleAssignSubmit();
+              }}
+              disabled={assignLoading}
+            >
+              {assignLoading ? "Updating..." : "Update Assignment"}
+            </button>
+          </div>
+        </div>
+      </Modal>
+
     </PageShell>
   );
 };
