@@ -117,6 +117,7 @@ type LaunchTrainingRecord = {
   options: {
     showSubtitles?: boolean;
     showFinalScore?: boolean;
+    proctoringEnabled?: boolean;
   };
   logo?: string;
   theme: Partial<TrainingSlideshowTheme>;

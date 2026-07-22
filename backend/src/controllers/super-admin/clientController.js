@@ -15,7 +15,7 @@ const {
   verifyDomainRecord,
   sendSmtpTestEmail,
 } = require("../../helpers/clientDelivery");
-const { CREDIT_COSTS, buildClientCreditSnapshot, addPlanBatch, resetClientPlanState, resolvePlan, addClientCredits, normalizePlan, isSubscriptionExpired, getSubscriptionExpiry } = require("../../helpers/credits");
+const { getCreditCosts, buildClientCreditSnapshot, addPlanBatch, resetClientPlanState, resolvePlan, addClientCredits, normalizePlan, isSubscriptionExpired, getSubscriptionExpiry } = require("../../helpers/credits");
 const { resolveImageField } = require("../../helpers/imageStorage");
 const { notifyRolesInClient, notifySuperAdmins, notifyUserIds } = require("../../helpers/notifications");
 const { getEditableRoleDefaults, getRoleDefinitions, getRoleDefinitionById, filterPermissionArrayForRole, buildAllowedFromPermissions } = require("../../helpers/permissions");
@@ -198,7 +198,8 @@ const toClientRecord = async (client) => {
   // history) so the super-admin detail page renders identical dynamic data.
   // Lazy require avoids a load-time circular dependency with commonController.
   const { buildBillingSummaryResponse } = require("../commonController");
-  const billing = buildBillingSummaryResponse(client);
+  const billing = await buildBillingSummaryResponse(client);
+  const creditCosts = await getCreditCosts(client);
 
   return {
     billing,
@@ -211,10 +212,10 @@ const toClientRecord = async (client) => {
     usedCredits: creditSnapshot.usedCredits,
     totalCredits: creditSnapshot.totalCredits,
     billingCycle: creditSnapshot.billingCycle,
-    trainingCreditCost: CREDIT_COSTS.training,
-    userCreditCost: CREDIT_COSTS.user,
-    sessionCreditCost: CREDIT_COSTS.session,
-    planLimits: creditSnapshot.planConfig.limits,
+    trainingCreditCost: creditCosts.training,
+    userCreditCost: creditCosts.user,
+    sessionCreditCost: creditCosts.session,
+    creditCostOverrides: client.creditCostOverrides,
     status: client.status,
     domain: client.domain,
     domainStatus: client.domainStatus,
@@ -704,6 +705,10 @@ const remove = async (req, res) => {
     return fail(res, 404, "Client not found.");
   }
 
+  // Grab every user id in this tenant BEFORE the cascade delete so we can push
+  // an immediate force-logout to any of them who are currently logged in.
+  const clientUserIds = await User.find({ clientId: req.params.id }, { appId: 1 }).lean();
+
   await Promise.all([
     Client.deleteOne({ appId: req.params.id }),
     User.deleteMany({ clientId: req.params.id }),
@@ -713,6 +718,8 @@ const remove = async (req, res) => {
     MediaAsset.deleteMany({ clientId: req.params.id }),
     Setting.deleteMany({ key: new RegExp(`^client:${req.params.id}:`) }),
   ]);
+
+  req.app.get("groupRuntime")?.forceLogoutUsers(clientUserIds.map((u) => u.appId), "account-removed");
 
   return ok(res, "Client deleted successfully.", true);
 };
@@ -898,6 +905,14 @@ const updateSettings = async (req, res) => {
     client.enterpriseMonthlyPrice = Math.max(0, Number(values.enterpriseMonthlyPrice || client.enterpriseMonthlyPrice || 0));
     client.enterpriseMonthlyCredits = Math.max(0, Number(values.enterpriseMonthlyCredits || client.enterpriseMonthlyCredits || 0));
     client.enterpriseSupportNotes = String(values.enterpriseSupportNotes || client.enterpriseSupportNotes || "").trim();
+
+    if (values.creditCostOverrides) {
+      client.creditCostOverrides = {
+        training: values.creditCostOverrides.training ?? null,
+        session: values.creditCostOverrides.session ?? null,
+        user: values.creditCostOverrides.user ?? null,
+      };
+    }
 
     if (shouldResetToPlanCredits) {
       // Explicit ops override ("reset monthly credits") — wipe every batch and

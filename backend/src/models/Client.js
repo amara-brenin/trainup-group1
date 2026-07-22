@@ -20,21 +20,6 @@ const clientSchema = new Schema(
     trainings: { type: Number, default: 0 },
     sessions: { type: Number, default: 0 },
 
-    // Feature Set 6 / Task 2: lifetime quota model (additive, backward-compatible).
-    // Effective limit = base + purchased (purchased filled by Task-4 add-ons).
-    // Lifetime usage is permanent (consumed on publish/create, never refunded on
-    // delete). base `null` = unlimited (enterprise). `quotaInitialized` marks that
-    // the one-time backfill from plan + current counts has run for this client.
-    trainingBaseLimit: { type: Number, default: null },
-    trainingPurchasedLimit: { type: Number, default: 0 },
-    trainingUsedLifetime: { type: Number, default: 0 },
-    sessionBaseLimit: { type: Number, default: null },
-    sessionPurchasedLimit: { type: Number, default: 0 },
-    sessionUsedLifetime: { type: Number, default: 0 },
-    userBaseLimit: { type: Number, default: null },
-    userPurchasedLimit: { type: Number, default: 0 },
-    userUsedLifetime: { type: Number, default: 0 },
-    quotaInitialized: { type: Boolean, default: false },
     // Phase C: entitlement snapshot frozen at purchase/upgrade (R3). Future plan
     // edits never overwrite these — existing subscribers keep what they bought.
     subscribedPlan: { type: String, default: "" },
@@ -58,15 +43,21 @@ const clientSchema = new Schema(
           planCode: String,
           label: String,
           monthlyCredits: Number,
-          trainingLimit: { type: Number, default: null },
-          sessionLimit: { type: Number, default: null },
-          userLimit: { type: Number, default: null },
+          usedCredits: { type: Number, default: 0 },
           amount: Number,
           purchasedAt: Date,
           expiresAt: Date,
         },
       ],
       default: [],
+    },
+    creditCostOverrides: {
+      type: {
+        training: { type: Number, default: null },
+        session: { type: Number, default: null },
+        user: { type: Number, default: null },
+      },
+      default: {},
     },
     joined: { type: String, default: "" },
     csm: { type: String, required: true, trim: true },

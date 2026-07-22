@@ -81,8 +81,8 @@ const Login = () => {
     setAuthToken(authPayload.token);
     dispatch(updateAdmin(authPayload.user));
 
-    if (authPayload.user.role === "trainer" || authPayload.user.role === "reviewer") {
-      const publicRole = authPayload.user.role === "trainer" ? "trainer" : "reviewer";
+    if (authPayload.user.role === "trainer" || authPayload.user.role === "reviewer" || authPayload.user.role === "trainee") {
+      const publicRole = authPayload.user.role as "trainer" | "reviewer" | "trainee";
 
       setPublicRoleSession(publicRole, buildPublicRoleSessionFromAdmin(publicRole, authPayload.user));
       toast.success(message);
@@ -94,12 +94,12 @@ const Login = () => {
     navigate(getScopedAppPath(getLastAppRoute() || getAdminHomePath(authPayload.user.allowed, authPayload.user.role), authPayload.user.role), { replace: true });
   };
 
-  if (admin._id) {
-    return <Navigate to={getScopedAppPath(getLastAppRoute() || getAdminHomePath(admin.allowed, admin.role), admin.role)} replace />;
-  }
-
   if (activeRoleSession) {
     return <Navigate to={activeRoleSession.redirectTo} replace />;
+  }
+
+  if (admin._id) {
+    return <Navigate to={getScopedAppPath(getLastAppRoute() || getAdminHomePath(admin.allowed, admin.role), admin.role)} replace />;
   }
 
   return (
@@ -152,7 +152,7 @@ const Login = () => {
                   const message = response.data?.message || "Unable to sign in right now.";
 
                   setErrors({
-                    identifier: errorData.email ?? "Use a valid admin, trainer, or reviewer email.",
+                    identifier: errorData.email ?? "Use a valid admin, trainer, reviewer, or trainee email.",
                     password: errorData.password ?? "Invalid password.",
                   });
                   toast.error(message);

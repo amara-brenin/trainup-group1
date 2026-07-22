@@ -16,4 +16,9 @@ export const superAdminMenu: MenuItem[] = [
     link: "/staff",
     icon: "ri-user-star-line",
   },
+  {
+    label: "Upgrade & Billing",
+    link: "/upgrade-billing",
+    icon: "ri-bank-card-line",
+  },
 ];

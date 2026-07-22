@@ -10,6 +10,7 @@ import { CheckPermission } from "../component/common/PermissionBlock";
 import type { AdminUser } from "../constant/interfaces";
 import AxiosHelper from "../helper/AxiosHelper";
 import { clearAuthToken, setLastAppRoute } from "../helper/authSession";
+import { useForceLogoutWatcher } from "../hooks/useForceLogoutWatcher";
 import { getAdminHomePath, isSuperAdminRole, stripSuperAdminPrefix } from "../helper/appShell";
 import { getRequiredAppUrlForRole, isRoleAllowedInCurrentApp } from "../helper/appVariant";
 import { loggedOutAdmin, updateAdmin } from "../redux/authSlice";
@@ -43,6 +44,10 @@ const SuperAdminLayout = () => {
   useEffect(() => {
     void updateProfile();
   }, [updateProfile]);
+
+  // Immediately sign the user out if another super-admin deletes/deactivates
+  // this account while they're still on the page (socket push + polling fallback).
+  useForceLogoutWatcher({ enabled: Boolean(admin._id) });
 
   useEffect(() => {
     if (!admin._id || !isSuperAdminRole(admin.role)) {

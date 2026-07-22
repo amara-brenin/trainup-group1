@@ -5,7 +5,7 @@ const Client = require("../models/Client");
 const User = require("../models/User");
 const { createReadUrl, isStorageConfigured } = require("../helpers/storage");
 const {
-  CREDIT_COSTS,
+  getCreditCosts,
   consumeClientCredits,
   ensureClientEntitlement,
   assertLifetimeQuota,
@@ -1150,7 +1150,7 @@ const upsertLaunchSession = async (req, res) => {
 
     const creditResult = await consumeClientCredits({
       clientId: training.clientId,
-      credits: CREDIT_COSTS.session,
+      credits: (await getCreditCosts(client)).session,
       reason: `Training session completed by ${viewerIdentity.learnerEmail || viewerIdentity.learnerName || "learner"}`,
     });
 
@@ -1821,7 +1821,7 @@ const upsertDemoSession = async (req, res) => {
 
     const creditResult = await consumeClientCredits({
       clientId: training.clientId,
-      credits: CREDIT_COSTS.session,
+      credits: (await getCreditCosts(client)).session,
       reason: `LMS launch session completed by ${guestEmail || guestName || "learner"}`,
     });
     if (!creditResult.ok) return fail(res, 400, creditResult.message);

@@ -6,7 +6,7 @@ const { hashPassword } = require("../helpers/auth");
 const { issuePasswordEmail } = require("../services/authService");
 const { ok, fail } = require("../helpers/response");
 const {
-  CREDIT_COSTS, consumeClientCredits,
+  getCreditCosts, consumeClientCredits,
   ensureClientEntitlement, assertLifetimeQuota,
   assertSubscriptionActive, SUBSCRIPTION_EXPIRED_MESSAGE,
 } = require("../helpers/credits");
@@ -512,7 +512,7 @@ const create = async (req, res) => {
 
   const creditResult = await consumeClientCredits({
     clientId,
-    credits: CREDIT_COSTS.user,
+    credits: (await getCreditCosts(client)).user,
     reason: `User seat created for ${String(req.body.email || "").trim().toLowerCase()}`,
   });
 
@@ -636,6 +636,8 @@ const update = async (req, res) => {
     return fail(res, 403, "You can only assign permissions available to your account.", grantErrors);
   }
 
+  const previousStatus = targetUser.status;
+
   const roleAccess = buildAccessFromPayload(req.body, roleDefinitions, requester, targetUser.permission);
   targetUser.name = String(req.body.name).trim();
   targetUser.fullname = String(req.body.name).trim();
@@ -650,8 +652,15 @@ const update = async (req, res) => {
   targetUser.title = String(req.body.title || targetUser.title || "").trim();
   targetUser.department = String(req.body.department || targetUser.department || "").trim();
 
+  const becameInactive = previousStatus !== "inactive" && targetUser.status === "inactive";
+
   await targetUser.save();
   await syncClientMetrics(clientId);
+  if (becameInactive) {
+    // Same reasoning as remove(): push an immediate signal instead of waiting
+    // for authTokenAdmin.js to reject their next request.
+    req.app.get("groupRuntime")?.forceLogoutUser(targetUser.appId, "account-deactivated");
+  }
   return ok(res, "User updated successfully.", sanitizeUserRecord(targetUser.toObject(), roleDefinitions, { primaryAdminUserId: client?.clientAdminUserId }));
 };
 
@@ -671,6 +680,10 @@ const remove = async (req, res) => {
 
   await syncClientMetrics(clientId);
   await Notification.deleteMany({ userId: req.params.id });
+  // Immediately push a force-logout signal to any open tab this (now-deleted)
+  // user still has open, in addition to the server-side JWT re-check
+  // (authTokenAdmin.js) that would otherwise only bite on their next request.
+  req.app.get("groupRuntime")?.forceLogoutUser(req.params.id, "account-removed");
   return ok(res, "User removed successfully.", true);
 };
 
@@ -700,7 +713,7 @@ const createTrainee = async (req, res) => {
 
   const creditResult = await consumeClientCredits({
     clientId,
-    credits: CREDIT_COSTS.user,
+    credits: (await getCreditCosts(client)).user,
     reason: `User seat created for ${String(req.body.email || "").trim().toLowerCase()}`,
   });
 
@@ -796,6 +809,8 @@ const removeTrainee = async (req, res) => {
 
   await syncClientMetrics(clientId);
   await Notification.deleteMany({ userId: req.params.id });
+  // Immediately kick any open tab/group-session socket for this trainee.
+  req.app.get("groupRuntime")?.forceLogoutUser(req.params.id, "account-removed");
   return ok(res, "Trainee removed successfully.", true);
 };
 
@@ -864,7 +879,7 @@ const importTrainees = async (req, res) => {
 
   const creditResult = await consumeClientCredits({
     clientId,
-    credits: CREDIT_COSTS.user * docs.length,
+    credits: (await getCreditCosts(client)).user * docs.length,
     reason: `${docs.length} user seat${docs.length === 1 ? "" : "s"} created by trainee import`,
   });
 
@@ -916,6 +931,99 @@ const sendPasswordReset = async (req, res) => {
     expiresAt: result.expiresAt,
   });
 };
+const getDashboardSessions = async (req, res) => {
+  const clientId = getTenantClientId(req.user);
+  const roleDefinitions = await getStoredRoleDefinitions(clientId);
+  const trainee = await User.findOne({ appId: req.user.appId, clientId, role: "trainee" }).lean();
+
+  if (!trainee) {
+    return fail(res, 404, "Trainee not found.");
+  }
+
+  const trainings = await Training.find(
+    { clientId },
+    { appId: 1, "payload.title": 1, "payload.type": 1, "payload.audience": 1, "payload.sessions": 1 },
+  ).lean();
+
+  const sessions = trainings
+    .flatMap((record) => {
+      const trainingTitle = normalizeValue(record?.payload?.title) || "Untitled Training";
+      const trainingType = normalizeValue(record?.payload?.type) || "";
+      const trainingAudience = normalizeValue(record?.payload?.audience) || "";
+      const items = Array.isArray(record?.payload?.sessions) ? record.payload.sessions : [];
+
+      return items
+        .filter((session) => isSessionForTrainee(session, trainee))
+        .map((session, index) => ({
+          id: normalizeValue(session?.id) || `launch-session-${record.appId}-${index}`,
+          trainingId: normalizeValue(record?.appId),
+          trainingTitle,
+          trainingType,
+          trainingAudience,
+          ssoId: normalizeValue(session?.ssoId) || normalizeValue(session?.learnerEmail) || normalizeValue(trainee.email),
+          learnerName: normalizeValue(session?.learnerName) || normalizeValue(trainee.name),
+          learnerEmail: normalizeValue(session?.learnerEmail) || normalizeValue(trainee.email),
+          status: normalizeValue(session?.status) || "not-started",
+          timeSpent: normalizeValue(session?.timeSpent) || "0m 00s",
+          slidesViewed: Number(session?.slidesViewed || 0),
+          totalSlides: Number(session?.totalSlides || 0),
+          viewedSlideIds: Array.isArray(session?.viewedSlideIds) ? session.viewedSlideIds : [],
+          score: typeof session?.score === "number" ? session.score : null,
+          startedAt: normalizeValue(session?.startedAt) || null,
+          completedAt: normalizeValue(session?.completedAt) || null,
+          correctAnswers: Number(session?.correctAnswers || 0),
+          totalQuestions: Number(session?.totalQuestions || 0),
+          progressPercent: typeof session?.progressPercent === "number" ? session.progressPercent : undefined,
+          mode: normalizeValue(session?.mode) || "public",
+          askHistory: Array.isArray(session?.askTranscripts)
+            ? session.askTranscripts
+            : Array.isArray(session?.askHistory)
+              ? session.askHistory
+              : [],
+          attemptNo: Number(session?.attemptNo || 1),
+          maxAttempts: Number(session?.maxAttempts || 0),
+          isRetake: Boolean(session?.isRetake),
+          bestScore: typeof session?.bestScore === "number" ? session.bestScore : null,
+          latestScore: typeof session?.latestScore === "number" ? session.latestScore : (typeof session?.score === "number" ? session.score : null),
+          resetByAdmin: Boolean(session?.resetByAdmin),
+          resetAt: normalizeValue(session?.resetAt) || null,
+          resetBy: normalizeValue(session?.resetBy) || null,
+          proctoringReport: session?.proctoringReport || null,
+        }));
+    })
+    .sort((left, right) => parseSessionDate(right.startedAt || right.completedAt) - parseSessionDate(left.startedAt || left.completedAt));
+
+  const assignedTrainings = trainings
+    .filter((record) => {
+      const items = Array.isArray(record?.payload?.sessions) ? record.payload.sessions : [];
+      return items.some((session) => isSessionForTrainee(session, trainee));
+    })
+    .map((record) => ({
+      id: record.appId,
+      title: normalizeValue(record?.payload?.title) || "Untitled Training",
+      type: normalizeValue(record?.payload?.type) || "",
+      audience: normalizeValue(record?.payload?.audience) || "",
+      totalAttempts: sessions.filter((session) => session.trainingId === record.appId).length,
+    }));
+
+  const scoreRecords = sessions.filter((session) => typeof session.score === "number");
+  const summary = {
+    totalSessions: sessions.length,
+    completedSessions: sessions.filter((session) => String(session.status).toLowerCase() === "completed").length,
+    inProgressSessions: sessions.filter((session) => String(session.status).toLowerCase() === "in-progress").length,
+    notStartedSessions: sessions.filter((session) => String(session.status).toLowerCase() === "not-started").length,
+    averageScore: scoreRecords.length
+      ? Math.round(scoreRecords.reduce((sum, session) => sum + Number(session.score || 0), 0) / scoreRecords.length)
+      : null,
+  };
+
+  return ok(res, "Dashboard sessions loaded.", {
+    trainee: sanitizeUserRecord(trainee, roleDefinitions),
+    sessions,
+    assignedTrainings,
+    summary,
+  });
+};
 
 module.exports = {
   list,
@@ -924,6 +1032,7 @@ module.exports = {
   remove,
   listTrainees,
   getTraineeSessions,
+  getDashboardSessions,
   reopenTraineeSessionAttempt,
   createTrainee,
   updateTrainee,

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAppDispatch } from "../../app/hooks";
-import TrainingWorkspace from "../../component/training-workspace/TrainingWorkspace";
 import type { AdminUser } from "../../constant/interfaces";
 import AxiosHelper from "../../helper/AxiosHelper";
 import { clearAuthToken } from "../../helper/authSession";
@@ -14,18 +13,19 @@ import {
 } from "../../helper/publicRoleAuth";
 import { useForceLogoutWatcher } from "../../hooks/useForceLogoutWatcher";
 import { loggedOutAdmin, updateAdmin } from "../../redux/authSlice";
+import TraineePanel from "./TraineePanel";
 
-const TrainerWorkspacePanel = () => {
+const TraineeWorkspacePanel = () => {
   const dispatch = useAppDispatch();
   const navigate = useNavigate();
   const location = useLocation();
-  const [session, setSession] = useState(() => getPublicRoleSession("trainer"));
+  const [session, setSession] = useState(() => getPublicRoleSession("trainee"));
   const isSignedOut = useRef(false);
 
   const signOut = useCallback(() => {
     if (isSignedOut.current) return;
     isSignedOut.current = true;
-    clearPublicRoleSession("trainer");
+    clearPublicRoleSession("trainee");
     clearAuthToken();
     dispatch(loggedOutAdmin());
     setSession(null);
@@ -40,17 +40,13 @@ const TrainerWorkspacePanel = () => {
 
       if (isSignedOut.current) return;
 
-      if (!response.data.status || response.data.data.role !== "trainer") {
-        // The account no longer exists, was deactivated, or was reassigned to a
-        // different role — either way this session is no longer valid, so sign
-        // out instead of silently leaving the stale cached session in place
-        // (which previously just kept re-firing 401s forever).
+      if (!response.data.status || response.data.data.role !== "trainee") {
         signOut();
         return;
       }
 
-      const nextSession = buildPublicRoleSessionFromAdmin("trainer", response.data.data, getPublicRoleSession("trainer"));
-      setPublicRoleSession("trainer", nextSession);
+      const nextSession = buildPublicRoleSessionFromAdmin("trainee", response.data.data, getPublicRoleSession("trainee"));
+      setPublicRoleSession("trainee", nextSession);
       setSession(nextSession);
       dispatch(updateAdmin(response.data.data));
     } catch {
@@ -58,12 +54,10 @@ const TrainerWorkspacePanel = () => {
     }
   }, [dispatch, signOut]);
 
-  // Immediate kick if a super-admin or client admin deletes/deactivates this
-  // trainer while they're on this page (socket push + polling fallback).
   useForceLogoutWatcher({ enabled: Boolean(session) });
 
   useEffect(() => {
-    setPublicRoleLastPath("trainer", `${location.pathname}${location.search}${location.hash}`);
+    setPublicRoleLastPath("trainee", `${location.pathname}${location.search}${location.hash}`);
   }, [location.hash, location.pathname, location.search]);
 
   useEffect(() => {
@@ -82,19 +76,12 @@ const TrainerWorkspacePanel = () => {
   }
 
   return (
-    <TrainingWorkspace
-      role="trainer"
+    <TraineePanel
       sessionName={session.name}
-      sessionEmail={session.email}
       sessionImage={session.image}
-      roleLabel={session.roleLabel}
-      usedCredits={Number(session.usedCredits ?? 0)}
-      totalCredits={Number(session.totalCredits ?? 0)}
-      permission={session.permission ?? []}
-      allowed={session.allowed ?? []}
       onSignOut={signOut}
     />
   );
 };
 
-export default TrainerWorkspacePanel;
+export default TraineeWorkspacePanel;

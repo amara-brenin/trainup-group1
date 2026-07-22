@@ -143,6 +143,11 @@ export interface ClientRecord {
   trainingCreditCost?: number;
   userCreditCost?: number;
   sessionCreditCost?: number;
+  creditCostOverrides?: {
+    training: number | null;
+    session: number | null;
+    user: number | null;
+  };
   planLimits?: {
     trainings: number | null;
     users: number | null;
@@ -421,6 +426,7 @@ export interface BillingSummary {
     planCode: string;
     label: string;
     monthlyCredits: number;
+    usedCredits: number;
     purchasedAt: string;
     expiresAt: string;
     trainingLimit: number | null;
@@ -980,6 +986,12 @@ export interface TrainingWorkspaceRecord {
   submittedOn: string | null;
   approvedOn: string | null;
   lastActivity: string;
+  lastLaunchLink?: {
+    launchUrl?: string;
+    expiresInMinutes?: number;
+    learnerName?: string;
+    learnerEmail?: string;
+  } | null;
   trainingType?: "one_on_one" | "group";
   groupConfig?: TrainingGroupConfig | null;
   trainingMode?: TrainingMode;
@@ -1019,9 +1031,9 @@ export interface TrainingWorkspaceRecord {
     markAnswersInRealTime: boolean;
     showMarksInProgressBar: boolean;
     showFinalScore: boolean;
+    proctoringEnabled: boolean;
     allowPublicDemoAccess?: boolean;
     demoToken?: string;
-    proctoringEnabled?: boolean;
   };
   theme?: TrainingSlideshowTheme;
   branding?: TrainingBrandingSettings;

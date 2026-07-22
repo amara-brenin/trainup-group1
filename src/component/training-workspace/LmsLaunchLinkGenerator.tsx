@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import AxiosHelper from "../../helper/AxiosHelper";
 import { getRequestUrl } from "../../helper/runtimeApi";
 import { getAuthToken } from "../../helper/authSession";
@@ -24,7 +24,7 @@ const LmsLaunchLinkGenerator = ({
     expiresInMinutes?: number;
     learnerName?: string;
     learnerEmail?: string;
-  };
+  } | null;
 }) => {
   const [learnerName, setLearnerName] = useState(() => lastLaunchLink?.learnerName || "");
   const [learnerEmail, setLearnerEmail] = useState(() => lastLaunchLink?.learnerEmail || "");

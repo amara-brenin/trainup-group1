@@ -29,6 +29,13 @@ const cards = [
     icon: "ri-user-star-line",
     button: "Open SSO Flow",
   },
+  {
+    title: "Trainee",
+    subtitle: "Access assigned training modules and view performance reports.",
+    to: "/login",
+    icon: "ri-graduation-cap-line",
+    button: "Open Trainee Panel",
+  },
 ];
 
 const RoleLanding = () => {

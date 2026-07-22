@@ -11,6 +11,8 @@ const isSupportedSuperAdminPath = (path: string) =>
   path.startsWith("/clients/") ||
   path === "/staff" ||
   path.startsWith("/staff/") ||
+  path === "/upgrade-billing" ||
+  path.startsWith("/upgrade-billing/") ||
   path === "/profile";
 
 export const stripSuperAdminPrefix = (path: string) => {
