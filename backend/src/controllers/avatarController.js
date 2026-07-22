@@ -30,7 +30,7 @@ const getAvatars = async (req, res) => {
     }
 
     // For clients, filter based on assignedAvatars
-    const clientId = getTenantClientId(req);
+    const clientId = getTenantClientId(req.user);
     if (!clientId) {
       return ok(res, "Avatars fetched successfully", allAvatars);
     }
