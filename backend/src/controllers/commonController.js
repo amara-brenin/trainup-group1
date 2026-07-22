@@ -207,6 +207,7 @@ const buildBillingSummaryResponse = async (client, metrics = null) => {
   const snapshot = buildClientCreditSnapshot(client);
   const billingDates = buildMonthlyBillingDates(client);
   const storedUsage = buildPlanUsage(client, billingDates);
+  const entitlement = getClientEntitlement(client);
   const planUsage = {
     trainings: Number(metrics?.trainings ?? client.trainings ?? storedUsage.trainings ?? 0),
     users: Number(metrics?.activeUsers ?? client.activeUsers ?? storedUsage.users ?? 0),
@@ -246,7 +247,16 @@ const buildBillingSummaryResponse = async (client, metrics = null) => {
     billingCurrency: client.billingCurrency || "INR",
     razorpayKeyId: client.razorpayKeyId || "",
     gatewayReady: Boolean(client.razorpayKeyId && client.razorpayKeySecret),
-    planLimits: snapshot.planConfig.limits,
+    // Sourced from the real stacked entitlement (sum of every active plan
+    // batch's limits + purchased add-ons), not the static PLAN_CONFIGS lookup
+    // for client.plan alone — otherwise this can disagree with the "Users
+    // Usage" figure (getClientEntitlement) shown on the same billing page,
+    // and block adds below the capacity the account actually has.
+    planLimits: {
+      trainings: entitlement.training.unlimited ? null : entitlement.training.limit,
+      users: entitlement.user.unlimited ? null : entitlement.user.limit,
+      sessions: entitlement.session.unlimited ? null : entitlement.session.limit,
+    },
     planPrice: getPlanChargeAmount(client, snapshot.plan),
     freeTrialActive: freeTrial.active,
     freeTrialEndsOn: freeTrial.endsAt,

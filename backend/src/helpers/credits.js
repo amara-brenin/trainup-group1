@@ -612,7 +612,6 @@ module.exports = {
   resetClientPlanState,
   getActiveBatches,
   getRawActivePlans,
-  assertUsageWithinPlan,
   assertCreditAvailability,
   assertSubscriptionActive,
   isSubscriptionExpired,
