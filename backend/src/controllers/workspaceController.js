@@ -86,7 +86,7 @@ const buildAssignedTrainingSession = (training, trainee) => ({
   status: "not-started",
   timeSpent: "0m 00s",
   slidesViewed: 0,
-  totalSlides: Array.isArray(training.payload?.slides) ? training.payload.slides.length : 0,
+  totalSlides: Array.isArray(training.payload?.slides) ? training.payload.slides.filter((slide) => !slide.unselected).length : 0,
   viewedSlideIds: [],
   score: null,
   startedAt: null,
@@ -140,7 +140,15 @@ const list = async (req, res) => {
           voiceId: 1, questionButtonLabel: 1, isPublished: 1, publishedOn: 1,
           durationMins: 1, maxDurationMins: 1, idleRefreshMins: 1, options: 1,
         },
-        slidesCount: { $size: { $ifNull: ["$payload.slides", []] } },
+        slidesCount: {
+          $size: {
+            $filter: {
+              input: { $ifNull: ["$payload.slides", []] },
+              as: "slide",
+              cond: { $ne: ["$$slide.unselected", true] }
+            }
+          }
+        },
         sessionsCount: { $size: { $ifNull: ["$payload.sessions", []] } },
         completedSessionsCount: {
           $size: {
