@@ -4,6 +4,7 @@ import Swal from "sweetalert2";
 import { toast } from "react-toastify";
 import * as Yup from "yup";
 import { useAppDispatch, useAppSelector } from "../../app/hooks";
+import { store } from "../../store";
 import type {
   PaginatedResponse,
   TrainingAvatarEngineConfig,
@@ -350,6 +351,12 @@ type ApiAvatarItem = {
   avatarEngine: string;
   image?: string;
   isShared?: boolean;
+  // "provider-TL" (Trulience) or "provider-TV" (Tavus) — see GET /avatars.
+  provider?: string;
+  replicaId?: string;
+  personaId?: string;
+  elevenLabsVoiceId?: string;
+  elevenLabsVoiceName?: string;
 };
 
 const SARAH_DEFAULT_AVATAR: ApiAvatarItem = {
@@ -911,6 +918,25 @@ const deriveQuestionSetState = (
   };
 };
 
+// Status-transition actions (Approve, Submit for review, Request changes) used
+// to only dispatch a local Redux update and toast optimistically, relying on
+// the debounced auto-sync effect (~700ms) to actually reach the backend. A
+// refresh inside that window cancels the pending save entirely (setTimeout
+// cleanup on unmount), silently losing the transition. This pushes the exact
+// post-dispatch store state to the server immediately and awaits it before
+// toasting, so the UI never claims success before it's actually persisted.
+const persistTrainingsImmediately = async (trainings: TrainingWorkspaceRecord[]) => {
+  try {
+    const response = await AxiosHelper.putData<TrainingWorkspaceRecord[], { trainings: TrainingWorkspaceRecord[] }>(
+      "/training-workspace/sync",
+      { trainings: trainings.map(sanitizeTrainingRecordForStorage) },
+    );
+    return Boolean(response.data.status);
+  } catch {
+    return false;
+  }
+};
+
 const getFileStem = (value: string) => value.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").trim();
 const getFileExtension = (value: string) => value.split(".").pop()?.toLowerCase() ?? "";
 
@@ -918,20 +944,36 @@ const buildSlidePoints = (slideTitle: string, mediaLabel: string, extractedText?
   return buildSlidePointsFromSource(slideTitle || mediaLabel, extractedText);
 };
 
-const buildAvatarEngineFromValues = (values: TrainingSetupValues): TrainingAvatarEngineConfig => ({
-  ...defaultAvatarEngineConfig,
-  baseUrl: values.avatarEngineBaseUrl.trim() || defaultAvatarEngineConfig.baseUrl,
-  model: values.avatarEngineModel.trim() || defaultAvatarEngineConfig.model,
-  prompt: values.avatarEnginePrompt.trim() || defaultAvatarEngineConfig.prompt,
-  memoryEnabled: values.avatarEngineMemoryEnabled,
-  sttProvider: values.avatarEngineSttProvider.trim() || defaultAvatarEngineConfig.sttProvider,
-  language: values.avatarEngineLanguage.trim() || defaultAvatarEngineConfig.language,
-  additionalLanguages: values.avatarEngineAdditionalLanguages
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean),
-  avatarId: values.avatarEngineAvatarId.trim() || defaultAvatarEngineConfig.avatarId,
-});
+const buildAvatarEngineFromValues = (
+  values: TrainingSetupValues,
+  avatarOptions: ApiAvatarItem[],
+): TrainingAvatarEngineConfig => {
+  const avatarIdValue = values.avatarEngineAvatarId.trim() || defaultAvatarEngineConfig.avatarId;
+  const selectedAvatar = avatarOptions.find((option) => option.avatarId === avatarIdValue);
+  const isTavus = selectedAvatar?.provider === "provider-TV";
+
+  return {
+    ...defaultAvatarEngineConfig,
+    provider: selectedAvatar?.provider || defaultAvatarEngineConfig.provider,
+    baseUrl: values.avatarEngineBaseUrl.trim() || defaultAvatarEngineConfig.baseUrl,
+    model: values.avatarEngineModel.trim() || defaultAvatarEngineConfig.model,
+    prompt: values.avatarEnginePrompt.trim() || defaultAvatarEngineConfig.prompt,
+    memoryEnabled: values.avatarEngineMemoryEnabled,
+    sttProvider: values.avatarEngineSttProvider.trim() || defaultAvatarEngineConfig.sttProvider,
+    language: values.avatarEngineLanguage.trim() || defaultAvatarEngineConfig.language,
+    additionalLanguages: values.avatarEngineAdditionalLanguages
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean),
+    avatarId: avatarIdValue,
+    // Tavus-only: needed to create a conversation (replica + persona) and to
+    // drive TTS via the same ElevenLabs voice configured for this avatar.
+    replicaId: isTavus ? selectedAvatar?.replicaId || avatarIdValue : undefined,
+    personaId: isTavus ? selectedAvatar?.personaId : undefined,
+    elevenLabsVoiceId: isTavus ? selectedAvatar?.elevenLabsVoiceId : undefined,
+    elevenLabsVoiceName: isTavus ? selectedAvatar?.elevenLabsVoiceName : undefined,
+  };
+};
 
 // Parses print-dialog-style page range input ("1-10, 45-50, 48") into a set of
 // 1-based slide numbers, clamped to the deck size, for the Step 2 range selector.
@@ -4636,7 +4678,7 @@ const TrainingBuilder = ({
               assessment: { passPct: 60, scoring: "both" },
             }
             : null,
-        avatarEngine: buildAvatarEngineFromValues(values),
+        avatarEngine: buildAvatarEngineFromValues(values, avatarOptions),
         slides: allResolvedSlides.map((slide, index) => ({
           ...slide,
           color: slideColorCycle[index % slideColorCycle.length],
@@ -8685,9 +8727,14 @@ const TrainingDetail = ({
                       <button
                         type="button"
                         className="btn btn-outline-danger btn-sm"
-                        onClick={() => {
+                        onClick={async () => {
                           dispatch(requestTrainingChanges({ trainingId: training.id }));
-                          toast.info("Changes requested for this training.");
+                          const saved = await persistTrainingsImmediately(store.getState().trainingWorkspace.trainings);
+                          if (saved) {
+                            toast.info("Changes requested for this training.");
+                          } else {
+                            toast.error("Could not save — please try again.");
+                          }
                         }}
                       >
                         Request Changes
@@ -8697,9 +8744,14 @@ const TrainingDetail = ({
                       <button
                         type="button"
                         className="btn btn-success btn-sm"
-                        onClick={() => {
+                        onClick={async () => {
                           dispatch(approveTraining({ trainingId: training.id }));
-                          toast.success("Training approved.");
+                          const saved = await persistTrainingsImmediately(store.getState().trainingWorkspace.trainings);
+                          if (saved) {
+                            toast.success("Training approved.");
+                          } else {
+                            toast.error("Could not save — please try again.");
+                          }
                         }}
                       >
                         Approve Training
@@ -8715,9 +8767,14 @@ const TrainingDetail = ({
                     <button
                       type="button"
                       className="btn btn-success btn-sm"
-                      onClick={() => {
+                      onClick={async () => {
                         dispatch(approveTraining({ trainingId: training.id }));
-                        toast.success("Training approved.");
+                        const saved = await persistTrainingsImmediately(store.getState().trainingWorkspace.trainings);
+                        if (saved) {
+                          toast.success("Training approved.");
+                        } else {
+                          toast.error("Could not save — please try again.");
+                        }
                       }}
                     >
                       Approve Training
@@ -8727,9 +8784,14 @@ const TrainingDetail = ({
                     <button
                       type="button"
                       className="btn btn-warning btn-sm text-white"
-                      onClick={() => {
+                      onClick={async () => {
                         dispatch(submitTrainingForReview({ trainingId: training.id }));
-                        toast.success("Training re-submitted for review.");
+                        const saved = await persistTrainingsImmediately(store.getState().trainingWorkspace.trainings);
+                        if (saved) {
+                          toast.success("Training re-submitted for review.");
+                        } else {
+                          toast.error("Could not save — please try again.");
+                        }
                       }}
                     >
                       Re-submit for Review

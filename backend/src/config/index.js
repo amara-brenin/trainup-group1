@@ -76,6 +76,10 @@ module.exports = {
     language: String(process.env.TRULIENCE_LANGUAGE || "english (india)(en-IN)").trim(),
     additionalLanguages: parseList(process.env.TRULIENCE_ADDITIONAL_LANGUAGES, ["Hindi (India)"]),
   },
+  tavus: {
+    apiKey: String(process.env.TAVUS_API_KEY || "").trim(),
+    apiBaseUrl: String(process.env.TAVUS_API_BASE_URL || "https://tavusapi.com/v2").trim().replace(/\/+$/, ""),
+  },
   google: {
     clientId: String(process.env.GOOGLE_CLIENT_ID || defaultGoogleClientId).trim(),
     allowedDomains: parseList(process.env.GOOGLE_ALLOWED_DOMAINS),

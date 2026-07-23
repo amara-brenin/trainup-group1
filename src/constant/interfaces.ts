@@ -940,6 +940,11 @@ export interface TrainingAvatarEngineConfig {
   additionalLanguages: string[];
   avatarId: string;
   engineType: string;
+  // Tavus-only fields (provider === "provider-TV"). Undefined for Trulience avatars.
+  replicaId?: string;
+  personaId?: string;
+  elevenLabsVoiceId?: string;
+  elevenLabsVoiceName?: string;
 }
 
 export interface TrainingSlideshowTheme {

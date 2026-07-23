@@ -15,6 +15,7 @@ const emailCenterController = require("../controllers/emailCenterController");
 const groupSessionController = require("../controllers/groupSessionController");
 const launchController = require("../controllers/launchController");
 const avatarController = require("../controllers/avatarController");
+const tavusController = require("../controllers/tavusController");
 const { joinLimiter } = require("../middelwares/rateLimit");
 const { authTokenAdmin, allowAccess, allowRoles } = require("../middelwares");
 
@@ -23,6 +24,8 @@ const router = express.Router();
 router.use(authTokenAdmin);
 
 router.get("/avatars", avatarController.getAvatars);
+router.post("/avatars/tavus/session", tavusController.createSession);
+router.post("/avatars/tavus/session/:conversationId/end", tavusController.endSession);
 router.get("/profile", authController.profile);
 // FEATURE 3: return flow — available to ANY impersonated session (incl. a
 // trainee with no module permissions), so no allowAccess guard here.

@@ -10,6 +10,7 @@ type ApiAvatarItem = {
   avatarEngine: string;
   image?: string;
   isShared?: boolean;
+  provider?: string;
 };
 
 const Avatars = () => {
@@ -78,7 +79,7 @@ const Avatars = () => {
                   <div className="text-muted small mb-2" style={{ fontSize: "0.75rem" }}>{avatar.avatarId}</div>
                   
                   <span className="badge rounded-pill bg-light text-primary border px-2 py-1" style={{ fontSize: "0.65rem", fontWeight: "600" }}>
-                    provider-TL
+                    {avatar.provider || "provider-TL"}
                   </span>
                 </div>
               </div>

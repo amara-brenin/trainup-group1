@@ -1259,14 +1259,18 @@ const upsertLaunchSession = async (req, res) => {
   });
 };
 
-const createTrainingReply = async ({ training, message, history = [] }) => {
+// Shared by createTrainingReply (Groq-backed /ask endpoint, used by Trulience
+// + voice mode) and tavusController (passed as Tavus's per-conversation
+// conversational_context) so both providers ground answers in the exact same
+// training-specific prompt + knowledge base — never a global/shared default.
+const buildTrainingAskContext = (training) => {
   const trainingAskPrompt = normalizeValue(training.payload?.askSystemPrompt);
   const avatarEnginePrompt = normalizeValue(training.payload?.avatarEngine?.prompt);
   const avatarPrompt =
     trainingAskPrompt ||
     avatarEnginePrompt ||
     normalizeValue(config.groq.systemPrompt);
-  const contextualPrompt = [
+  const systemPrompt = [
     avatarPrompt,
     "Answer only using the module knowledge base that is provided.",
     "Do not repeat slide narration verbatim unless the learner explicitly asks for an exact quote.",
@@ -1279,10 +1283,16 @@ const createTrainingReply = async ({ training, message, history = [] }) => {
     .filter(Boolean)
     .join("\n");
 
-  const context = buildAskKnowledgeBase(training.payload);
+  const knowledgeBase = buildAskKnowledgeBase(training.payload);
+
+  return { systemPrompt, knowledgeBase };
+};
+
+const createTrainingReply = async ({ training, message, history = [] }) => {
+  const { systemPrompt, knowledgeBase } = buildTrainingAskContext(training);
   return createGroqReply({
-    systemPrompt: contextualPrompt,
-    context,
+    systemPrompt,
+    context: knowledgeBase,
     history,
     message,
   });
@@ -2008,6 +2018,7 @@ module.exports = {
   askQuestion,
   handleTrulienceEvent,
   createTrainingReply,
+  buildTrainingAskContext,
   buildLaunchPayload,
   findTrainingById,
   buildLaunchBrandingPayload,
