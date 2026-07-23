@@ -9,6 +9,7 @@ import { generateScriptAudioDataUri } from "../../helper/scriptAudio";
 import TrainingLaunchAvatar, {
   type TrainingLaunchAvatarHandle,
 } from "../../component/launch/TrainingLaunchAvatar";
+import TrainingLaunchTavusAvatar from "../../component/launch/TrainingLaunchTavusAvatar";
 
 const defaultAvatarId = "1647619895205577317";
 
@@ -28,7 +29,13 @@ type TrainingPayload = {
   ttsProvider?: string;
   voiceId?: string;
   voiceName?: string;
-  avatarEngine?: { avatarId?: string; language?: string } | null;
+  avatarEngine?: {
+    avatarId?: string;
+    language?: string;
+    provider?: string;
+    replicaId?: string;
+    personaId?: string;
+  } | null;
 };
 type StatePayload = {
   lifecycle: string; phase: string; currentSlideIndex?: number; attendeeCount?: number; minParticipants?: number;
@@ -76,6 +83,9 @@ const GroupHallScreen = () => {
   const useAvatar = training?.trainingMode !== "voice";
   const resolvedAvatarId = training?.avatarEngine?.avatarId || training?.avatarId || defaultAvatarId;
   const speechLanguage = training?.avatarEngine?.language;
+  const isTavusAvatarProvider = training?.avatarEngine?.provider === "provider-TV";
+  const resolvedTavusReplicaId = training?.avatarEngine?.replicaId || resolvedAvatarId;
+  const resolvedTavusPersonaId = training?.avatarEngine?.personaId;
 
   const isLive = lifecycle === "live";
   const isWaiting = lifecycle === "scheduled" || lifecycle === "waiting" || lifecycle === "starting";
@@ -144,7 +154,7 @@ const GroupHallScreen = () => {
       const spoke =
         useAvatar && avatarReady
           ? avatarRef.current?.speakText({
-              text: `repeat exact text: ${normalized}`,
+              text: isTavusAvatarProvider ? normalized : `repeat exact text: ${normalized}`,
               trainingId: training?.id,
               currentSlideId: currentSlide?.id ?? null,
             })
@@ -152,7 +162,7 @@ const GroupHallScreen = () => {
 
       if (!spoke) void playFallbackAudio(normalized);
     },
-    [useAvatar, avatarReady, training?.id, currentSlide?.id, playFallbackAudio],
+    [useAvatar, avatarReady, isTavusAvatarProvider, training?.id, currentSlide?.id, playFallbackAudio],
   );
 
   // The socket handlers below are registered once (effect deps [gsId]) and would
@@ -581,7 +591,29 @@ const GroupHallScreen = () => {
 
         {/* GREEN region: fixed avatar */}
         <div className="group-hall-avatar border-start border-secondary" style={{ width: 360, flexShrink: 0, background: "#000" }}>
-          {useAvatar && resolvedAvatarId ? (
+          {useAvatar && resolvedAvatarId && isTavusAvatarProvider ? (
+            <TrainingLaunchTavusAvatar
+              ref={avatarRef}
+              avatarId={resolvedTavusReplicaId}
+              personaId={resolvedTavusPersonaId}
+              trainingId={training?.id}
+              language={speechLanguage}
+              username="Hall"
+              positionClass=""
+              onReady={() => {
+                setAvatarReady(true);
+                avatarRef.current?.pushTrainingContext({ trainingId: training?.id, currentSlideId: currentSlide?.id ?? null });
+              }}
+              onStatusChange={(status) => {
+                if (status.state === "talking") sawTalkingRef.current = true;
+                else if ((status.state === "idle" || status.state === "loaded") && sawTalkingRef.current) {
+                  finishNarration();
+                }
+                if (status.state === "unloaded" || status.state === "loading") setAvatarReady(false);
+                else if (status.state === "loaded" || status.state === "idle" || status.state === "talking") setAvatarReady(true);
+              }}
+            />
+          ) : useAvatar && resolvedAvatarId ? (
             <TrainingLaunchAvatar
               ref={avatarRef}
               avatarId={resolvedAvatarId}

@@ -56,6 +56,7 @@ import TrainingLaunchAvatar, {
   type TrainingLaunchAvatarHandle,
   type TrainingLaunchAvatarStatus,
 } from "../../component/launch/TrainingLaunchAvatar";
+import TrainingLaunchTavusAvatar from "../../component/launch/TrainingLaunchTavusAvatar";
 import TrainingLaunchProctoring, {
   type TrainingLaunchProctoringHandle,
 } from "../../component/launch/TrainingLaunchProctoring";
@@ -1646,6 +1647,11 @@ const TrainingLaunch = () => {
   const hasAvatarRuntime = Boolean(
     training?.trainingMode !== "voice" && resolvedAvatarId,
   );
+  // Only "provider-TV" (Tavus) routes to the Tavus runtime; anything else
+  // (missing, "Trulience", "provider-TL") keeps the existing Trulience path.
+  const isTavusAvatarProvider = training?.avatarEngine?.provider === "provider-TV";
+  const resolvedTavusReplicaId = training?.avatarEngine?.replicaId || resolvedAvatarId;
+  const resolvedTavusPersonaId = training?.avatarEngine?.personaId;
   const isLaunchRuntimeReady = Boolean(
     isProctoringLive && (!hasAvatarRuntime || avatarReady),
   );
@@ -2025,13 +2031,22 @@ const TrainingLaunch = () => {
         errorMessage: string;
       },
     ) => {
-      const normalizedText = options.type === "slide"
-        ? 'Please repeat the exact this same text: ' + String(text || "").trim()
-        : 'repeat exact text: ' + String(text || "").trim();
-
       const plainText = String(text || "").trim();
       const wordCount = plainText.split(/\s+/).filter(Boolean).length;
       const characterCount = plainText.length;
+
+      // Trulience's sendMessageToAvatar() goes through its own conversational
+      // agent, which will paraphrase/respond to plain text instead of just
+      // saying it — hence the "repeat exact text" instruction prefix. Tavus's
+      // speakText() drives the Interactions Protocol's echo event instead,
+      // which already speaks whatever text it's given verbatim with no LLM in
+      // the loop, so wrapping it in an instruction just makes the avatar say
+      // the instruction out loud too.
+      const normalizedText = isTavusAvatarProvider
+        ? plainText
+        : options.type === "slide"
+          ? 'Please repeat the exact this same text: ' + plainText
+          : 'repeat exact text: ' + plainText;
 
       if (!normalizedText || !training) {
         return false;
@@ -2103,7 +2118,7 @@ const TrainingLaunch = () => {
 
       return didStart;
     },
-    [avatarReady, currentSlide?.id, logAutoplay, training],
+    [avatarReady, currentSlide?.id, isTavusAvatarProvider, logAutoplay, training],
   );
 
   const playCurrentSlideNarration = useCallback(
@@ -4114,6 +4129,11 @@ const TrainingLaunch = () => {
     setIsAskListening(true);
     setSpeechActivity("listening");
 
+    // Tavus's mic is left on its own native pipeline (see below) so Ask mode
+    // stays fast and natural — its per-conversation conversational_context
+    // (set at session creation from this training's Ask Assistant Prompt +
+    // knowledge base) grounds its answers instead of routing through our own
+    // /ask endpoint.
     if (hasAvatarRuntime) {
       avatarRef.current?.startListening();
     } else {
@@ -4466,7 +4486,7 @@ const TrainingLaunch = () => {
     if (!isAskMode) {
       if (hasAvatarRuntime && avatarReady) {
         avatarRef.current?.speakText({
-          text: "repeat exact text: How can i help you?",
+          text: isTavusAvatarProvider ? "How can i help you?" : "repeat exact text: How can i help you?",
           trainingId: training?.id,
           currentSlideId: currentSlide?.id,
         });
@@ -5614,32 +5634,66 @@ const TrainingLaunch = () => {
 
           {hasAvatarRuntime ? (
             <div className="training-launch-avatar-rail">
-              <TrainingLaunchAvatar
-                ref={avatarRef}
-                avatarId={resolvedAvatarId}
-                language={selectedSpeechLocale}
-                username={training.viewerName || "Learner"}
-                positionClass={`is-bottom-right${avatarVisible ? "" : " is-hidden"}`}
-                onReady={() => {
-                  setAvatarReady(true);
-                  setQuestionError("");
-                  avatarRef.current?.pushTrainingContext({
-                    trainingId: training.id,
-                    currentSlideId: currentSlide.id,
-                  });
-                }}
-                onMicChange={(enabled) => {
-                  setIsAskListening(enabled);
+              {isTavusAvatarProvider ? (
+                <TrainingLaunchTavusAvatar
+                  ref={avatarRef}
+                  avatarId={resolvedTavusReplicaId}
+                  personaId={resolvedTavusPersonaId}
+                  trainingId={training.id}
+                  language={selectedSpeechLocale}
+                  username={training.viewerName || "Learner"}
+                  positionClass={`is-bottom-right${avatarVisible ? "" : " is-hidden"}`}
+                  onReady={() => {
+                    setAvatarReady(true);
+                    setQuestionError("");
+                    avatarRef.current?.pushTrainingContext({
+                      trainingId: training.id,
+                      currentSlideId: currentSlide.id,
+                    });
+                  }}
+                  onMicChange={(enabled) => {
+                    setIsAskListening(enabled);
 
-                  if (!enabled) {
-                    setLaunchStatus((current) =>
-                      current === "Listening for your question." ? "" : current,
-                    );
-                  }
-                }}
-                onStatusChange={handleAvatarStatusChange}
-                onTranscript={handleAvatarTranscript}
-              />
+                    if (!enabled) {
+                      setLaunchStatus((current) =>
+                        current === "Listening for your question." ? "" : current,
+                      );
+                    }
+                  }}
+                  onStatusChange={handleAvatarStatusChange}
+                  // Tavus answers Ask-mode questions natively (via its own
+                  // conversational_context-grounded pipeline, for speed) —
+                  // no onTranscript here, so its answer doesn't also trigger
+                  // our own /ask + Echo, which would speak twice.
+                />
+              ) : (
+                <TrainingLaunchAvatar
+                  ref={avatarRef}
+                  avatarId={resolvedAvatarId}
+                  language={selectedSpeechLocale}
+                  username={training.viewerName || "Learner"}
+                  positionClass={`is-bottom-right${avatarVisible ? "" : " is-hidden"}`}
+                  onReady={() => {
+                    setAvatarReady(true);
+                    setQuestionError("");
+                    avatarRef.current?.pushTrainingContext({
+                      trainingId: training.id,
+                      currentSlideId: currentSlide.id,
+                    });
+                  }}
+                  onMicChange={(enabled) => {
+                    setIsAskListening(enabled);
+
+                    if (!enabled) {
+                      setLaunchStatus((current) =>
+                        current === "Listening for your question." ? "" : current,
+                      );
+                    }
+                  }}
+                  onStatusChange={handleAvatarStatusChange}
+                  onTranscript={handleAvatarTranscript}
+                />
+              )}
               <button
                 type="button"
                 className={`btn training-launch-avatar-mobile-toggle ${avatarVisible ? "btn-secondary" : "btn-primary"}`}
