@@ -179,11 +179,10 @@ const applyDomainConfiguration = (client, domainValue) => {
   if (domainChanged || !client.domainVerificationToken) {
     client.domainVerificationToken = createDomainVerificationToken();
     client.domainVerifiedAt = "";
+    client.domainVerificationHost = client.domainVerificationHost || "_trainup-verification";
+    client.domainStatus = "pending";
+    client.domainLastCheckedResult = `Add TXT ${client.domainVerificationHost}.${nextDomain} => trainup-verify=${client.domainVerificationToken}`;
   }
-
-  client.domainVerificationHost = client.domainVerificationHost || "_trainup-verification";
-  client.domainStatus = "pending";
-  client.domainLastCheckedResult = `Add TXT ${client.domainVerificationHost}.${nextDomain} => trainup-verify=${client.domainVerificationToken}`;
 };
 
 const getTenantRoleDefinitions = async (clientId) => getRoleDefinitions(await getTenantSetting(clientId, "rolePermissions", getEditableRoleDefaults()));
