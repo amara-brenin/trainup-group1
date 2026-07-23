@@ -1533,6 +1533,73 @@ button.experience-list-item:hover {
   margin-top: 1rem;
 }
 
+.training-slide-select-panel {
+  padding: 1.1rem;
+  border: 1px solid rgba(62, 96, 213, 0.14);
+  border-radius: 1rem;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(241, 245, 249, 0.84));
+}
+
+.training-slide-select-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr));
+  gap: 0.85rem;
+  max-height: 26rem;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.training-slide-select-thumb {
+  position: relative;
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.5rem;
+  border: 1.5px solid rgba(62, 96, 213, 0.14);
+  border-radius: 0.8rem;
+  background-color: #f8fafc;
+  cursor: pointer;
+  transition: all 0.15s ease-in-out;
+}
+
+.training-slide-select-thumb:hover {
+  border-color: rgba(62, 96, 213, 0.4);
+}
+
+.training-slide-select-thumb.is-selected {
+  border-color: var(--ct-primary);
+  box-shadow: 0 0 0 2px rgba(62, 96, 213, 0.18);
+  background-color: rgba(62, 96, 213, 0.06);
+}
+
+.training-slide-select-thumb input[type="checkbox"] {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 2;
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.training-slide-select-thumb-media {
+  pointer-events: none;
+}
+
+.training-slide-select-thumb-media .training-slide-media-stage {
+  min-height: 6.5rem;
+}
+
+.training-slide-select-thumb-media .training-slide-media-image {
+  max-height: 8rem;
+}
+
+.training-slide-select-thumb-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--ct-heading-color);
+  text-align: center;
+}
+
+
 .training-dashed-action {
   width: 100%;
   padding: 1rem 1.25rem;
@@ -8030,11 +8097,18 @@ html[data-bs-theme="dark"] .training-form-builder-properties,
 html[data-bs-theme="dark"] .training-form-preview-card,
 html[data-bs-theme="dark"] .training-form-preview-matrix-row,
 html[data-bs-theme="dark"] .training-form-preview-placeholder,
-html[data-bs-theme="dark"] .training-form-preview-meta {
+html[data-bs-theme="dark"] .training-form-preview-meta,
+html[data-bs-theme="dark"] .training-slide-select-panel,
+html[data-bs-theme="dark"] .training-slide-select-thumb {
   background: var(--ds-color-surface) !important;
   border-color: var(--ds-color-border) !important;
   color: var(--ds-color-text-strong);
   box-shadow: var(--ds-shadow-xs);
+}
+
+html[data-bs-theme="dark"] .training-slide-select-thumb.is-selected {
+  border-color: var(--ct-primary) !important;
+  background: color-mix(in srgb, var(--ct-primary) 12%, var(--ds-color-surface)) !important;
 }
 
 html[data-bs-theme="dark"] .training-upload-panel,

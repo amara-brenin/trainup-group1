@@ -144,6 +144,7 @@ const clientSchema = new Schema(
     xapiLrsEndpoint: { type: String, default: "" },
     xapiClientId: { type: String, default: "" },
     xapiClientSecret: { type: String, default: "" },
+    assignedAvatars: { type: [String], default: [] },
   },
   {
     timestamps: true,

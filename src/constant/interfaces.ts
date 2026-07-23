@@ -12,7 +12,7 @@ export type DomainStatus = "verified" | "pending" | "not_configured";
 export type DeliveryTestStatus = "success" | "failed" | "pending" | "not_tested";
 export type PaymentMode = "test" | "live";
 export type ApiKeyPermission = "Read Only" | "Read / Write";
-export type ClientSettingsSection = "company" | "domain" | "whitelabel" | "integrations" | "smtp" | "clientAdmin" | "billing";
+export type ClientSettingsSection = "company" | "domain" | "whitelabel" | "integrations" | "smtp" | "clientAdmin" | "billing" | "avatars";
 export type TrainingType = "Product" | "Soft Skills" | "Technical" | "Compliance" | "Other" | (string & {});
 export type TrainingCommentRole = "trainer" | "reviewer";
 export type TrainingSessionStatus = "completed" | "in-progress" | "not-started";
@@ -129,6 +129,7 @@ export interface ClientRecord {
   id: string;
   name: string;
   industry: string;
+  assignedAvatars?: string[];
   plan: PlanType;
   monthlyCredits?: number;
   purchasedCredits?: number;
@@ -243,8 +244,16 @@ export interface ClientRecord {
     requestedByName: string;
     requestedByEmail: string;
     message: string;
+    approxUsers?: number | null;
+    approxTrainings?: number | null;
+    approxSessions?: number | null;
+    approxBudget?: number | null;
     status: string;
     resolvedAt?: string;
+    offerPrice?: number | null;
+    offerCredits?: number | null;
+    offerValidityDays?: number | null;
+    rejectReason?: string;
   }>;
   clientAdminUserId?: string;
   firstUserName?: string;
@@ -414,6 +423,16 @@ export interface BillingSummary {
   enterpriseMonthlyPrice?: number;
   enterpriseMonthlyCredits?: number;
   pendingEnterpriseRequests?: number;
+  enterpriseRequests?: Array<{
+    id: string;
+    requestedAt: string;
+    status: string;
+    message?: string;
+    offerPrice?: number | null;
+    offerCredits?: number | null;
+    offerValidityDays?: number | null;
+    rejectReason?: string;
+  }>;
   planLimits: {
     trainings: number | null;
     users: number | null;
@@ -736,6 +755,7 @@ export interface TrainingSlideRecord {
   settings?: TrainingSlideSettings;
   removedMedia?: TrainingRemovedMedia | null;
   comments: TrainingSlideComment[];
+  unselected?: boolean;
 }
 
 export interface TrainingKnowledgeDocument {

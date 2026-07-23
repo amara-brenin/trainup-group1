@@ -32,11 +32,10 @@ const applyDomainConfiguration = (client, domainValue) => {
   if (domainChanged || !client.domainVerificationToken) {
     client.domainVerificationToken = createDomainVerificationToken();
     client.domainVerifiedAt = "";
+    client.domainVerificationHost = client.domainVerificationHost || "_trainup-verification";
+    client.domainStatus = "pending";
+    client.domainLastCheckedResult = `Add TXT ${client.domainVerificationHost}.${nextDomain} => trainup-verify=${client.domainVerificationToken}`;
   }
-
-  client.domainVerificationHost = client.domainVerificationHost || "_trainup-verification";
-  client.domainStatus = "pending";
-  client.domainLastCheckedResult = `Add TXT ${client.domainVerificationHost}.${nextDomain} => trainup-verify=${client.domainVerificationToken}`;
 };
 
 const getSettings = async (req, res) => {
@@ -124,7 +123,7 @@ const updateIntegrationSettings = async (client, values) => {
   const errors = {};
   const webhookUrl = String(values.webhookUrl || "").trim();
   const iframeBaseUrl = String(values.iframeBaseUrl || "").trim();
-  const domain = String(values.domain || "").trim();
+  const domain = values.domain !== undefined ? String(values.domain).trim() : (client.domain || "");
 
   if (webhookUrl && !isValidUrl(webhookUrl)) {
     errors.webhookUrl = "Use a valid webhook URL.";

@@ -41,11 +41,23 @@ const BarSvg = ({ data, color, label }: { data: Record<string, number>; color: s
   );
 };
 
+// Sourced from the platform's Bootstrap theme tokens rather than hardcoded
+// hex values, so the chart palette follows whatever theme/dark-mode colors
+// are active instead of drifting from the rest of the UI.
+const CHART_COLORS = [
+  "var(--bs-primary)",
+  "var(--bs-info)",
+  "var(--bs-success)",
+  "var(--bs-warning)",
+  "var(--bs-danger)",
+  "var(--bs-secondary)",
+];
+
 const DonutSvg = ({ data }: { data: Record<string, number> }) => {
   const entries = Object.entries(data).filter(([, v]) => v > 0);
   if (!entries.length) return <div className="text-body-secondary small">No data yet</div>;
   const total = entries.reduce((s, [, v]) => s + v, 0);
-  const colors = ["#4f46e5", "#0891b2", "#16a34a", "#eab308", "#ef4444", "#8b5cf6"];
+  const colors = CHART_COLORS;
   let cum = 0;
   const r = 60;
   const cx = 90;
@@ -125,7 +137,7 @@ const BillingInsights = () => {
           <div className="card h-100">
             <div className="card-body">
               <h3 className="h6 fw-semibold mb-3">Add-On Revenue Trend</h3>
-              <BarSvg data={data.addonRevenueByMonth} color="#4f46e5" label="Monthly Revenue" />
+              <BarSvg data={data.addonRevenueByMonth} color={CHART_COLORS[0]} label="Monthly Revenue" />
             </div>
           </div>
         </div>
@@ -133,22 +145,29 @@ const BillingInsights = () => {
           <div className="card h-100">
             <div className="card-body">
               <h3 className="h6 fw-semibold mb-3">Credit Consumption Trend</h3>
-              <BarSvg data={creditConsumptionByMonth} color="#ef4444" label="Monthly Consumption" />
+              <BarSvg data={creditConsumptionByMonth} color={CHART_COLORS[4]} label="Monthly Consumption" />
             </div>
           </div>
         </div>
       </div>
 
-      <div className="card">
+      <div className="card admin-reference-table-card">
         <div className="card-body">
           <h3 className="h6 fw-semibold mb-3">Clients by Plan</h3>
-          <div className="table-responsive">
-            <table className="table align-middle mb-0">
+          <div className="admin-reference-table-wrapper">
+            <table className="table table-bordered align-middle admin-reference-table mb-0">
               <thead><tr><th>Plan</th><th>Clients</th></tr></thead>
               <tbody>
-                {Object.entries(data.clientsByPlan).map(([plan, count]) => (
-                  <tr key={plan}><td className="fw-semibold">{plan}</td><td>{count}</td></tr>
-                ))}
+                {Object.entries(data.clientsByPlan).length ? (
+                  Object.entries(data.clientsByPlan).map(([plan, count]) => (
+                    <tr key={plan}>
+                      <td><span className="badge text-bg-light border text-dark">{plan}</span></td>
+                      <td className="fw-semibold">{count}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr><td colSpan={2} className="text-center py-4 text-body-secondary">No client data yet.</td></tr>
+                )}
               </tbody>
             </table>
           </div>

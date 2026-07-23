@@ -352,18 +352,15 @@ type ApiAvatarItem = {
   isShared?: boolean;
 };
 
-const SARAH_DEFAULT_AVATAR: ApiAvatarItem = {
-  _id: "sarah-westpac-default",
-  avatarId: "1647619895205577317",
-  avatarName: "Sarah (Westpac demo)",
-  avatarType: "2D",
-  avatarEngine: "Unity",
-  image: "",
-  isShared: true,
-};
-
-const AMARA_API_BASE = "https://amara.brenin.co:3000";
-const AMARA_API_KEY = "trainup_ext_9f8c7b6a5e4d3c2b1a0f9e8d7c6b5a4";
+// const SARAH_DEFAULT_AVATAR: ApiAvatarItem = {
+//   _id: "sarah-westpac-default",
+//   avatarId: "1647619895205577317",
+//   avatarName: "Sarah (Westpac demo)",
+//   avatarType: "2D",
+//   avatarEngine: "Unity",
+//   image: "",
+//   isShared: true,
+// };
 
 const defaultAvatarEngineConfig: TrainingAvatarEngineConfig = {
   provider: "Trulience",
@@ -935,6 +932,39 @@ const buildAvatarEngineFromValues = (values: TrainingSetupValues): TrainingAvata
     .filter(Boolean),
   avatarId: values.avatarEngineAvatarId.trim() || defaultAvatarEngineConfig.avatarId,
 });
+
+// Parses print-dialog-style page range input ("1-10, 45-50, 48") into a set of
+// 1-based slide numbers, clamped to the deck size, for the Step 2 range selector.
+const parseSlideRangeSelection = (input: string, totalSlides: number): Set<number> => {
+  const positions = new Set<number>();
+
+  input
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .forEach((part) => {
+      const rangeMatch = part.match(/^(\d+)\s*-\s*(\d+)$/);
+
+      if (rangeMatch) {
+        const start = Math.max(1, Math.min(parseInt(rangeMatch[1], 10), parseInt(rangeMatch[2], 10)));
+        const end = Math.min(totalSlides, Math.max(parseInt(rangeMatch[1], 10), parseInt(rangeMatch[2], 10)));
+
+        for (let position = start; position <= end; position += 1) {
+          positions.add(position);
+        }
+
+        return;
+      }
+
+      const single = parseInt(part, 10);
+
+      if (!Number.isNaN(single) && single >= 1 && single <= totalSlides) {
+        positions.add(single);
+      }
+    });
+
+  return positions;
+};
 
 const buildSlideFromImportedMedia = ({
   asset,
@@ -1915,6 +1945,14 @@ const TrainingBuilder = ({
   const [slidesDraft, setSlidesDraft] = useState<TrainingSlideRecord[]>(
     initialTraining ? cloneSlides(initialTraining.slides) : [buildBlankSlide(0)],
   );
+  // Slides selected to receive narration on this pass. Defaults to "all slides" so
+  // existing behavior is unchanged unless the trainer narrows the selection in Step 2/4.
+  const [selectedNarrationSlideIds, setSelectedNarrationSlideIds] = useState<string[]>(
+    (initialTraining ? cloneSlides(initialTraining.slides) : [buildBlankSlide(0)])
+      .filter((slide) => !slide.unselected)
+      .map((slide) => slide.id),
+  );
+  const [slideRangeInput, setSlideRangeInput] = useState("");
   const [knowledgeDocuments, setKnowledgeDocuments] = useState<TrainingKnowledgeDocument[]>(
     cloneKnowledgeDocuments(initialTraining?.knowledgeDocuments),
   );
@@ -1967,6 +2005,7 @@ const TrainingBuilder = ({
   const [expandedManageSlideId, setExpandedManageSlideId] = useState<string | null>(
     initialTraining?.slides[0]?.id ?? null,
   );
+  const [showSlidePickerInManageStep, setShowSlidePickerInManageStep] = useState(false);
   const [infoEditorSlideId, setInfoEditorSlideId] = useState<string | null>(null);
   const [voiceOptions, setVoiceOptions] = useState<ElevenLabsVoiceOption[]>([]);
   const [defaultVoiceOption, setDefaultVoiceOption] = useState<ElevenLabsVoiceOption | null>(null);
@@ -1993,16 +2032,10 @@ const TrainingBuilder = ({
   useEffect(() => {
     let cancelled = false;
     setIsLoadingApiAvatars(true);
-    fetch(`${AMARA_API_BASE}/api-v1/external/get-avatar`, {
-      method: "GET",
-      headers: {
-        "X-Api-Key": AMARA_API_KEY,
-      },
-    })
-      .then((res) => res.json())
-      .then((json: { status: boolean; data?: ApiAvatarItem[] }) => {
-        if (!cancelled && json.status && Array.isArray(json.data)) {
-          setApiAvatarList(json.data);
+    AxiosHelper.getData<ApiAvatarItem[]>("/avatars")
+      .then((res) => {
+        if (!cancelled && res.data.status && Array.isArray(res.data.data)) {
+          setApiAvatarList(res.data.data);
         }
       })
       .catch(() => {
@@ -2016,8 +2049,8 @@ const TrainingBuilder = ({
 
   // All selectable avatar options: Sarah default + API avatars
   const avatarOptions = useMemo<ApiAvatarItem[]>(
-    () => [SARAH_DEFAULT_AVATAR, ...apiAvatarList],
-    [apiAvatarList],
+    () => apiAvatarList,
+    [apiAvatarList]
   );
   const builderInitialValues = useMemo(
     () => buildDefaultSetupValues(initialTraining, avatarOptions),
@@ -2247,6 +2280,13 @@ const TrainingBuilder = ({
     },
     [generateSlideScript],
   );
+
+  // Splices narration results for a subset of slides back into the full deck,
+  // leaving slides outside that subset (e.g. ones the trainer didn't select) untouched.
+  const mergeSlidesById = (base: TrainingSlideRecord[], updates: TrainingSlideRecord[]) => {
+    const updateMap = new Map(updates.map((slide) => [slide.id, slide]));
+    return base.map((slide) => updateMap.get(slide.id) ?? slide);
+  };
 
   useEffect(() => {
     if (!slidesDraft.length) {
@@ -2972,14 +3012,23 @@ const TrainingBuilder = ({
   };
 
   const ensureVoiceNarrationAssets = async (values: TrainingSetupValues) => {
-    if (values.trainingMode !== "voice") {
-      return slidesDraft;
+    // Only the currently-selected slides (Step 2/4 picker) are part of the saved training —
+    // deselected ones stay in slidesDraft so the trainer can bring them back later, but are
+    // excluded here just like unselected pages in a print range.
+    const selectedSlides = slidesDraft.filter((slide) => selectedNarrationSlideIds.includes(slide.id));
+
+    if (!selectedSlides.length) {
+      throw new Error("Select at least one slide before saving this training.");
     }
 
-    const slidesMissingScript = slidesDraft.filter((slide) => !String(slide.script || "").trim());
+    if (values.trainingMode !== "voice") {
+      return selectedSlides;
+    }
+
+    const slidesMissingScript = selectedSlides.filter((slide) => !String(slide.script || "").trim());
 
     if (slidesMissingScript.length) {
-      throw new Error("Every slide needs narration text before a voice-mode training can be saved.");
+      throw new Error("Every selected slide needs narration text before a voice-mode training can be saved.");
     }
 
     const apiKey =
@@ -2988,7 +3037,7 @@ const TrainingBuilder = ({
         : "";
 
     return Promise.all(
-      slidesDraft.map(async (slide) => {
+      selectedSlides.map(async (slide) => {
         const script = String(slide.script || "").trim();
         const cacheKey = buildScriptAudioKey(script, {
           provider: values.ttsProvider,
@@ -3616,6 +3665,105 @@ const TrainingBuilder = ({
     );
   };
 
+  // Shared thumbnail-grid + range-input picker for choosing which slides get narration.
+  // Used on Step 2 (right after upload) and again from Step 4 behind the "Add / Remove
+  // Slides" toggle, so a trainer who missed slides earlier can revise the selection.
+  const renderSlideSelectionPicker = (helperText: string) => (
+    <div className="training-slide-select-panel">
+      <div className="d-flex align-items-start justify-content-between gap-3 flex-wrap mb-3">
+        <div>
+          <h5 className="mb-1">Select Slides for Narration</h5>
+          <p className="text-muted mb-0">{helperText}</p>
+        </div>
+        <span className="badge text-bg-light border text-dark">
+          {selectedNarrationSlideIds.length} of {slidesDraft.length} selected
+        </span>
+      </div>
+
+      <div className="d-flex flex-wrap align-items-center gap-2 mb-3">
+        <button
+          type="button"
+          className="btn btn-sm btn-light"
+          onClick={() => setSelectedNarrationSlideIds(slidesDraft.map((slide) => slide.id))}
+        >
+          Select All
+        </button>
+        <button
+          type="button"
+          className="btn btn-sm btn-light"
+          onClick={() => setSelectedNarrationSlideIds([])}
+        >
+          Clear Selection
+        </button>
+        <div className="d-flex align-items-center gap-2 ms-auto">
+          <input
+            type="text"
+            className="form-control form-control-sm"
+            style={{ maxWidth: 220 }}
+            placeholder="e.g. 1-10, 45-50"
+            value={slideRangeInput}
+            onChange={(event) => setSlideRangeInput(event.target.value)}
+          />
+          <button
+            type="button"
+            className="btn btn-sm btn-outline-primary"
+            onClick={() => {
+              const positions = parseSlideRangeSelection(slideRangeInput, slidesDraft.length);
+
+              if (!positions.size) {
+                toast.error("Enter a valid slide range, e.g. 1-10, 45-50.");
+                return;
+              }
+
+              const rangeIds = slidesDraft
+                .filter((_, index) => positions.has(index + 1))
+                .map((slide) => slide.id);
+
+              // Replaces the selection (like a print dialog's page-range field) instead of
+              // adding to it, so applying a range after "Select All" visibly narrows it down.
+              setSelectedNarrationSlideIds(rangeIds);
+              setSlideRangeInput("");
+            }}
+          >
+            Apply Range
+          </button>
+        </div>
+      </div>
+
+      <div className="training-slide-select-grid">
+        {slidesDraft.map((slide, index) => {
+          const isChecked = selectedNarrationSlideIds.includes(slide.id);
+
+          return (
+            <label
+              key={slide.id}
+              className={`training-slide-select-thumb${isChecked ? " is-selected" : ""}`}
+            >
+              <input
+                type="checkbox"
+                checked={isChecked}
+                onChange={(event) =>
+                  setSelectedNarrationSlideIds((current) =>
+                    event.target.checked
+                      ? Array.from(new Set([...current, slide.id]))
+                      : current.filter((id) => id !== slide.id),
+                  )
+                }
+              />
+              <SlideMediaPreview
+                slide={slide}
+                accentColor={slide.color}
+                hideBadge
+                className="training-slide-select-thumb-media"
+              />
+              <span className="training-slide-select-thumb-label">Slide {index + 1}</span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+
   const renderEditableSlideCard = ({
     slide,
     index,
@@ -4058,6 +4206,7 @@ const TrainingBuilder = ({
 
       setSlidesDraft(nextSlides);
       setUploadedFiles(nextImports);
+      setSelectedNarrationSlideIds(nextSlides.map((slide) => slide.id));
       toast.success(`${nextSlides.length} slide${nextSlides.length === 1 ? "" : "s"} imported successfully.`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Unable to process the selected files.");
@@ -4162,6 +4311,7 @@ const TrainingBuilder = ({
       const filtered = current.filter((slide) => !batch.slideIds.includes(slide.id));
       return filtered.length ? filtered : [buildBlankSlide(0)];
     });
+    setSelectedNarrationSlideIds((current) => current.filter((id) => !batch.slideIds.includes(id)));
     toast.info("Imported media removed.");
   };
 
@@ -4211,9 +4361,15 @@ const TrainingBuilder = ({
     }
 
     if (mode === "upload") {
+      if (!selectedNarrationSlideIds.length) {
+        toast.error("Select at least one slide to generate narration for.");
+        return;
+      }
+
       const normalizedCurrentPrompt = scriptPrompt.trim();
       const normalizedLastGeneratedPrompt = lastGeneratedScriptPrompt.trim();
-      const hasExistingScripts = slidesDraft.some((slide) => slide.script.trim());
+      const selectedSlides = slidesDraft.filter((slide) => selectedNarrationSlideIds.includes(slide.id));
+      const hasExistingScripts = selectedSlides.some((slide) => slide.script.trim());
       const promptChangedSinceGeneration =
         Boolean(normalizedLastGeneratedPrompt) && normalizedCurrentPrompt !== normalizedLastGeneratedPrompt;
 
@@ -4222,7 +4378,7 @@ const TrainingBuilder = ({
         return;
       }
 
-      const needsScriptGeneration = slidesDraft.some(
+      const needsScriptGeneration = selectedSlides.some(
         (slide) =>
           !slide.script.trim() &&
           (slide.mediaExtractedText?.length || slide.mediaName.trim()),
@@ -4232,8 +4388,8 @@ const TrainingBuilder = ({
         setIsGeneratingSlideScripts(true);
 
         try {
-          const nextSlides = await generateScriptsForSlides(slidesDraft, trainingTitle);
-          setSlidesDraft(nextSlides);
+          const updatedSlides = await generateScriptsForSlides(selectedSlides, trainingTitle);
+          setSlidesDraft((current) => mergeSlidesById(current, updatedSlides));
           setLastGeneratedScriptPrompt(normalizedCurrentPrompt);
         } catch (error) {
           toast.error(
@@ -4260,12 +4416,13 @@ const TrainingBuilder = ({
     setIsGeneratingSlideScripts(true);
 
     try {
-      const nextSlides = await generateScriptsForSlides(
-        slidesDraft,
+      const selectedSlides = slidesDraft.filter((slide) => selectedNarrationSlideIds.includes(slide.id));
+      const updatedSlides = await generateScriptsForSlides(
+        selectedSlides,
         pendingScriptRegeneration.trainingTitle,
         { forceAll: true },
       );
-      setSlidesDraft(nextSlides);
+      setSlidesDraft((current) => mergeSlidesById(current, updatedSlides));
       setLastGeneratedScriptPrompt(scriptPrompt.trim());
       setPendingScriptRegeneration(null);
       setStep(3);
@@ -4278,10 +4435,52 @@ const TrainingBuilder = ({
     }
   };
 
+  // Step 4 catch-up action: generate narration for whatever is currently selected but was
+  // skipped in Step 2 (e.g. the trainer remembers a missed slide). Never overwrites a slide
+  // that already has a script — use the per-slide "Regenerate Summary" button for that.
+  const handleGenerateNarrationForSelected = async (trainingTitle: string) => {
+    const pendingSlides = slidesDraft.filter(
+      (slide) =>
+        selectedNarrationSlideIds.includes(slide.id) &&
+        !slide.script.trim() &&
+        (slide.mediaExtractedText?.length || slide.mediaName.trim()),
+    );
+
+    if (!pendingSlides.length) {
+      toast.info("No selected slides are missing narration.");
+      return;
+    }
+
+    setIsGeneratingSlideScripts(true);
+
+    try {
+      const updatedSlides = await generateScriptsForSlides(pendingSlides, trainingTitle);
+      setSlidesDraft((current) => mergeSlidesById(current, updatedSlides));
+      toast.success(`Narration generated for ${updatedSlides.length} slide${updatedSlides.length === 1 ? "" : "s"}.`);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Unable to generate slide narration scripts.",
+      );
+    } finally {
+      setIsGeneratingSlideScripts(false);
+    }
+  };
+
   const persistTrainingRecord = async (values: TrainingSetupValues, status: TrainingStatus) => {
     try {
       const todayLabel = getTodayLabel();
-      const resolvedSlides = await ensureVoiceNarrationAssets(values);
+      const resolvedSelectedSlides = await ensureVoiceNarrationAssets(values);
+      const resolvedSelectedSlidesMap = new Map(resolvedSelectedSlides.map((s) => [s.id, s]));
+      const allResolvedSlides = slidesDraft.map((slide) => {
+        const isSelected = selectedNarrationSlideIds.includes(slide.id);
+        const resolvedSelected = resolvedSelectedSlidesMap.get(slide.id);
+        return {
+          ...(resolvedSelected || slide),
+          unselected: !isSelected,
+        };
+      });
+      const firstSelectedSlide = allResolvedSlides.find((slide) => !slide.unselected) || allResolvedSlides[0];
+
       const nextQuestionReviewStatus: TrainingQuestionCheckpoint["reviewStatus"] =
         status === "review" ? "review" : status === "approved" ? "approved" : "draft";
       const fallbackQuestionSet =
@@ -4292,12 +4491,12 @@ const TrainingBuilder = ({
               label:
                 activeQuestionSet?.label ||
                 buildQuestionSetLabel(
-                  activeQuestionSet?.slideTitle || resolvedSlides[0]?.title || "Training Slide",
+                  activeQuestionSet?.slideTitle || firstSelectedSlide?.title || "Training Slide",
                   1,
                 ),
               placementMode: activeQuestionSet?.placementMode || "after_slide",
-              slideId: activeQuestionSet?.slideId ?? resolvedSlides[0]?.id ?? null,
-              slideTitle: activeQuestionSet?.slideTitle || resolvedSlides[0]?.title || "",
+              slideId: activeQuestionSet?.slideId ?? firstSelectedSlide?.id ?? null,
+              slideTitle: activeQuestionSet?.slideTitle || firstSelectedSlide?.title || "",
               difficultyLevel: activeQuestionSet?.difficultyLevel ?? questionGeneratorConfig.difficultyLevel,
               topicTags: activeQuestionSet?.topicTags ?? questionGeneratorConfig.topicTags,
               checkpoints: questionCheckpoints,
@@ -4369,7 +4568,11 @@ const TrainingBuilder = ({
         askSystemPrompt: values.askSystemPrompt.trim(),
         scriptPrompt,
         previewSlideId:
-          previewSlideId && previewSlideId !== resolvedSlides[0]?.id ? previewSlideId : null,
+          previewSlideId &&
+            previewSlideId !== firstSelectedSlide?.id &&
+            allResolvedSlides.some((slide) => slide.id === previewSlideId && !slide.unselected)
+            ? previewSlideId
+            : null,
         previewThumbnailAssetId: previewThumbnailAssetId || null,
         previewThumbnailAssetName: previewThumbnailAssetName || null,
         knowledgeDocuments,
@@ -4408,33 +4611,33 @@ const TrainingBuilder = ({
         groupConfig:
           values.deliveryType === "group"
             ? {
-                capacity: Number(values.groupCapacity || 50),
-                startTime: localInputToIso(values.groupStartTime),
-                endTime: localInputToIso(values.groupEndTime),
-                autoStart: {
-                  mode: "scheduled",
-                  minParticipants: Number(values.groupMinParticipants || 1),
-                  graceMins: Number(values.groupGraceMins || 15),
-                },
-                attendanceRules: {
-                  minAttendancePct: Number(values.groupMinAttendancePct || 75),
-                  activeConfirmIntervalMins: 10,
-                },
-                qaRules: {
-                  maxSpeakSecs: Number(values.groupMaxSpeakSecs || 90),
-                  silenceTimeoutSecs: 20,
-                  maxQuestionsPerTrainee: Number(values.groupMaxQuestionsPerTrainee || 3),
-                  handRaiseCooldownSecs: 30,
-                },
-                completionRules: {
-                  minAttendancePct: Number(values.groupMinAttendancePct || 75),
-                  requireAssessmentPass: false,
-                },
-                assessment: { passPct: 60, scoring: "both" },
-              }
+              capacity: Number(values.groupCapacity || 50),
+              startTime: localInputToIso(values.groupStartTime),
+              endTime: localInputToIso(values.groupEndTime),
+              autoStart: {
+                mode: "scheduled",
+                minParticipants: Number(values.groupMinParticipants || 1),
+                graceMins: Number(values.groupGraceMins || 15),
+              },
+              attendanceRules: {
+                minAttendancePct: Number(values.groupMinAttendancePct || 75),
+                activeConfirmIntervalMins: 10,
+              },
+              qaRules: {
+                maxSpeakSecs: Number(values.groupMaxSpeakSecs || 90),
+                silenceTimeoutSecs: 20,
+                maxQuestionsPerTrainee: Number(values.groupMaxQuestionsPerTrainee || 3),
+                handRaiseCooldownSecs: 30,
+              },
+              completionRules: {
+                minAttendancePct: Number(values.groupMinAttendancePct || 75),
+                requireAssessmentPass: false,
+              },
+              assessment: { passPct: 60, scoring: "both" },
+            }
             : null,
         avatarEngine: buildAvatarEngineFromValues(values),
-        slides: resolvedSlides.map((slide, index) => ({
+        slides: allResolvedSlides.map((slide, index) => ({
           ...slide,
           color: slideColorCycle[index % slideColorCycle.length],
         })),
@@ -5456,79 +5659,89 @@ const TrainingBuilder = ({
                     </div>
 
                     {mode === "upload" ? (
-                      <div className="row g-4">
-                        <div className="col-12 col-xl-7">
-                          <div className="training-upload-panel">
-                            <button
-                              type="button"
-                              className="training-upload-dropzone"
-                              onClick={() => uploadInputRef.current?.click()}
-                              disabled={isImportingMedia}
-                            >
-                              {isImportingMedia ? (
-                                <>
-                                  <span className="spinner-border text-primary" aria-hidden="true" />
-                                  <strong>Preparing slides...</strong>
-                                  <small>Deck pages are being converted into slide previews.</small>
-                                </>
-                              ) : (
-                                <>
-                                  <i className="bi bi-file-earmark-slides display-6" aria-hidden="true" />
-                                  <strong>Click to upload or drag & drop</strong>
-                                  <small>PDF or PPTX | Max 50MB</small>
-                                </>
-                              )}
-                            </button>
+                      <>
+                        <div className="row g-4">
+                          <div className="col-12 col-xl-7">
+                            <div className="training-upload-panel">
+                              <button
+                                type="button"
+                                className="training-upload-dropzone"
+                                onClick={() => uploadInputRef.current?.click()}
+                                disabled={isImportingMedia}
+                              >
+                                {isImportingMedia ? (
+                                  <>
+                                    <span className="spinner-border text-primary" aria-hidden="true" />
+                                    <strong>Preparing slides...</strong>
+                                    <small>Deck pages are being converted into slide previews.</small>
+                                  </>
+                                ) : (
+                                  <>
+                                    <i className="bi bi-file-earmark-slides display-6" aria-hidden="true" />
+                                    <strong>Click to upload or drag & drop</strong>
+                                    <small>PDF or PPTX | Max 50MB</small>
+                                  </>
+                                )}
+                              </button>
 
-                            {uploadedFiles.length ? (
-                              <div className="experience-list">
-                                {uploadedFiles.map((file) => (
-                                  <div key={file.id} className="experience-list-item">
-                                    <div className="d-flex align-items-center justify-content-between gap-3">
-                                      <div>
-                                        <div className="fw-semibold">{file.fileName}</div>
-                                        <div className="small text-body-secondary">
-                                          {file.kind === "ppt" ? "PPTX slides converted into slide previews" : "PDF pages extracted as slide previews"} |{" "}
-                                          {file.slideCount} slide{file.slideCount === 1 ? "" : "s"}
+                              {uploadedFiles.length ? (
+                                <div className="experience-list">
+                                  {uploadedFiles.map((file) => (
+                                    <div key={file.id} className="experience-list-item">
+                                      <div className="d-flex align-items-center justify-content-between gap-3">
+                                        <div>
+                                          <div className="fw-semibold">{file.fileName}</div>
+                                          <div className="small text-body-secondary">
+                                            {file.kind === "ppt" ? "PPTX slides converted into slide previews" : "PDF pages extracted as slide previews"} |{" "}
+                                            {file.slideCount} slide{file.slideCount === 1 ? "" : "s"}
+                                          </div>
                                         </div>
+                                        <button
+                                          type="button"
+                                          className="btn btn-sm btn-outline-danger"
+                                          onClick={() => {
+                                            void removeImportedBatch(file.id);
+                                          }}
+                                        >
+                                          Remove
+                                        </button>
                                       </div>
-                                      <button
-                                        type="button"
-                                        className="btn btn-sm btn-outline-danger"
-                                        onClick={() => {
-                                          void removeImportedBatch(file.id);
-                                        }}
-                                      >
-                                        Remove
-                                      </button>
                                     </div>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : null}
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
                           </div>
-                        </div>
 
-                        <div className="col-12 col-xl-5">
-                          <div className="card h-100 border">
-                            <div className="card-body">
-                              <label htmlFor="scriptPrompt" className="form-label">
-                                Script Generation Prompt
-                              </label>
-                              <textarea
-                                id="scriptPrompt"
-                                className="form-control"
-                                rows={7}
-                                value={scriptPrompt}
-                                onChange={(event) => setScriptPrompt(event.target.value)}
-                              />
-                              <p className="small text-muted mt-3 mb-0">
-                                OCR reads each imported slide, and this prompt is applied when you continue to Step 3.
-                              </p>
+                          <div className="col-12 col-xl-5">
+                            <div className="card h-100 border">
+                              <div className="card-body">
+                                <label htmlFor="scriptPrompt" className="form-label">
+                                  Script Generation Prompt
+                                </label>
+                                <textarea
+                                  id="scriptPrompt"
+                                  className="form-control"
+                                  rows={7}
+                                  value={scriptPrompt}
+                                  onChange={(event) => setScriptPrompt(event.target.value)}
+                                />
+                                <p className="small text-muted mt-3 mb-0">
+                                  OCR reads each imported slide, and this prompt is applied when you continue to Step 3.
+                                </p>
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
+
+                        {slidesDraft.length && uploadedFiles.length ? (
+                          <div className="mt-4">
+                            {renderSlideSelectionPicker(
+                              "Narration is generated only for the slides you select below, like choosing a page range to print. You can revisit this selection later in Step 4 (Manage Slides).",
+                            )}
+                          </div>
+                        ) : null}
+                      </>
                     ) : (
                       <div className="experience-list">
                         {slidesDraft.map((slide, index) =>
@@ -5550,6 +5763,7 @@ const TrainingBuilder = ({
                               index > 0
                                 ? () => {
                                   setSlidesDraft((current) => current.filter((item) => item.id !== slide.id));
+                                  setSelectedNarrationSlideIds((current) => current.filter((id) => id !== slide.id));
                                 }
                                 : undefined,
                             fallbackNote: "Upload a slide image or a single PDF page to build this slide manually.",
@@ -5563,6 +5777,7 @@ const TrainingBuilder = ({
                             const nextSlide = buildBlankSlide(slidesDraft.length);
                             setExpandedManageSlideId(nextSlide.id);
                             setSlidesDraft((current) => [...current, nextSlide]);
+                            setSelectedNarrationSlideIds((current) => [...current, nextSlide.id]);
                           }}
                         >
                           + Add New Slide
@@ -5899,6 +6114,41 @@ const TrainingBuilder = ({
                       </div>
                     ) : null}
 
+                    {slidesDraft.length ? (
+                      <div className="d-flex align-items-center justify-content-between gap-3 flex-wrap mb-4">
+                        <div className="small text-body-secondary">
+                          {selectedNarrationSlideIds.length} of {slidesDraft.length} slides selected for narration.
+                        </div>
+                        <div className="d-flex gap-2">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-primary"
+                            onClick={() => setShowSlidePickerInManageStep((current) => !current)}
+                          >
+                            {showSlidePickerInManageStep ? "Done" : "Add / Remove Slides"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-primary"
+                            disabled={isGeneratingSlideScripts}
+                            onClick={() => {
+                              void handleGenerateNarrationForSelected(values.title);
+                            }}
+                          >
+                            {isGeneratingSlideScripts ? "Generating..." : "Generate Narration for Selected"}
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {showSlidePickerInManageStep ? (
+                      <div className="mb-4">
+                        {renderSlideSelectionPicker(
+                          "Pick which slides should show below and be included in narration. Deselected slides stay in the deck but stay hidden here until reselected.",
+                        )}
+                      </div>
+                    ) : null}
+
                     <div className="card border mb-4">
                       <div className="card-body">
                         <div className="d-flex align-items-start justify-content-between gap-3 flex-wrap">
@@ -6019,31 +6269,41 @@ const TrainingBuilder = ({
                     </div>
 
                     <div className="experience-list">
-                      {slidesDraft.map((slide, index) =>
-                        renderEditableSlideCard({
-                          slide,
-                          index,
-                          trainingTitle: values.title,
-                          trainingMode: values.trainingMode,
-                          ttsProvider: values.ttsProvider,
-                          voiceName: values.voiceName,
-                          voiceId: values.voiceId,
-                          ttsApiKey:
-                            values.ttsMode === "manual" && values.ttsProvider === DEFAULT_ELEVENLABS_PROVIDER
-                              ? values.manualApiKey
-                              : "",
-                          trainingId: initialTraining?.id,
-                          onDelete: () => {
-                            if (slidesDraft.length === 1) {
-                              toast.error("At least one slide should remain in the training.");
-                              return;
-                            }
-
-                            setSlidesDraft((current) => current.filter((item) => item.id !== slide.id));
-                          },
-                          fallbackNote: "Upload the slide background here. Imported PDF or PPTX pages continue to appear as slide images.",
-                        }),
+                      {selectedNarrationSlideIds.length ? null : (
+                        <div className="training-audio-player-empty">
+                          No slides selected. Use "Add / Remove Slides" above to bring slides back into view.
+                        </div>
                       )}
+
+                      {slidesDraft
+                        .map((slide, index) => ({ slide, index }))
+                        .filter(({ slide }) => selectedNarrationSlideIds.includes(slide.id))
+                        .map(({ slide, index }) =>
+                          renderEditableSlideCard({
+                            slide,
+                            index,
+                            trainingTitle: values.title,
+                            trainingMode: values.trainingMode,
+                            ttsProvider: values.ttsProvider,
+                            voiceName: values.voiceName,
+                            voiceId: values.voiceId,
+                            ttsApiKey:
+                              values.ttsMode === "manual" && values.ttsProvider === DEFAULT_ELEVENLABS_PROVIDER
+                                ? values.manualApiKey
+                                : "",
+                            trainingId: initialTraining?.id,
+                            onDelete: () => {
+                              if (slidesDraft.length === 1) {
+                                toast.error("At least one slide should remain in the training.");
+                                return;
+                              }
+
+                              setSlidesDraft((current) => current.filter((item) => item.id !== slide.id));
+                              setSelectedNarrationSlideIds((current) => current.filter((id) => id !== slide.id));
+                            },
+                            fallbackNote: "Upload the slide background here. Imported PDF or PPTX pages continue to appear as slide images.",
+                          }),
+                        )}
 
                       <button
                         type="button"
@@ -6052,6 +6312,7 @@ const TrainingBuilder = ({
                           const nextSlide = buildBlankSlide(slidesDraft.length);
                           setExpandedManageSlideId(nextSlide.id);
                           setSlidesDraft((current) => [...current, nextSlide]);
+                          setSelectedNarrationSlideIds((current) => [...current, nextSlide.id]);
                         }}
                       >
                         + Add New Slide

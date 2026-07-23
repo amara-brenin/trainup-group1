@@ -18,16 +18,22 @@ const UpgradeBillingHub = () => {
             Plans
           </NavLink>
           <NavLink
+            to="/upgrade-billing/settings"
+            className={({ isActive }) => `btn btn-sm ${isActive ? "btn-primary" : "btn-outline-secondary"}`}
+          >
+            Global Settings
+          </NavLink>
+          <NavLink
             to="/upgrade-billing/insights"
             className={({ isActive }) => `btn btn-sm ${isActive ? "btn-primary" : "btn-outline-secondary"}`}
           >
             Billing Insights
           </NavLink>
           <NavLink
-            to="/upgrade-billing/settings"
+            to="/upgrade-billing/queries"
             className={({ isActive }) => `btn btn-sm ${isActive ? "btn-primary" : "btn-outline-secondary"}`}
           >
-            Global Settings
+            Queries
           </NavLink>
         </div>
       </div>

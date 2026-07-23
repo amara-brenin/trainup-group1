@@ -5,8 +5,8 @@ const User = require("../models/User");
 const { ok, fail } = require("../helpers/response");
 const { getTenantClientId, syncClientMetrics } = require("../helpers/tenant");
 const {
-  getCreditCosts, assertUsageWithinPlan, consumeClientCredits,
-  ensureClientEntitlement, assertLifetimeQuota, getClientEntitlement,
+  getCreditCosts, consumeClientCredits,
+  assertLifetimeQuota, buildClientCreditSnapshot,
   assertSubscriptionActive,
 } = require("../helpers/credits");
 const { notifyRolesInClient, notifyTrainingOwner } = require("../helpers/notifications");
@@ -86,7 +86,7 @@ const buildAssignedTrainingSession = (training, trainee) => ({
   status: "not-started",
   timeSpent: "0m 00s",
   slidesViewed: 0,
-  totalSlides: Array.isArray(training.payload?.slides) ? training.payload.slides.length : 0,
+  totalSlides: Array.isArray(training.payload?.slides) ? training.payload.slides.filter((slide) => !slide.unselected).length : 0,
   viewedSlideIds: [],
   score: null,
   startedAt: null,
@@ -140,7 +140,15 @@ const list = async (req, res) => {
           voiceId: 1, questionButtonLabel: 1, isPublished: 1, publishedOn: 1,
           durationMins: 1, maxDurationMins: 1, idleRefreshMins: 1, options: 1,
         },
-        slidesCount: { $size: { $ifNull: ["$payload.slides", []] } },
+        slidesCount: {
+          $size: {
+            $filter: {
+              input: { $ifNull: ["$payload.slides", []] },
+              as: "slide",
+              cond: { $ne: ["$$slide.unselected", true] }
+            }
+          }
+        },
         sessionsCount: { $size: { $ifNull: ["$payload.sessions", []] } },
         completedSessionsCount: {
           $size: {
@@ -191,38 +199,41 @@ const capacity = async (req, res) => {
   }
 
   const metrics = await syncClientMetrics(clientId);
-  // Backfill lifetime entitlement on first read so reporting is accurate.
-  if (!client.quotaInitialized) {
-    const publishedCount = await Training.countDocuments({ clientId, "payload.status": "approved" });
-    await ensureClientEntitlement(client, {
-      training: publishedCount,
-      session: Number(client.sessions || 0),
-      user: Number(client.activeUsers || 0),
-    });
-  }
-  const ent = getClientEntitlement(client);
-  // Issue 1: an expired subscription blocks creation regardless of remaining quota.
-  // Task 2: gate is lifetime-based now (publishing #11 blocked even after deletes).
-  const quotaError = assertSubscriptionActive(client) || assertLifetimeQuota(client, "training", 1);
+  // Lifetime per-resource limits (trainingBaseLimit/trainingUsedLifetime/...) were
+  // retired in favor of a single credit pool (see credits.js) — there's no more
+  // fixed lifetime cap to backfill or report, only "can the credit balance afford
+  // one more of this resource". assertLifetimeQuota is now a permanent no-op, so
+  // this gate is really just the subscription-active check.
+  const quotaError = assertSubscriptionActive(client);
+  const snapshot = buildClientCreditSnapshot(client);
+  const creditCosts = await getCreditCosts(client);
 
-  const report = (r) => ({
-    limit: ent[r].unlimited ? null : ent[r].limit,
-    used: ent[r].usedLifetime,
-    remaining: ent[r].unlimited ? null : ent[r].remaining,
-    unlimited: ent[r].unlimited,
-  });
+  const report = (resource, used) => {
+    const cost = Math.max(1, Number(creditCosts[resource] || 1));
+    const affordable = snapshot.planExpired ? 0 : Math.floor(snapshot.availableCredits / cost);
+    return {
+      limit: null,
+      used,
+      remaining: affordable,
+      unlimited: false,
+    };
+  };
+
+  const trainingsUsed = Number(metrics?.trainings ?? client.trainings ?? 0);
+  const sessionsUsed = Number(metrics?.sessions ?? client.sessions ?? 0);
+  const usersUsed = Number(metrics?.activeUsers ?? client.activeUsers ?? 0);
 
   return ok(res, "Training capacity loaded.", {
     // Back-compat fields (existing UI):
-    trainings: Number(metrics?.trainings ?? client.trainings ?? 0),
-    trainingLimit: ent.training.unlimited ? null : ent.training.limit,
+    trainings: trainingsUsed,
+    trainingLimit: null,
     canCreateTraining: !quotaError,
     reason: quotaError || null,
-    // Task 2 + Reporting: full lifetime usage for all three resources.
+    // Credit-based capacity for all three resources (see report() above).
     usage: {
-      training: report("training"),
-      session: report("session"),
-      user: report("user"),
+      training: report("training", trainingsUsed),
+      session: report("session", sessionsUsed),
+      user: report("user", usersUsed),
     },
   });
 };
@@ -358,17 +369,6 @@ const sync = async (req, res) => {
   const existingById = new Map(existingRecords.map((record) => [record.appId, record]));
   const pendingNotifications = [];
   const nextTrainingCreateCount = nextTrainings.filter((training) => !existingById.has(training.id)).length;
-
-  // Task 2: one-time lifetime-quota backfill (base from plan, used = MAX(current
-  // approved/published trainings, existing)). Never reduces existing usage.
-  if (!client.quotaInitialized) {
-    const publishedCount = await Training.countDocuments({ clientId, "payload.status": "approved" });
-    await ensureClientEntitlement(client, {
-      training: publishedCount,
-      session: Number(client.sessions || 0),
-      user: Number(client.activeUsers || 0),
-    });
-  }
 
   // Task 2: quota is consumed on the FIRST transition into "approved" (publish),
   // exactly once per training (quotaConsumed flag). Drafts/pending consume nothing.

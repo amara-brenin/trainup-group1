@@ -45,6 +45,13 @@ export const superAdminProtectedRoutes: RouteObject[] = [
           return { Component: module.default };
         },
       },
+      {
+        path: "avatars",
+        lazy: async () => {
+          const module = await safeImport(() => import("../routes/super-admin/Avatars"));
+          return { Component: module.default };
+        },
+      },
 
       {
         path: "upgrade-billing",
@@ -61,6 +68,13 @@ export const superAdminProtectedRoutes: RouteObject[] = [
             },
           },
           {
+            path: "settings",
+            lazy: async () => {
+              const module = await safeImport(() => import("../routes/super-admin/GlobalSettings"));
+              return { Component: module.default };
+            },
+          },
+          {
             path: "insights",
             lazy: async () => {
               const module = await safeImport(() => import("../routes/super-admin/BillingInsights"));
@@ -68,9 +82,9 @@ export const superAdminProtectedRoutes: RouteObject[] = [
             },
           },
           {
-            path: "settings",
+            path: "queries",
             lazy: async () => {
-              const module = await safeImport(() => import("../routes/super-admin/GlobalSettings"));
+              const module = await safeImport(() => import("../routes/super-admin/EnterpriseQueries"));
               return { Component: module.default };
             },
           },

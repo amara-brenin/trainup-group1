@@ -469,7 +469,7 @@ class GroupRuntime {
       const key = normalizeValue(s.learnerEmail || s.ssoId).toLowerCase();
       if (key && !byEmail.has(key)) byEmail.set(key, i);
     });
-    const totalSlides = Array.isArray(training.payload?.slides) ? training.payload.slides.length : 0;
+    const totalSlides = Array.isArray(training.payload?.slides) ? training.payload.slides.filter((slide) => !slide.unselected).length : 0;
     const next = [...existing];
 
     session.attendees.forEach((a) => {
