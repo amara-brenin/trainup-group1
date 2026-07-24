@@ -1372,6 +1372,37 @@ const findMatchingVoice = (
   );
 };
 
+// An avatar has no gender field of its own — it's inferred from the gender
+// label on the ElevenLabs voice that was set as its default in the avatar
+// library, so the voice picker can be scoped to that avatar's gender.
+const resolveAvatarGender = (
+  avatar: Pick<ApiAvatarItem, "elevenLabsVoiceId" | "elevenLabsVoiceName"> | null | undefined,
+  voices: ElevenLabsVoiceOption[],
+): "male" | "female" | undefined => {
+  if (!avatar) {
+    return undefined;
+  }
+
+  const matchedVoice = findMatchingVoice(voices, avatar.elevenLabsVoiceId, avatar.elevenLabsVoiceName);
+  const normalizedGender = String(matchedVoice?.gender || "").trim().toLowerCase();
+
+  return normalizedGender === "male" || normalizedGender === "female" ? normalizedGender : undefined;
+};
+
+const buildAskAssistantPrompt = (params: {
+  trainingTitle: string;
+  avatarName: string;
+  gender?: "male" | "female";
+}) => {
+  const isMale = params.gender === "male";
+  const noun = isMale ? "boy" : "girl";
+  const pronounLabel = isMale ? "male" : "female";
+  const trainingTitle = params.trainingTitle.trim() || "Trainup";
+  const avatarName = params.avatarName.trim() || "Amara";
+
+  return `You are a helpful assistant working for ${trainingTitle}. Your name is ${avatarName}, a ${noun}. Keep your responses between 16 and 35 words. Your words will be spoken by a voice agent so avoid the use of mark-up language, asterisks and emojis. Only speak in understandable sentences. Do not describe in words any facial expressions you might have. When talking about yourself always talk in the first person. your conversation always in ${pronounLabel} indian pronouciations.`;
+};
+
 const cloneFormField = (field: TrainingFormField): TrainingFormField => ({
   ...field,
   type: normalizeFieldType(field.type),
@@ -2098,6 +2129,12 @@ const TrainingBuilder = ({
     () => buildDefaultSetupValues(initialTraining, avatarOptions),
     [avatarOptions, initialTraining],
   );
+  // Tracks the last auto-generated Ask Assistant Prompt so avatar/voice
+  // changes only regenerate it while the user hasn't manually edited it.
+  const askSystemPromptAutoRef = useRef<string>(builderInitialValues.askSystemPrompt);
+  useEffect(() => {
+    askSystemPromptAutoRef.current = builderInitialValues.askSystemPrompt;
+  }, [builderInitialValues]);
 
   const activeFormSlide = slidesDraft.find((slide) => slide.id === formBuilderSlideId) ?? null;
   const hasUploadedMedia = slidesDraft.some((slide) => Boolean(slide.mediaAssetId));
@@ -5050,6 +5087,50 @@ const TrainingBuilder = ({
                                   setFieldValue("avatarId", nextAvatar.avatarId);
                                   setFieldValue("avatarEngineAvatarId", nextAvatar.avatarId);
                                 }
+
+                                const nextAvatarGender = resolveAvatarGender(nextAvatar, voiceOptions);
+                                const currentVoiceGender = resolveAvatarGender(
+                                  { elevenLabsVoiceId: values.voiceId, elevenLabsVoiceName: values.voiceName },
+                                  voiceOptions,
+                                );
+                                let nextVoice: ElevenLabsVoiceOption | undefined;
+
+                                if (nextAvatarGender && nextAvatarGender !== currentVoiceGender) {
+                                  const genderMatchedVoices = voiceOptions.filter(
+                                    (voice) => String(voice.gender || "").trim().toLowerCase() === nextAvatarGender,
+                                  );
+                                  nextVoice =
+                                    findMatchingVoice(genderMatchedVoices, nextAvatar?.elevenLabsVoiceId, nextAvatar?.elevenLabsVoiceName) ||
+                                    genderMatchedVoices[0] ||
+                                    undefined;
+                                }
+
+                                if (nextVoice) {
+                                  setFieldValue("voiceId", nextVoice.voiceId);
+                                  setFieldValue("voiceName", nextVoice.name);
+                                  setLocalizedVoiceoversDraft(
+                                    syncLocalizedVoiceovers({
+                                      current: localizedVoiceoversDraft,
+                                      slides: slidesDraft,
+                                      defaultOption: resolveLanguageOptionFromValue(values.avatarEngineLanguage),
+                                      voiceId: nextVoice.voiceId,
+                                      voiceName: nextVoice.name,
+                                      provider: values.ttsProvider,
+                                      apiKey: values.manualApiKey.trim(),
+                                      askLabel: values.questionButtonLabel,
+                                    }),
+                                  );
+                                }
+
+                                if (values.askSystemPrompt.trim() === askSystemPromptAutoRef.current.trim()) {
+                                  const nextPrompt = buildAskAssistantPrompt({
+                                    trainingTitle: values.title,
+                                    avatarName: selectedName,
+                                    gender: nextAvatarGender ?? currentVoiceGender,
+                                  });
+                                  setFieldValue("askSystemPrompt", nextPrompt);
+                                  askSystemPromptAutoRef.current = nextPrompt;
+                                }
                               }}
                             >
                               {isLoadingApiAvatars ? (
@@ -5214,70 +5295,104 @@ const TrainingBuilder = ({
                             ) : null}
                           </div>
 
-                          <div className="mb-3">
-                            <label htmlFor="voiceId" className="form-label">
-                              Voice
-                            </label>
-                            {values.ttsProvider === DEFAULT_ELEVENLABS_PROVIDER ? (
-                              <Field
-                                as="select"
-                                id="voiceId"
-                                name="voiceId"
-                                className="form-select"
-                                disabled={
-                                  isLoadingVoices ||
-                                  (values.ttsMode === "manual" && !values.manualApiKeyVerifiedAt) ||
-                                  !voiceOptions.length
-                                }
-                                onChange={(event: ChangeEvent<HTMLSelectElement>) => {
-                                  const selectedVoice = voiceOptions.find((voice) => voice.voiceId === event.target.value);
-                                  setFieldValue("voiceId", event.target.value);
-                                  setFieldValue("voiceName", selectedVoice?.name ?? "");
-                                  setLocalizedVoiceoversDraft(
-                                    syncLocalizedVoiceovers({
-                                      current: localizedVoiceoversDraft,
-                                      slides: slidesDraft,
-                                      defaultOption: resolveLanguageOptionFromValue(values.avatarEngineLanguage),
-                                      voiceId: event.target.value,
-                                      voiceName:
-                                        selectedVoice?.name ?? defaultVoiceOption?.name ?? DEFAULT_ELEVENLABS_VOICE_NAME,
-                                      provider: values.ttsProvider,
-                                      apiKey: values.manualApiKey.trim(),
-                                      askLabel: values.questionButtonLabel,
-                                    }),
-                                  );
-                                }}
-                              >
-                                {values.ttsMode === "manual" && !values.manualApiKeyVerifiedAt ? (
-                                  <option value="">Verify the manual API key to load voices</option>
-                                ) : null}
-                                {isLoadingVoices ? <option value="">Loading ElevenLabs voices...</option> : null}
-                                {!isLoadingVoices && !voiceOptions.length ? (
-                                  <option value="">{voiceLoadError || "No voices available for this provider."}</option>
-                                ) : null}
-                                {voiceOptions.map((voice) => (
-                                  <option key={voice.voiceId} value={voice.voiceId}>
-                                    {buildVoiceOptionLabel(voice)}
-                                  </option>
-                                ))}
-                              </Field>
-                            ) : (
-                              <Field
-                                id="voiceName"
-                                name="voiceName"
-                                className="form-control"
-                                placeholder="Enter the provider voice name"
-                              />
-                            )}
-                            <div className="form-text">
-                              {values.ttsProvider === DEFAULT_ELEVENLABS_PROVIDER
-                                ? values.ttsMode === "manual" && !values.manualApiKeyVerifiedAt
-                                  ? "Verify the entered ElevenLabs key to fetch available voices."
-                                  : voiceLoadError || `Selected voice: ${values.voiceName || defaultVoiceOption?.name || DEFAULT_ELEVENLABS_VOICE_NAME}`
-                                : "Enter the voice name supported by the selected provider."}
-                            </div>
-                            <ErrorMessage name="voiceName" component="small" className="text-danger" />
-                          </div>
+                          {(() => {
+                            const selectedAvatarOption = avatarOptions.find(
+                              (option) => option.avatarId === values.avatarEngineAvatarId,
+                            );
+                            const selectedAvatarGender = resolveAvatarGender(selectedAvatarOption, voiceOptions);
+                            // Only the avatar's own gender's voices are offered — if the
+                            // avatar's gender can't be determined, fall back to the full
+                            // list so nothing gets hidden unexpectedly.
+                            const genderFilteredVoiceOptions = selectedAvatarGender
+                              ? voiceOptions.filter(
+                                  (voice) => String(voice.gender || "").trim().toLowerCase() === selectedAvatarGender,
+                                )
+                              : voiceOptions;
+
+                            return (
+                              <div className="mb-3">
+                                <label htmlFor="voiceId" className="form-label">
+                                  Voice
+                                </label>
+                                {values.ttsProvider === DEFAULT_ELEVENLABS_PROVIDER ? (
+                                  <Field
+                                    as="select"
+                                    id="voiceId"
+                                    name="voiceId"
+                                    className="form-select"
+                                    disabled={
+                                      isLoadingVoices ||
+                                      (values.ttsMode === "manual" && !values.manualApiKeyVerifiedAt) ||
+                                      !genderFilteredVoiceOptions.length
+                                    }
+                                    onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                                      const selectedVoice = genderFilteredVoiceOptions.find(
+                                        (voice) => voice.voiceId === event.target.value,
+                                      );
+                                      setFieldValue("voiceId", event.target.value);
+                                      setFieldValue("voiceName", selectedVoice?.name ?? "");
+                                      setLocalizedVoiceoversDraft(
+                                        syncLocalizedVoiceovers({
+                                          current: localizedVoiceoversDraft,
+                                          slides: slidesDraft,
+                                          defaultOption: resolveLanguageOptionFromValue(values.avatarEngineLanguage),
+                                          voiceId: event.target.value,
+                                          voiceName:
+                                            selectedVoice?.name ?? defaultVoiceOption?.name ?? DEFAULT_ELEVENLABS_VOICE_NAME,
+                                          provider: values.ttsProvider,
+                                          apiKey: values.manualApiKey.trim(),
+                                          askLabel: values.questionButtonLabel,
+                                        }),
+                                      );
+
+                                      if (values.askSystemPrompt.trim() === askSystemPromptAutoRef.current.trim()) {
+                                        const nextPrompt = buildAskAssistantPrompt({
+                                          trainingTitle: values.title,
+                                          avatarName: values.avatarName,
+                                          gender: (selectedVoice?.gender || selectedAvatarGender || "")
+                                            .toString()
+                                            .trim()
+                                            .toLowerCase() === "male"
+                                            ? "male"
+                                            : "female",
+                                        });
+                                        setFieldValue("askSystemPrompt", nextPrompt);
+                                        askSystemPromptAutoRef.current = nextPrompt;
+                                      }
+                                    }}
+                                  >
+                                    {values.ttsMode === "manual" && !values.manualApiKeyVerifiedAt ? (
+                                      <option value="">Verify the manual API key to load voices</option>
+                                    ) : null}
+                                    {isLoadingVoices ? <option value="">Loading ElevenLabs voices...</option> : null}
+                                    {!isLoadingVoices && !genderFilteredVoiceOptions.length ? (
+                                      <option value="">{voiceLoadError || "No voices available for this provider."}</option>
+                                    ) : null}
+                                    {genderFilteredVoiceOptions.map((voice) => (
+                                      <option key={voice.voiceId} value={voice.voiceId}>
+                                        {buildVoiceOptionLabel(voice)}
+                                      </option>
+                                    ))}
+                                  </Field>
+                                ) : (
+                                  <Field
+                                    id="voiceName"
+                                    name="voiceName"
+                                    className="form-control"
+                                    placeholder="Enter the provider voice name"
+                                  />
+                                )}
+                                <div className="form-text">
+                                  {values.ttsProvider === DEFAULT_ELEVENLABS_PROVIDER
+                                    ? values.ttsMode === "manual" && !values.manualApiKeyVerifiedAt
+                                      ? "Verify the entered ElevenLabs key to fetch available voices."
+                                      : voiceLoadError || `Selected voice: ${values.voiceName || defaultVoiceOption?.name || DEFAULT_ELEVENLABS_VOICE_NAME}`
+                                    : "Enter the voice name supported by the selected provider."}
+                                </div>
+                                <ErrorMessage name="voiceName" component="small" className="text-danger" />
+                              </div>
+                            );
+                          })()}
                           {values.ttsProvider === DEFAULT_ELEVENLABS_PROVIDER && values.voiceId ? (
                             <div className="card border shadow-sm mb-3">
                               <div className="card-body py-3">
