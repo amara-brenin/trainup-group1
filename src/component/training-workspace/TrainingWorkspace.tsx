@@ -1288,7 +1288,8 @@ const buildDefaultSetupValues = (
   avatarEngineSttProvider: training?.avatarEngine?.sttProvider ?? defaultAvatarEngineConfig.sttProvider,
   avatarEngineLanguage: training?.avatarEngine?.language ?? defaultAvatarEngineConfig.language,
   avatarEngineAdditionalLanguages: (training?.avatarEngine?.additionalLanguages ?? defaultAvatarEngineConfig.additionalLanguages).join(", "),
-  avatarEngineAvatarId: training?.avatarEngine?.avatarId ?? defaultAvatarEngineConfig.avatarId,
+  avatarEngineAvatarId:
+    training?.avatarEngine?.avatarId ?? avatarOptions[0]?.avatarId ?? defaultAvatarEngineConfig.avatarId,
   durationMins: training?.durationMins ?? 30,
   maxDurationMins: training?.maxDurationMins ?? 60,
   idleRefreshMins: training?.idleRefreshMins ? String(training.idleRefreshMins) : "",
@@ -1387,6 +1388,16 @@ const resolveAvatarGender = (
   const normalizedGender = String(matchedVoice?.gender || "").trim().toLowerCase();
 
   return normalizedGender === "male" || normalizedGender === "female" ? normalizedGender : undefined;
+};
+
+const resolveAvatarProviderLabel = (provider?: string) => {
+  if (provider === "provider-TV") {
+    return "Tavus";
+  }
+  if (provider === "provider-TL") {
+    return "Trulience";
+  }
+  return provider || "";
 };
 
 const buildAskAssistantPrompt = (params: {
@@ -2125,6 +2136,17 @@ const TrainingBuilder = ({
     () => apiAvatarList,
     [apiAvatarList]
   );
+  // The same display name can exist twice (e.g. a "Sher Singh" avatar set up
+  // once for Trulience and once for Tavus) — flag those so the picker can
+  // show which provider each one is, since avatarId is what actually
+  // disambiguates them under the hood.
+  const avatarNameCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    avatarOptions.forEach((option) => {
+      counts[option.avatarName] = (counts[option.avatarName] || 0) + 1;
+    });
+    return counts;
+  }, [avatarOptions]);
   const builderInitialValues = useMemo(
     () => buildDefaultSetupValues(initialTraining, avatarOptions),
     [avatarOptions, initialTraining],
@@ -5078,11 +5100,14 @@ const TrainingBuilder = ({
                               name="avatarName"
                               className="form-select"
                               disabled={values.trainingMode === "voice" || isLoadingApiAvatars}
-                              value={values.avatarName}
+                              value={values.avatarEngineAvatarId}
                               onChange={(event: ChangeEvent<HTMLSelectElement>) => {
-                                const selectedName = event.target.value;
-                                const nextAvatar = avatarOptions.find((option) => option.avatarName === selectedName);
-                                setFieldValue("avatarName", selectedName);
+                                const selectedAvatarId = event.target.value;
+                                // Matched by avatarId, not avatarName — the same display name
+                                // (e.g. "Sher Singh") can exist twice, once per provider (Tavus
+                                // vs Trulience), and only avatarId reliably disambiguates them.
+                                const nextAvatar = avatarOptions.find((option) => option.avatarId === selectedAvatarId);
+                                setFieldValue("avatarName", nextAvatar?.avatarName ?? "");
                                 if (nextAvatar) {
                                   setFieldValue("avatarId", nextAvatar.avatarId);
                                   setFieldValue("avatarEngineAvatarId", nextAvatar.avatarId);
@@ -5125,7 +5150,7 @@ const TrainingBuilder = ({
                                 if (values.askSystemPrompt.trim() === askSystemPromptAutoRef.current.trim()) {
                                   const nextPrompt = buildAskAssistantPrompt({
                                     trainingTitle: values.title,
-                                    avatarName: selectedName,
+                                    avatarName: nextAvatar?.avatarName ?? values.avatarName,
                                     gender: nextAvatarGender ?? currentVoiceGender,
                                   });
                                   setFieldValue("askSystemPrompt", nextPrompt);
@@ -5136,11 +5161,20 @@ const TrainingBuilder = ({
                               {isLoadingApiAvatars ? (
                                 <option value="">Loading avatars...</option>
                               ) : (
-                                avatarOptions.map((option) => (
-                                  <option key={option._id} value={option.avatarName}>
-                                    {option.avatarName}
-                                  </option>
-                                ))
+                                avatarOptions.map((option) => {
+                                  const isDuplicateName = (avatarNameCounts[option.avatarName] || 0) > 1;
+                                  const providerLabel = resolveAvatarProviderLabel(option.provider);
+                                  const label =
+                                    isDuplicateName && providerLabel
+                                      ? `${option.avatarName} (${providerLabel})`
+                                      : option.avatarName;
+
+                                  return (
+                                    <option key={option._id} value={option.avatarId}>
+                                      {label}
+                                    </option>
+                                  );
+                                })
                               )}
                             </Field>
                             <div className="form-text">
