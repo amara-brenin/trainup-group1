@@ -5639,6 +5639,7 @@ const TrainingLaunch = () => {
                   ref={avatarRef}
                   avatarId={resolvedTavusReplicaId}
                   personaId={resolvedTavusPersonaId}
+                  voiceId={selectedLocalizedLanguage?.voiceId || training.voiceId}
                   trainingId={training.id}
                   language={selectedSpeechLocale}
                   username={training.viewerName || "Learner"}
