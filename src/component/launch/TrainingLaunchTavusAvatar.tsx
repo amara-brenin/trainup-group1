@@ -20,6 +20,9 @@ type TrainingLaunchTavusAvatarPropsCustom = {
   // For Tavus this is the replica id (avatarEngine.replicaId, falls back to avatarId).
   avatarId: string;
   personaId?: string;
+  // Trainer-selected ElevenLabs voice for this training (overrides the
+  // avatar's default voice baked into its Tavus persona).
+  voiceId?: string;
   // Used server-side to ground Tavus's native conversation (Ask mode Q&A) in
   // this specific training's Ask Assistant Prompt + knowledge base, scoped
   // per-conversation — never shared across other trainings on the same avatar.
@@ -64,6 +67,7 @@ const TrainingLaunchTavusAvatar = (
   {
     avatarId,
     personaId,
+    voiceId,
     trainingId,
     positionClass,
     onReady,
@@ -93,6 +97,7 @@ const TrainingLaunchTavusAvatar = (
         const res = await AxiosHelper.postData<TavusSessionResponse>("/avatars/tavus/session", {
           replicaId: avatarId,
           personaId,
+          voiceId,
           trainingId,
         });
 
@@ -264,7 +269,7 @@ const TrainingLaunchTavusAvatar = (
     };
     // Only (re)initialize when the underlying avatar identity changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [avatarId, personaId, trainingId]);
+  }, [avatarId, personaId, voiceId, trainingId]);
 
   useImperativeHandle(
     ref,
